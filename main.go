@@ -1,321 +1,251 @@
 package main
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/hmac"
-	"crypto/rand"
-	"crypto/sha256"
+	"bytes"
+	"crypto/rand" // ADDED: Standard sikker kilde til tilfældighed
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
-	"syscall"
-	"time"
+	"syscall" // Beholdt for term.ReadPassword
 
+	// Fjernet: "golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/chacha20poly1305" // Den foretrukne AEAD (Authenticated Encryption with Associated Data)
 	"golang.org/x/crypto/scrypt"
-	"golang.org/x/term"
+	"golang.org/x/term" // Til sikkert password-input
 )
 
+// --- Kryptografiske Konstanter ---
 const (
-	// Cryptographic constants (Key and MAC size)
-	KeySize        = 32 // 256 bits for AES-256 (Encryption Key)
-	MacKeySize     = 32 // 256 bits for HMAC-SHA256 (Authentication Key)
-	TotalKeySize   = KeySize + MacKeySize
-	SaltSize       = 16 // 128 bits
-	NonceSize      = 16 // 128 bits for AES-CTR (Standard Nonce size for CTR)
-	TagSize        = 32 // 256 bits for HMAC-SHA256 Tag
-	PasswordLength = 32
-	// Standard Scrypt Parametre for Kryptering
-	ScryptN   = 1 << 15   // scrypt parameter N (iterations)
-	ScryptR   = 8         // scrypt parameter r (block size)
-	ScryptP   = 1         // scrypt parameter p (parallelization)
-	ChunkSize = 64 * 1024 // Chunk size for streaming I/O
+	// MAGIC_MARKER er filformatets identifikator (V00003 for XChaCha20-Poly1305)
+	MagicMarker    = "CIPHERFORGE-V00003"
+	KeySize        = 32 // 256-bit XChaCha20 nøgle
+	SaltSize       = 16 // 128-bit salt
+	XNonceSize     = 24 // 192-bit XChaCha20 Nonce (Extended Nonce)
+	TagSize        = 16 // 128-bit Poly1305 autentificeringstag
+	PasswordLength = 32 // Standard længde for tilfældigt password
+	CharacterPool  = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
 
-	// File format marker
-	FileMagicMarker = "CIPHERFORGE-V00002" // Updated version for new structure
+	// Fjernet: ChunkSize
+
+	// SCYPT PARAMETRE (MAKSIMAL SIKKERHED)
+	ScryptN = 1 << 18 // 262,144 iterationer (Høj latency, stærk sikkerhed)
+	ScryptR = 8
+	ScryptP = 1
 )
 
-// Header struct defines the metadata stored at the start of the encrypted file
-type Header struct {
-	Magic        []byte
-	ScryptN      uint32
-	ScryptR      uint32
-	ScryptP      uint32
-	Salt         []byte
-	Nonce        []byte
-	OriginalName string
+// --- Header Struktur og Hjælpefunktioner ---
+
+// FileHeader gemmer metadata for at sikre reproducerbar dekryptering
+type FileHeader struct {
+	Magic    string
+	ScryptN  int
+	ScryptR  int
+	ScryptP  int
+	Salt     []byte
+	Nonce    []byte
+	FileName string
 }
 
-// ProgressWriter tracks bytes written and updates terminal progress
-type ProgressWriter struct {
-	Writer     io.Writer
-	TotalBytes int64
-	Written    int64
-	StartTime  time.Time
-}
-
-// Write implements the io.Writer interface
-func (pw *ProgressWriter) Write(p []byte) (n int, err error) {
-	n, err = pw.Writer.Write(p)
-	pw.Written += int64(n)
-	pw.updateProgress()
-	return
-}
-
-// updateProgress prints the current progress to the terminal
-func (pw *ProgressWriter) updateProgress() {
-	if pw.TotalBytes == 0 {
-		return
-	}
-
-	progress := float64(pw.Written) / float64(pw.TotalBytes) * 100
-	elapsed := time.Since(pw.StartTime).Seconds()
-
-	var rateStr string
-	if elapsed > 0 {
-		rate := float64(pw.Written) / elapsed // bytes per second
-		rateStr = formatBytes(int64(rate)) + "/s"
-	}
-
-	// Terminal output update
-	fmt.Printf("\rFremdrift: %.2f%% (%s/%s) [%s]",
-		progress,
-		formatBytes(pw.Written),
-		formatBytes(pw.TotalBytes),
-		rateStr,
-	)
-}
-
-// generateSecurePassword generates a secure, random password
-func generateSecurePassword(length int) (string, error) {
-	const charPool = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}"
-	b := make([]byte, length)
-
-	if _, err := io.ReadFull(rand.Reader, b); err != nil {
-		return "", fmt.Errorf("kunne ikke generere tilfældige bytes: %w", err)
-	}
-
-	for i := 0; i < length; i++ {
-		b[i] = charPool[b[i]%byte(len(charPool))]
-	}
-	return string(b), nil
-}
-
-// DerivedKeys holds the two keys needed for Encrypt-then-MAC
-type DerivedKeys struct {
-	EncKey []byte // KeySize (32 bytes) for AES-CTR
-	MacKey []byte // MacKeySize (32 bytes) for HMAC-SHA256
-}
-
-// deriveKey uses Scrypt to derive a single block of bytes and splits it into two keys.
-func deriveKey(password string, salt []byte, N, R, P uint32) (DerivedKeys, error) {
-	if password == "" {
-		return DerivedKeys{}, fmt.Errorf("password kan ikke være tomt")
-	}
-
-	fmt.Println("Udlede sikre krypterings- og autentificeringsnøgler fra password ved hjælp af Scrypt...")
-
-	// Udled 64 bytes totalt (32 for ENC, 32 for MAC)
-	keyBlock, err := scrypt.Key([]byte(password), salt, int(N), int(R), int(P), TotalKeySize)
-	if err != nil {
-		return DerivedKeys{}, fmt.Errorf("scrypt nøgleudledning mislykkedes: %w", err)
-	}
-
-	// Split key block
-	keys := DerivedKeys{
-		EncKey: keyBlock[:KeySize],
-		MacKey: keyBlock[KeySize:],
-	}
-
-	// Sikkerhed: Nulstil keyBlock, da nøglerne er blevet kopieret
-	for i := range keyBlock {
-		keyBlock[i] = 0
-	}
-
-	return keys, nil
-}
-
-// writeHeader writes all metadata to the output file
-func writeHeader(w io.Writer, header *Header) error {
-	var err error
+// headerBytes genskaber headeren som en byte-slice for brug som Associated Data (AAD).
+func headerBytes(header FileHeader) []byte {
+	var buf bytes.Buffer
+	magic := []byte(header.Magic)
 
 	// Skriv Magic Marker
-	if _, err = w.Write(header.Magic); err != nil {
-		return err
-	}
+	buf.Write(magic)
 
-	// Skriv Scrypt-parametre
-	if err = binary.Write(w, binary.BigEndian, header.ScryptN); err != nil {
-		return err
-	}
-	if err = binary.Write(w, binary.BigEndian, header.ScryptR); err != nil {
-		return err
-	}
-	if err = binary.Write(w, binary.BigEndian, header.ScryptP); err != nil {
-		return err
-	}
+	// Skriv Scrypt Parametre (Big Endian)
+	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptN))
+	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptR))
+	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptP))
 
-	// Skriv Salt
-	if err = binary.Write(w, binary.BigEndian, uint32(len(header.Salt))); err != nil {
-		return err
-	}
-	if _, err = w.Write(header.Salt); err != nil {
-		return err
-	}
+	// Skriv Salt (Længde + Data)
+	binary.Write(&buf, binary.BigEndian, uint32(len(header.Salt)))
+	buf.Write(header.Salt)
 
-	// Skriv Nonce (IV)
-	if err = binary.Write(w, binary.BigEndian, uint32(len(header.Nonce))); err != nil {
-		return err
-	}
-	if _, err = w.Write(header.Nonce); err != nil {
-		return err
-	}
+	// Skriv XNonce (Længde + Data)
+	binary.Write(&buf, binary.BigEndian, uint32(len(header.Nonce)))
+	buf.Write(header.Nonce)
 
-	// Skriv OriginalName
-	nameBytes := []byte(header.OriginalName)
-	if err = binary.Write(w, binary.BigEndian, uint16(len(nameBytes))); err != nil {
-		return err
-	}
-	if _, err = w.Write(nameBytes); err != nil {
-		return err
-	}
+	// Skriv Originalt Filnavn (som UTF-8 streng, Længde + Data)
+	fileNameBytes := []byte(header.FileName)
+	binary.Write(&buf, binary.BigEndian, uint32(len(fileNameBytes)))
+	buf.Write(fileNameBytes)
 
-	return nil
+	return buf.Bytes()
 }
 
-// readHeader reads and validates metadata from the input file
-func readHeader(r io.Reader) (*Header, error) {
-	header := &Header{}
-	var err error
+// writeHeader skriver alle metadata til filens start.
+func writeHeader(header FileHeader, output io.Writer) (int64, error) {
+	// Bruger den sikre headerBytes-funktion til at få den fulde AAD-struktur
+	headerData := headerBytes(header)
 
-	// Læs Magic Marker
-	header.Magic = make([]byte, len(FileMagicMarker))
-	if _, err = io.ReadFull(r, header.Magic); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse magic marker: %w", err)
-	}
-	if string(header.Magic) != FileMagicMarker {
-		return nil, fmt.Errorf("ukendt filformat: ugyldig magic header. Forventet: %s, Fundet: %s", FileMagicMarker, string(header.Magic))
+	// Skriv den samlede header til output-streamen
+	n, err := output.Write(headerData)
+	if err != nil {
+		return 0, fmt.Errorf("fejl ved skrivning af header: %w", err)
 	}
 
-	// Læs Scrypt-parametre
-	if err = binary.Read(r, binary.BigEndian, &header.ScryptN); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse Scrypt N: %w", err)
+	return int64(n), nil
+}
+
+// readHeader læser og validerer metadata fra filen.
+func readHeader(input io.Reader) (FileHeader, error) {
+	header := FileHeader{}
+
+	// Læs Magic Marker (Validering)
+	magic := make([]byte, len(MagicMarker))
+	if _, err := io.ReadFull(input, magic); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af magic marker: %w", err)
 	}
-	if err = binary.Read(r, binary.BigEndian, &header.ScryptR); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse Scrypt R: %w", err)
+	header.Magic = string(magic)
+	if header.Magic != MagicMarker {
+		return header, fmt.Errorf("ukendt filformat. Forventet: %s, Fundet: %s", MagicMarker, header.Magic)
 	}
-	if err = binary.Read(r, binary.BigEndian, &header.ScryptP); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse Scrypt P: %w", err)
+
+	// Læs Scrypt Parametre
+	var n, r, p uint32
+	if err := binary.Read(input, binary.BigEndian, &n); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af ScryptN: %w", err)
 	}
+	if err := binary.Read(input, binary.BigEndian, &r); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af ScryptR: %w", err)
+	}
+	if err := binary.Read(input, binary.BigEndian, &p); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af ScryptP: %w", err)
+	}
+	header.ScryptN = int(n)
+	header.ScryptR = int(r)
+	header.ScryptP = int(p)
 
 	// Læs Salt
 	var saltLen uint32
-	if err = binary.Read(r, binary.BigEndian, &saltLen); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse salt længde: %w", err)
-	}
-	if saltLen != SaltSize {
-		return nil, fmt.Errorf("ugyldig salt længde: %d", saltLen)
+	if err := binary.Read(input, binary.BigEndian, &saltLen); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af saltlængde: %w", err)
 	}
 	header.Salt = make([]byte, saltLen)
-	if _, err = io.ReadFull(r, header.Salt); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse salt: %w", err)
+	if _, err := io.ReadFull(input, header.Salt); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af salt: %w", err)
 	}
 
-	// Læs Nonce (IV)
+	// Læs XNonce
 	var nonceLen uint32
-	if err = binary.Read(r, binary.BigEndian, &nonceLen); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse nonce længde: %w", err)
+	if err := binary.Read(input, binary.BigEndian, &nonceLen); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af nonce-længde: %w", err)
 	}
-	if nonceLen != NonceSize {
-		return nil, fmt.Errorf("ugyldig nonce længde: %d", nonceLen)
+	if nonceLen != XNonceSize {
+		return header, fmt.Errorf("ugyldig nonce-længde: %d, forventet %d", nonceLen, XNonceSize)
 	}
 	header.Nonce = make([]byte, nonceLen)
-	if _, err = io.ReadFull(r, header.Nonce); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse nonce: %w", err)
+	if _, err := io.ReadFull(input, header.Nonce); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af nonce: %w", err)
 	}
 
-	// Læs OriginalName
-	var nameLen uint16
-	if err = binary.Read(r, binary.BigEndian, &nameLen); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse filnavn længde: %w", err)
+	// Læs Filnavn
+	var nameLen uint32
+	if err := binary.Read(input, binary.BigEndian, &nameLen); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af filnavnslængde: %w", err)
 	}
-	nameBytes := make([]byte, nameLen)
-	if _, err = io.ReadFull(r, nameBytes); err != nil {
-		return nil, fmt.Errorf("kunne ikke læse filnavn: %w", err)
+	fileNameBytes := make([]byte, nameLen)
+	if _, err := io.ReadFull(input, fileNameBytes); err != nil {
+		return header, fmt.Errorf("fejl ved læsning af filnavn: %w", err)
 	}
-	header.OriginalName = string(nameBytes)
+	header.FileName = string(fileNameBytes)
 
 	return header, nil
 }
 
-// encryptFile handles the entire encryption process
-func encryptFile(inputFile, outputFile, userPassword string) (err error) {
-	fmt.Printf("Starter kryptering af %s til %s\n", inputFile, outputFile)
+// --- Kryptografiske Kernefunktioner ---
 
-	fi, err := os.Stat(inputFile)
-	if err != nil {
-		return fmt.Errorf("kunne ikke få filinformation: %w", err)
+// generateSecurePassword genererer et sikkert, tilfældigt password.
+func generateSecurePassword(length int) string {
+	// BRUGER NU: crypto/rand for portabilitet og sikkerhed
+	passwordBytes := make([]byte, length)
+	poolLen := len(CharacterPool)
+
+	// Læs tilstrækkeligt mange tilfældige bytes
+	if _, err := rand.Read(passwordBytes); err != nil {
+		log.Fatalf("Fejl ved generering af tilfældigt password fra crypto/rand: %v", err)
 	}
-	fileSize := fi.Size()
 
-	// --- 1. Key and Parameter Generation ---
+	// Map de tilfældige bytes til tegn i CharacterPool
+	result := make([]byte, length)
+	for i := 0; i < length; i++ {
+		// Brug modulo for at vælge tegn fra poolen
+		idx := int(passwordBytes[i]) % poolLen
+		result[i] = CharacterPool[idx]
+	}
+
+	return string(result)
+}
+
+// deriveKey udleder en 32-byte krypteringsnøgle vha. Scrypt.
+func deriveKey(password string, salt []byte, N, R, P int) ([]byte, error) {
+	if password == "" {
+		return nil, fmt.Errorf("password må ikke være tomt")
+	}
+	fmt.Println("Udleder sikker krypteringsnøgle fra password vha. Scrypt...")
+
+	key, err := scrypt.Key([]byte(password), salt, N, R, P, KeySize)
+	if err != nil {
+		return nil, fmt.Errorf("scrypt nøglederivation mislykkedes: %w", err)
+	}
+
+	return key, nil
+}
+
+// --- Fil-I/O og Streaming Logik (Forenklet) ---
+
+// encryptFile håndterer hele krypteringsprocessen.
+func encryptFile(inputFile string, outputFile string, userPassword string) error {
+	// 1. Initialiser
 	salt := make([]byte, SaltSize)
-	if _, err = io.ReadFull(rand.Reader, salt); err != nil {
-		return fmt.Errorf("kunne ikke generere salt: %w", err)
+	nonce := make([]byte, XNonceSize)
+
+	// Brug crypto/rand for sikkert tilfældighedsmateriale (salt og nonce)
+	if _, err := rand.Read(salt); err != nil {
+		return fmt.Errorf("kunne ikke generere tilfældigt salt: %w", err)
 	}
-	nonce := make([]byte, NonceSize) // IV for CTR
-	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		return fmt.Errorf("kunne ikke generere nonce: %w", err)
+	if _, err := rand.Read(nonce); err != nil {
+		return fmt.Errorf("kunne ikke generere tilfældigt nonce: %w", err)
 	}
 
-	var password string
-	if userPassword == "" {
-		password, err = generateSecurePassword(PasswordLength)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("Advarsel: Tilfældigt password genereret. Opbevar det sikkert: %s\n", password)
-	} else {
-		password = userPassword
+	// Bestem password
+	password := userPassword
+	if password == "" {
+		password = generateSecurePassword(PasswordLength)
+		// VIGTIGT: Advisér brugeren om at gemme det genererede password
+		fmt.Printf("ADVARSEL: Tilfældigt password er genereret: %s\n", password)
+		fmt.Println("GEM DETTE PASSWORD SIKKERT. Det er nødvendigt for dekryptering.")
 	}
 
-	// Bruger de definerede konstanter
-	keys, err := deriveKey(password, salt, ScryptN, ScryptR, ScryptP)
+	// 2. Udled nøgle
+	key, err := deriveKey(password, salt, ScryptN, ScryptR, ScryptP)
 	if err != nil {
-		return err
+		return fmt.Errorf("fejl i nøglederivation: %w", err)
 	}
-	// Sikkerhed: Nulstil nøgler ved afslutning
 	defer func() {
-		for i := range keys.EncKey {
-			keys.EncKey[i] = 0
-		}
-		for i := range keys.MacKey {
-			keys.MacKey[i] = 0
+		// Forsøg at nulstille nøglematerialet
+		for i := range key {
+			key[i] = 0
 		}
 	}()
 
-	// --- 2. Cipher Initialization (AES-256 CTR) and HMAC ---
-	block, err := aes.NewCipher(keys.EncKey)
+	// 3. Åbn Filer
+	inFile, err := os.Open(inputFile)
 	if err != nil {
-		return fmt.Errorf("kunne ikke oprette AES-blok: %w", err)
+		return fmt.Errorf("kunne ikke åbne inputfil: %w", err)
 	}
-	stream := cipher.NewCTR(block, nonce)
+	defer inFile.Close()
 
-	// Opret HMAC med MacKey
-	h := hmac.New(sha256.New, keys.MacKey)
-
-	// --- 3. Create Header and Write to Output File ---
-	header := &Header{
-		Magic:        []byte(FileMagicMarker),
-		ScryptN:      ScryptN, // Skriver de globale konstanter til filen
-		ScryptR:      ScryptR,
-		ScryptP:      ScryptP,
-		Salt:         salt,
-		Nonce:        nonce,
-		OriginalName: filepath.Base(inputFile),
+	stat, err := inFile.Stat()
+	if err != nil {
+		return fmt.Errorf("kunne ikke læse filstatistik: %w", err)
 	}
+	fileSize := stat.Size()
 
 	outFile, err := os.Create(outputFile)
 	if err != nil {
@@ -323,264 +253,194 @@ func encryptFile(inputFile, outputFile, userPassword string) (err error) {
 	}
 	defer outFile.Close()
 
-	// Header MAC: Skriv Header til filen og MAC'en (Header er Associated Data)
-	headerWriter := io.MultiWriter(outFile, h)
-	if err = writeHeader(headerWriter, header); err != nil {
-		return fmt.Errorf("kunne ikke skrive header: %w", err)
+	// 4. Skriv Header (AAD)
+	header := FileHeader{
+		Magic: MagicMarker, ScryptN: ScryptN, ScryptR: ScryptR, ScryptP: ScryptP,
+		Salt: salt, Nonce: nonce, FileName: filepath.Base(inputFile),
 	}
-
-	// --- 4. Streaming Kryptering (Ciphertext skal nu MAC'es) ---
-	inFile, err := os.Open(inputFile)
+	headerLen, err := writeHeader(header, outFile)
 	if err != nil {
-		return fmt.Errorf("kunne ikke åbne inputfil: %w", err)
-	}
-	defer inFile.Close()
-
-	// CRITICAL FIX: Sørg for at den MAC'ede strøm er ciphertext
-
-	// 1. Opret MultiWriter, der sender *ciphertext* til både filen og HMAC-hash'en.
-	cipherTextOut := io.MultiWriter(outFile, h)
-
-	// 2. Opret Streamwriter: Den modtager PLAINTEXT, krypterer det, og sender *ciphertext* til cipherTextOut.
-	streamWriter := &cipher.StreamWriter{S: stream, W: cipherTextOut}
-
-	fmt.Println("Krypterer og streamer filindhold...")
-
-	// Brug ProgressWriter til at vise fremdrift baseret på bytes læst fra inputfilen (plaintext)
-	pw := &ProgressWriter{
-		Writer:     streamWriter, // ProgressWriter modtager PLAINTEXT og sender det til streamWriter
-		TotalBytes: fileSize,
-		StartTime:  time.Now(),
+		return fmt.Errorf("fejl ved skrivning af header: %w", err)
 	}
 
-	// io.Copy kopierer indholdet af inFile (plaintext) til pw/streamWriter
-	if _, err = io.Copy(pw, inFile); err != nil {
-		return fmt.Errorf("fejl under streaming kryptering: %w", err)
-	}
-
-	// --- 5. Afslutning: Skriv HMAC Tag ---
-	tag := h.Sum(nil) // Få det endelige HMAC-tag (beregnet over Header + Ciphertext)
-	if _, err = outFile.Write(tag); err != nil {
-		return fmt.Errorf("kunne ikke skrive HMAC tag: %w", err)
-	}
-
-	fmt.Println("\nKryptering fuldført.")
-	return nil
-}
-
-// decryptFile handles the entire decryption process
-func decryptFile(inputFile, outputFile string) (err error) {
-	fmt.Printf("Starter dekryptering af %s til %s\n", inputFile, outputFile)
-
-	// --- 1. Secure Password Input ---
-	fmt.Print("Indtast dekrypteringspassword: ")
-	bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+	// 5. Initialiser AEAD Cipher
+	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return fmt.Errorf("fejl ved læsning af password: %w", err)
+		return fmt.Errorf("kunne ikke initialisere XChaCha20-Poly1305: %w", err)
 	}
-	password := string(bytePassword)
-	fmt.Println()
 
+	// 6. Krypter
+	fmt.Println("Læser inputfil i hukommelsen for kryptering...")
+	plaintext, err := io.ReadAll(inFile)
+	if err != nil {
+		return fmt.Errorf("fejl ved læsning af inputfil: %w", err)
+	}
 	defer func() {
-		for i := range bytePassword {
-			bytePassword[i] = 0
+		// Nulstil plaintext-buffer efter brug
+		for i := range plaintext {
+			plaintext[i] = 0
 		}
 	}()
 
-	// --- 2. Fil-I/O og Tag Håndtering ---
-	fi, err := os.Stat(inputFile)
+	fmt.Printf("Krypterer %.2f MB fil med XChaCha20-Poly1305...\n", float64(fileSize)/(1024*1024))
+	// Headeren (AAD) er inkluderet i autentificeringen.
+	ciphertextWithTag := aead.Seal(nil, nonce, plaintext, headerBytes(header))
+
+	// 7. Skriv Ciphertext og Tag til Outputfil
+	if _, err := outFile.Write(ciphertextWithTag); err != nil {
+		return fmt.Errorf("fejl ved skrivning af krypteret data: %w", err)
+	}
+
+	fmt.Printf("Kryptering fuldført. Output filstørrelse: %.2f MB\n", float64(headerLen+int64(len(ciphertextWithTag)))/(1024*1024))
+	return nil
+}
+
+// decryptFile håndterer hele dekrypteringsprocessen.
+func decryptFile(inputFile string, outputFile string) error {
+	// 1. Initialiser
+	fmt.Println("Indtast venligst dit dekrypteringspassword:")
+	passwordChars, err := term.ReadPassword(int(syscall.Stdin))
 	if err != nil {
-		return fmt.Errorf("kunne ikke få filinformation: %w", err)
+		return fmt.Errorf("kunne ikke læse password fra terminal: %w", err)
 	}
-	fileSize := fi.Size()
+	password := string(passwordChars)
+	defer func() {
+		// Nulstil password-buffer efter brug (begrænset effekt i Go)
+		for i := range passwordChars {
+			passwordChars[i] = 0
+		}
+	}()
 
-	// Tjek filstørrelse (skal mindst være større end tagget)
-	if fileSize < int64(TagSize) {
-		return fmt.Errorf("filen er for kort til at indeholde et gyldigt HMAC-tag")
-	}
-
-	// Adskil filen i Body (Header + Ciphertext) og Tag
-	tagStart := fileSize - int64(TagSize)
-
+	// 2. Åbn Filer
 	inFile, err := os.Open(inputFile)
 	if err != nil {
 		return fmt.Errorf("kunne ikke åbne inputfil: %w", err)
 	}
 	defer inFile.Close()
 
-	// Læs Tagget fra slutningen
-	if _, err = inFile.Seek(tagStart, io.SeekStart); err != nil {
-		return fmt.Errorf("fejl ved seeking til tag: %w", err)
+	stat, err := inFile.Stat()
+	if err != nil {
+		return fmt.Errorf("kunne ikke læse filstatistik: %w", err)
 	}
+	fileSize := stat.Size()
 
-	expectedTag := make([]byte, TagSize)
-	if _, err = io.ReadFull(inFile, expectedTag); err != nil {
-		return fmt.Errorf("kunne ikke læse HMAC tag: %w", err)
-	}
-
-	// Gå tilbage til filens start for at læse Header
-	if _, err = inFile.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("fejl ved nulstilling af filpointer (før header læsning): %w", err)
-	}
-
-	// --- 3. Læs Header og Nøgleudledning ---
+	// 3. Læs Header
+	// Bruger ikke bufio.NewReader her for at forenkle I/O-logikken.
 	header, err := readHeader(inFile)
 	if err != nil {
-		return fmt.Errorf("fejl under læsning af header: %w", err)
+		return fmt.Errorf("fejl ved læsning af header: %w", err)
 	}
 
-	// Gem den præcise position EFTER headeren (starten af Ciphertext)
-	headerEndPos, err := inFile.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return fmt.Errorf("fejl ved at få header end position: %w", err)
-	}
+	// Beregn headerlængden baseret på hvor meget vi har læst
+	currentPos, _ := inFile.Seek(0, io.SeekCurrent)
+	headerLen := currentPos
 
-	// Bruger de læste parametre fra headeren
-	keys, err := deriveKey(password, header.Salt, header.ScryptN, header.ScryptR, header.ScryptP)
+	// 4. Udled nøgle ved hjælp af parametrene fra filheaderen
+	key, err := deriveKey(password, header.Salt, header.ScryptN, header.ScryptR, header.ScryptP)
 	if err != nil {
-		return fmt.Errorf("nøgleudledning mislykkedes (forkert password?): %w", err)
+		return fmt.Errorf("fejl i nøglederivation: %w", err)
 	}
 	defer func() {
-		for i := range keys.EncKey {
-			keys.EncKey[i] = 0
-		}
-		for i := range keys.MacKey {
-			keys.MacKey[i] = 0
+		for i := range key {
+			key[i] = 0
 		}
 	}()
 
-	// --- 4. Verificer HMAC (Header + Ciphertext) ---
-	h := hmac.New(sha256.New, keys.MacKey)
-
-	// Nulstil filpointeren til start for MAC-beregning (position 0)
-	if _, err = inFile.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("fejl ved nulstilling for MAC: %w", err)
+	// 5. Initialiser AEAD Cipher
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return fmt.Errorf("kunne ikke initialisere XChaCha20-Poly1305: %w", err)
 	}
 
-	// Vi bruger en LimitedReader til kun at læse (Header + Ciphertext) og udelukke Tagget
-	bodyReader := io.LimitReader(inFile, tagStart)
-
-	// MAC Header + Ciphertext i én go
-	if _, err = io.Copy(h, bodyReader); err != nil {
-		return fmt.Errorf("fejl under MAC-beregning: %w", err)
+	// Læs hele Ciphertext + Tag ind i hukommelsen
+	ciphertextWithTagLen := fileSize - headerLen
+	ciphertextWithTag := make([]byte, ciphertextWithTagLen)
+	// io.ReadFull sikrer, at vi læser præcis det antal bytes, vi forventer
+	if _, err := io.ReadFull(inFile, ciphertextWithTag); err != nil {
+		return fmt.Errorf("fejl ved læsning af krypteret data: %w", err)
 	}
 
-	calculatedTag := h.Sum(nil)
+	// 6. Dekrypter og Autentificér (AAD)
+	fmt.Println("Dekrypterer og autentificerer filen...")
 
-	fmt.Println("Verificerer filautenticitet (HMAC)...")
-	if !hmac.Equal(calculatedTag, expectedTag) {
-		return fmt.Errorf("autentificering mislykkedes: HMAC-tag matcher ikke (muligvis forkert password eller filen er korrupt)")
+	// Genskan headeren som bytes for at bruge den som AAD
+	aad := headerBytes(header)
+
+	plaintext, err := aead.Open(nil, header.Nonce, ciphertextWithTag, aad)
+	if err != nil {
+		// En AEAD Open fejl indikerer altid enten et forkert password (forkert nøgle)
+		// eller at filen er blevet manipuleret (autentificering mislykkedes).
+		return fmt.Errorf("dekrypteringsfejl: autentificering mislykkedes (forkert password eller korrupt fil): %w", err)
 	}
-	fmt.Println("Autentificering bekræftet. Starter dekryptering...")
+	defer func() {
+		// Nulstil plaintext-buffer efter brug
+		for i := range plaintext {
+			plaintext[i] = 0
+		}
+	}()
 
-	// --- 5. Streaming Dekryptering ---
-
-	// Gå direkte til den gemte position for starten af Ciphertexten.
-	if _, err = inFile.Seek(headerEndPos, io.SeekStart); err != nil {
-		return fmt.Errorf("fejl ved at seek til start af Ciphertext: %w", err)
-	}
-
-	// Filpointeren er nu placeret PRÆCIST i starten af Ciphertext
-
-	// Beregn den faktiske ciphertext-størrelse (Total Body størrelse - Header størrelse)
-	cipherTextLength := tagStart - headerEndPos
-
-	// Nu kan vi oprette LimitedReaderen sikkert (den læser kun Ciphertext)
-	cipherTextReader := io.LimitReader(inFile, cipherTextLength)
-
+	// 7. Skriv Outputfil
 	outFile, err := os.Create(outputFile)
 	if err != nil {
 		return fmt.Errorf("kunne ikke oprette outputfil: %w", err)
 	}
 	defer outFile.Close()
 
-	block, err := aes.NewCipher(keys.EncKey)
-	if err != nil {
-		return fmt.Errorf("kunne ikke oprette AES-blok: %w", err)
-	}
-	stream := cipher.NewCTR(block, header.Nonce)
-
-	// Dekryptering sker på stream-niveau: output af streamReader er dekrypteret data
-	streamReader := &cipher.StreamReader{S: stream, R: cipherTextReader}
-
-	// Brug ProgressWriter til at vise fremdrift baseret på den estimerede dekrypterede størrelse
-	pw := &ProgressWriter{
-		Writer:     outFile,
-		TotalBytes: cipherTextLength, // Ciphertext størrelsen er lig med plaintext størrelsen i CTR
-		StartTime:  time.Now(),
+	if _, err := outFile.Write(plaintext); err != nil {
+		return fmt.Errorf("fejl ved skrivning af dekrypteret data: %w", err)
 	}
 
-	// io.Copy kopierer streamReader (dekrypteret data) til pw (som skriver til outFile)
-	if _, err = io.Copy(pw, streamReader); err != nil {
-		return fmt.Errorf("fejl under streaming dekryptering: %w", err)
-	}
-
-	fmt.Println("\nDekryptering fuldført.")
+	fmt.Println("Dekryptering fuldført.")
 	return nil
 }
 
-// formatBytes helper function for human-readable file size
-func formatBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
-}
+// --- Main CLI Logik ---
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Brug: cipherforge <kommando> [argumenter]")
-		fmt.Println("\nKommandoer:")
-		fmt.Println("  -ef <input_file> <output_file> [-p <password>]  (Krypter)")
-		fmt.Println("  -df <input_file> <output_file>                (Dekrypter)")
-		os.Exit(1)
+		fmt.Printf("Brug: %s (-ef <input_fil> <output_fil> [-p <password>] | -df <input_fil> <output_fil>)\n", os.Args[0])
+		return
 	}
 
-	command := os.Args[1]
+	operation := os.Args[1]
 
-	switch command {
-	case "-ef":
+	defer func() {
+		// Utskriv fejlmeddelelser fra log
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "Fatal fejl: %v\n", r)
+		}
+	}()
+
+	var err error
+	if operation == "-ef" {
 		if len(os.Args) < 4 {
-			fmt.Fprintln(os.Stderr, "Brug: cipherforge -ef <input_file> <output_file> [-p <password>]")
-			os.Exit(1)
-		}
-		inputFile := os.Args[2]
-		outputFile := os.Args[3]
-
-		password := ""
-		for i := 4; i < len(os.Args)-1; i++ {
-			if os.Args[i] == "-p" {
-				password = os.Args[i+1]
-				break
+			err = fmt.Errorf("brug: %s -ef <input_fil> <output_fil> [-p <password>]", os.Args[0])
+		} else {
+			inputFile := os.Args[2]
+			outputFile := os.Args[3]
+			var password string
+			for i := 4; i < len(os.Args); i++ {
+				if os.Args[i] == "-p" && i+1 < len(os.Args) {
+					password = os.Args[i+1]
+					break
+				}
 			}
+			err = encryptFile(inputFile, outputFile, password)
 		}
-
-		if err := encryptFile(inputFile, outputFile, password); err != nil {
-			fmt.Fprintf(os.Stderr, "Krypteringsfejl: %v\n", err)
-			os.Exit(1)
-		}
-
-	case "-df":
+	} else if operation == "-df" {
 		if len(os.Args) != 4 {
-			fmt.Fprintln(os.Stderr, "Brug: cipherforge -df <input_file> <output_file>")
-			os.Exit(1)
+			err = fmt.Errorf("brug: %s -df <input_fil> <output_fil>", os.Args[0])
+		} else {
+			inputFile := os.Args[2]
+			outputFile := os.Args[3]
+			err = decryptFile(inputFile, outputFile)
 		}
-		inputFile := os.Args[2]
-		outputFile := os.Args[3]
+	} else {
+		err = fmt.Errorf("ugyldig operation. Brug -ef (encrypt) eller -df (decrypt)")
+	}
 
-		if err := decryptFile(inputFile, outputFile); err != nil {
-			fmt.Fprintf(os.Stderr, "Dekrypteringsfejl: %v\n", err)
-			os.Exit(1)
-		}
-
-	default:
-		fmt.Fprintf(os.Stderr, "Ugyldig kommando: %s. Brug -ef eller -df.\n", command)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Fejl: %v\n", err)
 		os.Exit(1)
 	}
 }
