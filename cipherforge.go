@@ -14,7 +14,8 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305" // Den foretrukne AEAD (Authenticated Encryption with Associated Data)
 	"golang.org/x/crypto/scrypt"
-	"golang.org/x/term" // Til sikkert password-input
+	"golang.org/x/term"
+	// Til sikkert password-input
 )
 
 // --- Kryptografiske Konstanter ---
@@ -27,7 +28,7 @@ const (
 	TagSize        = 16 // 128-bit Poly1305 autentificeringstag
 	PasswordLength = 32 // Standard længde for tilfældigt password
 	// Karakterpulje med 94 sikre printbare ASCII-tegn
-	CharacterPool = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+	CharacterPool = "!#$%&*+-0123456789?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 	// SCYPT PARAMETRE (MAKSIMAL SIKKERHED)
 	ScryptN = 1 << 20 // 1,048,576 iterationer (Høj latency, stærk sikkerhed)
@@ -108,13 +109,13 @@ func readHeader(input io.Reader) (FileHeader, error) {
 	// Læs Scrypt Parametre
 	var n, r, p uint32
 	if err := binary.Read(input, binary.BigEndian, &n); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af ScryptN: %w", err)
+		return header, fmt.Errorf("fejl ved læsning af scrypt N: %w", err)
 	}
 	if err := binary.Read(input, binary.BigEndian, &r); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af ScryptR: %w", err)
+		return header, fmt.Errorf("fejl ved læsning af scrypt R: %w", err)
 	}
 	if err := binary.Read(input, binary.BigEndian, &p); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af ScryptP: %w", err)
+		return header, fmt.Errorf("fejl ved læsning af scrypt P: %w", err)
 	}
 	header.ScryptN = int(n)
 	header.ScryptR = int(r)
@@ -123,7 +124,7 @@ func readHeader(input io.Reader) (FileHeader, error) {
 	// Læs Salt
 	var saltLen uint32
 	if err := binary.Read(input, binary.BigEndian, &saltLen); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af saltlængde: %w", err)
+		return header, fmt.Errorf("fejl ved læsning af længde på salt: %w", err)
 	}
 	header.Salt = make([]byte, saltLen)
 	if _, err := io.ReadFull(input, header.Salt); err != nil {
@@ -133,10 +134,10 @@ func readHeader(input io.Reader) (FileHeader, error) {
 	// Læs XNonce
 	var nonceLen uint32
 	if err := binary.Read(input, binary.BigEndian, &nonceLen); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af nonce-længde: %w", err)
+		return header, fmt.Errorf("fejl ved læsning af længde på nonce: %w", err)
 	}
 	if nonceLen != XNonceSize {
-		return header, fmt.Errorf("ugyldig nonce-længde: %d, forventet %d", nonceLen, XNonceSize)
+		return header, fmt.Errorf("ugyldig længde på nonce: %d, forventet %d", nonceLen, XNonceSize)
 	}
 	header.Nonce = make([]byte, nonceLen)
 	if _, err := io.ReadFull(input, header.Nonce); err != nil {
@@ -146,7 +147,7 @@ func readHeader(input io.Reader) (FileHeader, error) {
 	// Læs Filnavn
 	var nameLen uint32
 	if err := binary.Read(input, binary.BigEndian, &nameLen); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af filnavnslængde: %w", err)
+		return header, fmt.Errorf("fejl ved læsning af længde på filnavn: %w", err)
 	}
 	fileNameBytes := make([]byte, nameLen)
 	if _, err := io.ReadFull(input, fileNameBytes); err != nil {
@@ -169,7 +170,7 @@ func generateSecurePassword(length int) string {
 		// er fuldstændig uniformt (ingen modulo bias).
 		idx, err := rand.Int(rand.Reader, poolLen)
 		if err != nil {
-			log.Fatalf("Fejl ved generering af sikkert tilfældigt index: %v", err)
+			log.Fatalf("Fejl ved generering af sikkert, tilfældigt indeks: %v", err)
 		}
 		result[i] = CharacterPool[idx.Int64()]
 	}
@@ -180,9 +181,9 @@ func generateSecurePassword(length int) string {
 // deriveKey udleder en 32-byte krypteringsnøgle vha. Scrypt.
 func deriveKey(password string, salt []byte, N, R, P int) ([]byte, error) {
 	if password == "" {
-		return nil, fmt.Errorf("password må ikke være tomt")
+		return nil, fmt.Errorf("kodeord må ikke være tomt")
 	}
-	fmt.Println("Udleder sikker krypteringsnøgle fra password vha. Scrypt...")
+	fmt.Println("Udleder sikker krypteringsnøgle fra kodeord via scrypt...")
 
 	key, err := scrypt.Key([]byte(password), salt, N, R, P, KeySize)
 	if err != nil {
@@ -212,8 +213,7 @@ func encryptFile(inputFile string, outputFile string, userPassword string) error
 	password := userPassword
 	if password == "" {
 		password = generateSecurePassword(PasswordLength)
-		fmt.Printf("ADVARSEL: Tilfældigt kodeord er genereret: %s\n", password)
-		fmt.Println("GEM DETTE kodeord SIKKERT. Det er essentielt for dekryptering.")
+		fmt.Printf("Tilfældigt kodeord er genereret: %s\n", password)
 	}
 
 	// 2. Udled nøgle
@@ -237,7 +237,7 @@ func encryptFile(inputFile string, outputFile string, userPassword string) error
 
 	stat, err := inFile.Stat()
 	if err != nil {
-		return fmt.Errorf("kunne ikke læse filstatistik: %w", err)
+		return fmt.Errorf("kunne ikke læse filstørrelse: %w", err)
 	}
 	fileSize := stat.Size()
 
@@ -290,20 +290,26 @@ func encryptFile(inputFile string, outputFile string, userPassword string) error
 }
 
 // decryptFile håndterer hele dekrypteringsprocessen.
-func decryptFile(inputFile string, outputFile string) error {
-	// 1. Initialiser
-	fmt.Println("Indtast venligst dit kodeord til dekryptering:")
-	passwordChars, err := term.ReadPassword(int(syscall.Stdin))
-	if err != nil {
-		return fmt.Errorf("kunne ikke læse kodeord fra terminal: %w", err)
-	}
-	password := string(passwordChars)
-	defer func() {
-		// Nulstil kodeord-buffer efter brug (begrænset effekt i Go)
-		for i := range passwordChars {
-			passwordChars[i] = 0
+func decryptFile(inputFile, outputFile, userPassword string) error {
+	var passwordChars []byte
+	var err error
+
+	password := userPassword
+
+	if password == "" {
+		fmt.Println("Indtast dit kodeord til dekryptering:")
+		passwordChars, err = term.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			return fmt.Errorf("kunne ikke læse kodeord fra terminalen: %w", err)
 		}
-	}()
+		password = string(passwordChars)
+		defer func() {
+			// Nulstil kodeord-buffer efter brug (begrænset effekt i Go)
+			for i := range passwordChars {
+				passwordChars[i] = 0
+			}
+		}()
+	}
 
 	// 2. Åbn Filer
 	inFile, err := os.Open(inputFile)
@@ -314,7 +320,7 @@ func decryptFile(inputFile string, outputFile string) error {
 
 	stat, err := inFile.Stat()
 	if err != nil {
-		return fmt.Errorf("kunne ikke læse filstatistik: %w", err)
+		return fmt.Errorf("kunne ikke læse filstørrelse: %w", err)
 	}
 	fileSize := stat.Size()
 
@@ -362,9 +368,9 @@ func decryptFile(inputFile string, outputFile string) error {
 
 	plaintext, err := aead.Open(nil, header.Nonce, ciphertextWithTag, aad)
 	if err != nil {
-		// En AEAD Open fejl indikerer altid enten et forkert password (forkert nøgle)
+		// En AEAD Open fejl indikerer altid enten et forkert kodeord (forkert nøgle)
 		// eller at filen er blevet manipuleret (autentificering mislykkedes).
-		return fmt.Errorf("dekrypteringsfejl: autentificering mislykkedes (forkert password eller korrupt fil): %w", err)
+		return fmt.Errorf("autentificering mislykkedes pga. forkert kodeord eller fejl i inputfil: %w", err)
 	}
 	defer func() {
 		// Nulstil plaintext-buffer efter brug
@@ -392,7 +398,7 @@ func decryptFile(inputFile string, outputFile string) error {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Printf("Brug: %s (-ef <input_fil> <output_fil> [-p <password>] | -df <input_fil> <output_fil>)\n", os.Args[0])
+		fmt.Printf("Brug: %s (-ef <input_fil> <output_fil> [-p <kodeord>] | -df <input_fil> <output_fil> [-p <kodeord>])\n", os.Args[0])
 		return
 	}
 
@@ -408,7 +414,7 @@ func main() {
 	var err error
 	if operation == "-ef" {
 		if len(os.Args) < 4 {
-			err = fmt.Errorf("brug: %s -ef <input_fil> <output_fil> [-p <password>]", os.Args[0])
+			err = fmt.Errorf("brug: %s -ef <input_fil> <output_fil> [-p <kodeord>]", os.Args[0])
 		} else {
 			inputFile := os.Args[2]
 			outputFile := os.Args[3]
@@ -422,12 +428,19 @@ func main() {
 			err = encryptFile(inputFile, outputFile, password)
 		}
 	} else if operation == "-df" {
-		if len(os.Args) != 4 {
-			err = fmt.Errorf("brug: %s -df <input_fil> <output_fil>", os.Args[0])
+		if len(os.Args) < 4 {
+			err = fmt.Errorf("brug: %s -df <input_fil> <output_fil> [-p <kodeord>]", os.Args[0])
 		} else {
 			inputFile := os.Args[2]
 			outputFile := os.Args[3]
-			err = decryptFile(inputFile, outputFile)
+			var password string
+			for i := 4; i < len(os.Args); i++ {
+				if os.Args[i] == "-p" && i+1 < len(os.Args) {
+					password = os.Args[i+1]
+					break
+				}
+			}
+			err = decryptFile(inputFile, outputFile, password)
 		}
 	} else {
 		err = fmt.Errorf("ugyldig operation. Brug -ef (encrypt) eller -df (decrypt)")
