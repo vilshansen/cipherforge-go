@@ -19,7 +19,7 @@ TARGET_ARCH="amd64"
 OUTPUT_NAME="cipherforge_${TARGET_OS}_${TARGET_ARCH}"
 
 echo "Bygger: ${TARGET_OS}/${TARGET_ARCH} -> ${OUTPUT_NAME}"
-GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -o bin/${OUTPUT_NAME} ${SOURCE_FILE}
+GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -ldflags="-s -w" -o bin/${OUTPUT_NAME} ${SOURCE_FILE}
 
 # --- 2. BYG TIL WINDOWS ---
 TARGET_OS="windows"
@@ -28,7 +28,12 @@ TARGET_ARCH="amd64"
 OUTPUT_NAME="cipherforge_${TARGET_OS}_${TARGET_ARCH}.exe"
 
 echo "Bygger: ${TARGET_OS}/${TARGET_ARCH} -> ${OUTPUT_NAME}"
-GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -o bin/${OUTPUT_NAME} ${SOURCE_FILE}
+GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build -ldflags="-s -w" -o bin/${OUTPUT_NAME} ${SOURCE_FILE}
+
+echo "Starter komprimering af bin/*.*..."
+echo "------------------------------------------------------"
+
+upx bin/*
 
 echo "------------------------------------------------------"
 echo "Kompilering fuldført!"
