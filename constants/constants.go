@@ -19,10 +19,11 @@ NAVN
     cipherforge - Kryptering og dekryptering af filer med XChaCha20-Poly1305 og scrypt nøgleafledning.
 
 SYNOPSIS (USAGE)
-    cipherforge [OPTION] <input_fil> <output_fil>
+    cipherforge [OPERATION] <input_fil> <output_fil>
 
 BESKRIVELSE
-    Værktøj til at kryptere og dekryptere filer ved hjælp af de stærkeste moderne kryptografiske standarder.
+    Cipherforge er et værktøj til at kryptere og dekryptere filer ved hjælp af de stærkeste moderne
+	kryptografiske standarder.
 
 OPERATIONER
     -ef, --encrypt <input_fil> <output_fil>
@@ -35,11 +36,11 @@ OPTIONER
     -p, --password <kodeord>
         Angiver kodeordet direkte.
 
-        ADVARSEL: Anvendes kun ved kryptering. Hvis dette flag udelades ved kryptering,
-        genereres et tilfældigt, stærkt kodeord automatisk og udskrives.
+        Kan anvendes både ved kryptering og dekryptering. Hvis dette flag udelades, genereres et 
+        tilfældigt, stærkt kodeord automatisk og udskrives på skærmen.
 
-        Ved dekryptering skal kodeordet altid indtastes interaktivt for at
-        sikre, at det ikke gemmes i shell-historikken.
+        Ved dekryptering bør kodeordet altid indtastes interaktivt for at sikre, at det ikke gemmes
+        i shell-historikken.
 
 EKSEMPLER
 
@@ -51,4 +52,5 @@ EKSEMPLER
 
 SE OGSÅ
     Fuld kildekode til programmet findes på https://github.com/vilshansen/cipherforge-go/
+
 `
