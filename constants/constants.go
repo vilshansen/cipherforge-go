@@ -12,3 +12,43 @@ const (
 	ScryptR        = 8
 	ScryptP        = 1
 )
+
+// HelpText indeholder den fulde, formaterede hjælpevejledning til CLI-værktøjet.
+const HelpText = `
+NAVN
+    cipherforge - Kryptering og dekryptering af filer med XChaCha20-Poly1305 og scrypt nøgleafledning.
+
+SYNOPSIS (USAGE)
+    cipherforge [OPTION] <input_fil> <output_fil>
+
+BESKRIVELSE
+    Værktøj til at kryptere og dekryptere filer ved hjælp af de stærkeste moderne kryptografiske standarder.
+
+OPERATIONER
+    -ef, --encrypt <input_fil> <output_fil>
+        Krypterer den angivne inputfil.
+
+    -df, --decrypt <input_fil> <output_fil>
+        Dekrypterer den angivne inputfil.
+
+OPTIONER
+    -p, --password <kodeord>
+        Angiver kodeordet direkte.
+
+        ADVARSEL: Anvendes kun ved kryptering. Hvis dette flag udelades ved kryptering,
+        genereres et tilfældigt, stærkt kodeord automatisk og udskrives.
+
+        Ved dekryptering skal kodeordet altid indtastes interaktivt for at
+        sikre, at det ikke gemmes i shell-historikken.
+
+EKSEMPLER
+
+    # Krypter fil med automatisk genereret password:
+    cipherforge -ef data.txt data.cf
+
+    # Dekrypter fil (kræver interaktiv password-indtastning):
+    cipherforge -df data.cf data_original.txt
+
+SE OGSÅ
+    Fuld kildekode til programmet findes på https://github.com/vilshansen/cipherforge-go/
+`

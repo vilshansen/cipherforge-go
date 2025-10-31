@@ -4,22 +4,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/vilshansen/cipherforge-go/constants"
 	"github.com/vilshansen/cipherforge-go/fileutils"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Printf("CipherForge: Kryptering og dekryptering af filer med XChaCha20-Poly1305 og scrypt nøgleafledning.\n"+
-			"\n"+
-			"Kryptér og dekrypter filer ved hjælp af de stærkeste moderne kryptografiske standarder.\n"+
-			"\n"+
-			"Kryptering: %s -ef <input_fil> <output_fil> [-p <kodeord>]\n"+
-			"Dekryptering: %s -df <input_fil> <output_fil> [-p <kodeord>]\n"+
-			"\n"+
-			"Angivelse af kodeord er valgfrit. Hvis intet kodeord angives ved kryptering, vil et tilfældigt, stærkt\n"+
-			"kodeord blive genereret for brugeren.\n"+
-			"\n"+
-			"Fuld kildekode til programmet findes på https://github.com/vilshansen/cipherforge-go/\n", os.Args[0], os.Args[0])
+		fmt.Printf(constants.HelpText)
 		return
 	}
 
