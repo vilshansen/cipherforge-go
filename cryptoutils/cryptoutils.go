@@ -29,14 +29,14 @@ func DeriveKeyArgon2id(password []byte, salt []byte) ([]byte, error) {
 	if len(password) == 0 {
 		return nil, fmt.Errorf("password cannot be empty")
 	}
-	if len(salt) != constants.ArgonSaltSize {
+	if len(salt) != constants.ArgonSaltLength {
 		return nil, fmt.Errorf("invalid salt length")
 	}
 
 	key := argon2.IDKey(
 		password,
 		salt,
-		constants.ArgonTime,
+		constants.ArgonIterations,
 		constants.ArgonMemory,
 		constants.ArgonThreads,
 		constants.KeySize,
@@ -47,7 +47,7 @@ func DeriveKeyArgon2id(password []byte, salt []byte) ([]byte, error) {
 
 // Generates a secure salt for encryption
 func GenerateSalt() ([]byte, error) {
-	salt := make([]byte, constants.ArgonSaltSize)
+	salt := make([]byte, constants.ArgonSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("failed to generate salt: %w", err)
 	}

@@ -1,39 +1,39 @@
 package constants
 
 const (
-	MagicMarker    = "CIPHERFORGE-V00003"
-	KeySize        = 32 // 256-bit XChaCha20 nøgle
-	SaltSize       = 16 // 128-bit salt
-	XNonceSize     = 24 // 192-bit XChaCha20 Nonce (Extended Nonce)
-	TagSize        = 16 // 128-bit Poly1305 autentificeringstag
-	PasswordLength = 32 // Standard længde for tilfældigt password
-	CharacterPool  = "!#$%&*+-0123456789?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	ArgonTime      = 3         // iterations
-	ArgonMemory    = 64 * 1024 // 64MB in KiB
-	ArgonThreads   = 2
-	ArgonSaltSize  = 16 // 128-bit salt
+	MagicMarker     = "CIPHERFORGE-V00003"
+	KeySize         = 32 // 256-bit XChaCha20 nøgle
+	SaltSize        = 16 // 128-bit salt
+	XNonceSize      = 24 // 192-bit XChaCha20 Nonce (Extended Nonce)
+	TagSize         = 16 // 128-bit Poly1305 autentificeringstag
+	PasswordLength  = 32 // Standard længde for tilfældigt password
+	CharacterPool   = "!#$%&*+-0123456789?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	ArgonIterations = 2               // iterations
+	ArgonMemory     = 2 * 1024 * 1024 // 2GB in KiB
+	ArgonThreads    = 4               // parallelism
+	ArgonSaltLength = 16              // 128-bit salt
 )
 
 // HelpText indeholder den fulde, formaterede hjælpevejledning til CLI-værktøjet.
 const HelpText = `
 NAVN
-    cipherforge - Kryptering og dekryptering af filer med XChaCha20-Poly1305 og scrypt nøgleafledning.
+    cipherforge - Kryptering og dekryptering af filer med XChaCha20-Poly1305 og Argon2id nøgleafledning.
 
 SYNOPSIS (USAGE)
-    cipherforge [OPERATION] <input_fil> <output_fil>
+    Krypter:   cipherforge -ef -i <input_fil> -o <output_fil> [-p <kodeord>]
+	Dekrypter: cipherforge -df -i <input_fil> -o <output_fil> [-p <kodeord>]
 
 BESKRIVELSE
     Cipherforge er et værktøj til at kryptere og dekryptere filer ved hjælp af de stærkeste moderne
 	kryptografiske standarder.
 
-OPERATIONER
-    -ef, --encrypt <input_fil> <output_fil>
+PARAMETRE
+    -ef, --encrypt
         Krypterer den angivne inputfil.
 
-    -df, --decrypt <input_fil> <output_fil>
+    -df, --decrypt
         Dekrypterer den angivne inputfil.
 
-OPTIONER
     -p, --password <kodeord>
         Angiver kodeordet direkte.
 
@@ -44,14 +44,13 @@ OPTIONER
         i shell-historikken.
 
 EKSEMPLER
-
     # Krypter fil med automatisk genereret password:
-    cipherforge -ef data.txt data.cf
+    cipherforge -ef -i data.txt -o data.cfo
 
     # Dekrypter fil (kræver interaktiv password-indtastning):
-    cipherforge -df data.cf data_original.txt
+    cipherforge -df -i data.cfo -o data_original.txt
 
-SE OGSÅ
+KILDEKODE
     Fuld kildekode til programmet findes på https://github.com/vilshansen/cipherforge-go/
 
 `

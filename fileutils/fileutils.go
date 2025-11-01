@@ -16,7 +16,7 @@ import (
 )
 
 func EncryptFile(inputFile string, outputFile string, userPassword string) error {
-	salt, err := getRandomBytes(constants.ArgonSaltSize)
+	salt, err := getRandomBytes(constants.ArgonSaltLength)
 	if err != nil {
 		return fmt.Errorf("fejl ved generering af salt: %w", err)
 	}
@@ -33,6 +33,8 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		password = cryptoutils.GenerateSecurePassword(constants.PasswordLength)
 		fmt.Printf("Tilfældigt kodeord er genereret: %s\n", password)
 	}
+
+	fmt.Printf("Afleder sikker krypteringsnøgle med Argon2id ud fra kodeord...\n")
 
 	key, err := cryptoutils.DeriveKeyArgon2id([]byte(password), salt)
 	if err != nil {
@@ -117,6 +119,8 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		return fmt.Errorf("fejl ved læsning af header: %w", err)
 	}
 
+	fmt.Printf("Afleder sikker krypteringsnøgle med Argon2id ud fra kodeord...\n")
+
 	// Læs: Søg 0 bytes væk fra nuværende position for at få den aktuelle offset
 	currentPos, _ := inFile.Seek(0, io.SeekCurrent)
 	headerLen := currentPos
@@ -134,6 +138,8 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	ciphertextWithTagLen := fileSize - headerLen
 	ciphertextWithTag := make([]byte, ciphertextWithTagLen)
 
+	fmt.Println("Læser inputfil ind i hukommelsen til dekryptering...")
+
 	if _, err := io.ReadFull(inFile, ciphertextWithTag); err != nil {
 		return fmt.Errorf("fejl ved læsning af krypteret data: %w", err)
 	}
@@ -141,6 +147,8 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	fmt.Println("Dekrypterer og autentificerer filen...")
 
 	aad := headers.GetFileHeaderBytes(header)
+
+	fmt.Printf("Dekrypterer fil med XChaCha20-Poly1305...\n")
 
 	plaintext, err := aead.Open(nil, header.XChaChaNonce, ciphertextWithTag, aad)
 	if err != nil {
