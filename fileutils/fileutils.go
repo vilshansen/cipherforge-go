@@ -54,7 +54,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	header := headers.FileHeader{
 		MagicMarker: constants.MagicMarker, Argon2Salt: salt, XChaChaNonce: nonce, FileName: filepath.Base(inputFile),
 	}
-	headerLen, err := headers.WriteHeader(header, outFile)
+	headerLen, err := headers.WriteFileHeader(header, outFile)
 	if err != nil {
 		return fmt.Errorf("fejl ved skrivning af header: %w", err)
 	}
@@ -70,7 +70,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	defer cryptoutils.ZeroBytes(plaintext)
 
 	fmt.Printf("Krypterer %.2f MB fil med XChaCha20-Poly1305...\n", float64(fileSize)/(1024*1024))
-	ciphertextWithTag := aead.Seal(nil, nonce, plaintext, headers.GetHeaderBytes(header))
+	ciphertextWithTag := aead.Seal(nil, nonce, plaintext, headers.GetFileHeaderBytes(header))
 	if _, err := outFile.Write(ciphertextWithTag); err != nil {
 		return fmt.Errorf("fejl ved skrivning af krypteret data: %w", err)
 	}
@@ -107,7 +107,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	}
 	fileSize := stat.Size()
 
-	header, err := headers.ReadHeader(inFile)
+	header, err := headers.ReadFileHeader(inFile)
 	if err != nil {
 		return fmt.Errorf("fejl ved læsning af header: %w", err)
 	}
@@ -135,7 +135,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 
 	fmt.Println("Dekrypterer og autentificerer filen...")
 
-	aad := headers.GetHeaderBytes(header)
+	aad := headers.GetFileHeaderBytes(header)
 
 	plaintext, err := aead.Open(nil, header.XChaChaNonce, ciphertextWithTag, aad)
 	if err != nil {
