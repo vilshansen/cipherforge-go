@@ -5,8 +5,8 @@ const (
 	KeySize         = 32 // 256-bit XChaCha20 nøgle
 	XNonceSize      = 24 // 192-bit XChaCha20 Nonce (Extended Nonce)
 	TagSize         = 16 // 128-bit Poly1305 autentificeringstag
-	PasswordLength  = 32 // Standard længde for tilfældigt password
-	CharacterPool   = "!#$%&*+-0123456789?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	PasswordLength  = 45 // Standard længde for tilfældigt password.
+	CharacterPool   = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	ArgonIterations = 10         // iterations
 	ArgonMemory     = 512 * 1024 // 512MB in KiB
 	ArgonThreads    = 4          // parallelism

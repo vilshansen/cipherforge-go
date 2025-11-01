@@ -11,14 +11,26 @@ import (
 
 func GenerateSecurePassword(length int) ([]byte, error) {
 	poolLen := big.NewInt(int64(len(constants.CharacterPool)))
-	result := make([]byte, length)
 
-	for i := 0; i < length; i++ {
+	// Generate the required number of random characters
+	charsNeeded := length
+	randomChars := make([]byte, charsNeeded)
+
+	for i := 0; i < charsNeeded; i++ {
 		idx, err := rand.Int(rand.Reader, poolLen)
 		if err != nil {
 			return nil, fmt.Errorf("fejl ved generering af sikkert, tilfældigt indeks: %v", err)
 		}
-		result[i] = constants.CharacterPool[idx.Int64()]
+		randomChars[i] = constants.CharacterPool[idx.Int64()]
+	}
+
+	// Insert hyphens every 5 characters
+	var result []byte
+	for i := 0; i < charsNeeded; i++ {
+		if i > 0 && i%5 == 0 {
+			result = append(result, '-')
+		}
+		result = append(result, randomChars[i])
 	}
 
 	return result, nil
