@@ -7,10 +7,10 @@ const (
 	TagSize         = 16 // 128-bit Poly1305 autentificeringstag
 	PasswordLength  = 32 // Standard længde for tilfældigt password
 	CharacterPool   = "!#$%&*+-0123456789?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	ArgonIterations = 2               // iterations
-	ArgonMemory     = 2 * 1024 * 1024 // 2GB in KiB
-	ArgonThreads    = 4               // parallelism
-	ArgonSaltLength = 16              // 128-bit salt
+	ArgonIterations = 10         // iterations
+	ArgonMemory     = 512 * 1024 // 512MB in KiB
+	ArgonThreads    = 4          // parallelism
+	ArgonSaltLength = 16         // 128-bit salt
 )
 
 // HelpText indeholder den fulde, formaterede hjælpevejledning til CLI-værktøjet.
