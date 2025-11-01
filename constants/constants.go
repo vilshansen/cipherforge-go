@@ -18,9 +18,9 @@ const HelpText = `
 NAVN
     cipherforge - Kryptering og dekryptering af filer med XChaCha20-Poly1305 og Argon2id nøgleafledning.
 
-SYNOPSIS (USAGE)
+SYNOPSIS
     Krypter:   cipherforge -ef -i <input_fil> -o <output_fil> [-p <kodeord>]
-	Dekrypter: cipherforge -df -i <input_fil> -o <output_fil> [-p <kodeord>]
+    Dekrypter: cipherforge -df -i <input_fil> -o <output_fil> [-p <kodeord>]
 
 BESKRIVELSE
     Cipherforge er et værktøj til at kryptere og dekryptere filer ved hjælp af de stærkeste moderne

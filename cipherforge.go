@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/vilshansen/cipherforge-go/constants"
 	"github.com/vilshansen/cipherforge-go/fileutils"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Brug af programmet:")
-		flag.Usage()
+		fmt.Print(constants.HelpText)
 		os.Exit(1)
 	}
 
