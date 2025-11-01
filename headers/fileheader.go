@@ -10,34 +10,26 @@ import (
 )
 
 type FileHeader struct {
-	Magic    string
-	ScryptN  int
-	ScryptR  int
-	ScryptP  int
-	Salt     []byte
-	Nonce    []byte
-	FileName string
+	MagicMarker  string
+	Argon2Salt   []byte
+	XChaChaNonce []byte
+	FileName     string
 }
 
 func GetHeaderBytes(header FileHeader) []byte {
 	var buf bytes.Buffer
-	magic := []byte(header.Magic)
+	magicMarker := []byte(header.MagicMarker)
 
 	// Skriv Magic Marker
-	buf.Write(magic)
-
-	// Skriv Scrypt Parametre (Big Endian)
-	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptN))
-	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptR))
-	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptP))
+	buf.Write(magicMarker)
 
 	// Skriv Salt (Længde + Data)
-	binary.Write(&buf, binary.BigEndian, uint32(len(header.Salt)))
-	buf.Write(header.Salt)
+	binary.Write(&buf, binary.BigEndian, uint32(len(header.Argon2Salt)))
+	buf.Write(header.Argon2Salt)
 
 	// Skriv XNonce (Længde + Data)
-	binary.Write(&buf, binary.BigEndian, uint32(len(header.Nonce)))
-	buf.Write(header.Nonce)
+	binary.Write(&buf, binary.BigEndian, uint32(len(header.XChaChaNonce)))
+	buf.Write(header.XChaChaNonce)
 
 	// Skriv Originalt Filnavn (som UTF-8 streng, Længde + Data)
 	fileNameBytes := []byte(header.FileName)
@@ -64,29 +56,16 @@ func ReadHeader(input io.Reader) (FileHeader, error) {
 	if _, err := io.ReadFull(input, magic); err != nil {
 		return header, fmt.Errorf("fejl ved læsning af magic marker: %w", err)
 	}
-	header.Magic = string(magic)
-	if header.Magic != constants.MagicMarker {
-		return header, fmt.Errorf("ukendt filformat. Forventet: %s, Fundet: %s", constants.MagicMarker, header.Magic)
+	header.MagicMarker = string(magic)
+	if header.MagicMarker != constants.MagicMarker {
+		return header, fmt.Errorf("ukendt filformat. Forventet: %s, Fundet: %s", constants.MagicMarker, header.MagicMarker)
 	}
-	var n, r, p uint32
-	if err := binary.Read(input, binary.BigEndian, &n); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af scrypt N: %w", err)
-	}
-	if err := binary.Read(input, binary.BigEndian, &r); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af scrypt R: %w", err)
-	}
-	if err := binary.Read(input, binary.BigEndian, &p); err != nil {
-		return header, fmt.Errorf("fejl ved læsning af scrypt P: %w", err)
-	}
-	header.ScryptN = int(n)
-	header.ScryptR = int(r)
-	header.ScryptP = int(p)
 	var saltLen uint32
 	if err := binary.Read(input, binary.BigEndian, &saltLen); err != nil {
 		return header, fmt.Errorf("fejl ved læsning af længde på salt: %w", err)
 	}
-	header.Salt = make([]byte, saltLen)
-	if _, err := io.ReadFull(input, header.Salt); err != nil {
+	header.Argon2Salt = make([]byte, saltLen)
+	if _, err := io.ReadFull(input, header.Argon2Salt); err != nil {
 		return header, fmt.Errorf("fejl ved læsning af salt: %w", err)
 	}
 	var nonceLen uint32
@@ -96,8 +75,8 @@ func ReadHeader(input io.Reader) (FileHeader, error) {
 	if nonceLen != constants.XNonceSize {
 		return header, fmt.Errorf("ugyldig længde på nonce: %d, forventet %d", nonceLen, constants.XNonceSize)
 	}
-	header.Nonce = make([]byte, nonceLen)
-	if _, err := io.ReadFull(input, header.Nonce); err != nil {
+	header.XChaChaNonce = make([]byte, nonceLen)
+	if _, err := io.ReadFull(input, header.XChaChaNonce); err != nil {
 		return header, fmt.Errorf("fejl ved læsning af nonce: %w", err)
 	}
 	var nameLen uint32

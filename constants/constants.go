@@ -8,9 +8,10 @@ const (
 	TagSize        = 16 // 128-bit Poly1305 autentificeringstag
 	PasswordLength = 32 // Standard længde for tilfældigt password
 	CharacterPool  = "!#$%&*+-0123456789?@ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	ScryptN        = 1 << 20 // 1,048,576 iterationer
-	ScryptR        = 8
-	ScryptP        = 1
+	ArgonTime      = 3         // iterations
+	ArgonMemory    = 64 * 1024 // 64MB in KiB
+	ArgonThreads   = 2
+	ArgonSaltSize  = 16 // 128-bit salt
 )
 
 // HelpText indeholder den fulde, formaterede hjælpevejledning til CLI-værktøjet.
