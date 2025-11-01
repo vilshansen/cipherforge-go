@@ -8,7 +8,6 @@ import (
 
 	"github.com/vilshansen/cipherforge-go/constants"
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/scrypt"
 )
 
 func GenerateSecurePassword(length int) string {
@@ -24,19 +23,6 @@ func GenerateSecurePassword(length int) string {
 	}
 
 	return string(result)
-}
-
-func DeriveKey(password string, salt []byte, N, R, P int) ([]byte, error) {
-	if password == "" {
-		return nil, fmt.Errorf("kodeord må ikke være tomt")
-	}
-	fmt.Println("Udleder sikker krypteringsnøgle fra kodeord via scrypt...")
-	key, err := scrypt.Key([]byte(password), salt, N, R, P, constants.KeySize)
-	if err != nil {
-		return nil, fmt.Errorf("scrypt nøgleafledning mislykkedes: %w", err)
-	}
-
-	return key, nil
 }
 
 func DeriveKeyArgon2id(password []byte, salt []byte) ([]byte, error) {

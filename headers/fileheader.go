@@ -39,14 +39,13 @@ func GetFileHeaderBytes(header FileHeader) []byte {
 	return buf.Bytes()
 }
 
-func WriteFileHeader(header FileHeader, output io.Writer) (int64, error) {
+func WriteFileHeader(header FileHeader, output io.Writer) error {
 	headerData := GetFileHeaderBytes(header)
 	n, err := output.Write(headerData)
-	if err != nil {
-		return 0, fmt.Errorf("fejl ved skrivning af header: %w", err)
+	if n == 0 || err != nil {
+		return fmt.Errorf("fejl ved skrivning af header: %w", err)
 	}
-
-	return int64(n), nil
+	return nil
 }
 
 // readHeader læser og validerer metadata fra filen.

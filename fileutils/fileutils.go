@@ -16,20 +16,24 @@ import (
 )
 
 func EncryptFile(inputFile string, outputFile string, userPassword string) error {
-	salt := make([]byte, constants.ArgonSaltSize)
-	if _, err := rand.Read(salt); err != nil {
-		return fmt.Errorf("kunne ikke generere tilfældigt salt: %w", err)
+	salt, err := getRandomBytes(constants.ArgonSaltSize)
+	if err != nil {
+		return fmt.Errorf("fejl ved generering af salt: %w", err)
 	}
+	defer cryptoutils.ZeroBytes(salt)
 
-	nonce := make([]byte, constants.XNonceSize)
-	if _, err := rand.Read(nonce); err != nil {
-		return fmt.Errorf("kunne ikke generere tilfældigt nonce: %w", err)
+	nonce, err := getRandomBytes(constants.XNonceSize)
+	if err != nil {
+		return fmt.Errorf("fejl ved generering af nonce: %w", err)
 	}
+	defer cryptoutils.ZeroBytes(nonce)
+
 	password := userPassword
 	if password == "" {
 		password = cryptoutils.GenerateSecurePassword(constants.PasswordLength)
 		fmt.Printf("Tilfældigt kodeord er genereret: %s\n", password)
 	}
+
 	key, err := cryptoutils.DeriveKeyArgon2id([]byte(password), salt)
 	if err != nil {
 		return fmt.Errorf("fejl i nøgleafledning: %w", err)
@@ -41,40 +45,41 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		return fmt.Errorf("kunne ikke åbne inputfil: %w", err)
 	}
 	defer inFile.Close()
-	stat, err := inFile.Stat()
-	if err != nil {
-		return fmt.Errorf("kunne ikke læse filstørrelse: %w", err)
-	}
-	fileSize := stat.Size()
+
 	outFile, err := os.Create(outputFile)
 	if err != nil {
 		return fmt.Errorf("kunne ikke oprette outputfil: %w", err)
 	}
 	defer outFile.Close()
+
 	header := headers.FileHeader{
 		MagicMarker: constants.MagicMarker, Argon2Salt: salt, XChaChaNonce: nonce, FileName: filepath.Base(inputFile),
 	}
-	headerLen, err := headers.WriteFileHeader(header, outFile)
-	if err != nil {
+
+	if err := headers.WriteFileHeader(header, outFile); err != nil {
 		return fmt.Errorf("fejl ved skrivning af header: %w", err)
 	}
+
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return fmt.Errorf("kunne ikke initialisere XChaCha20-Poly1305: %w", err)
 	}
+
 	fmt.Println("Læser inputfil ind i hukommelsen til kryptering...")
+
 	plaintext, err := io.ReadAll(inFile)
 	if err != nil {
 		return fmt.Errorf("fejl ved læsning af inputfil: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(plaintext)
 
-	fmt.Printf("Krypterer %.2f MB fil med XChaCha20-Poly1305...\n", float64(fileSize)/(1024*1024))
+	fmt.Printf("Krypterer fil med XChaCha20-Poly1305...\n")
+
 	ciphertextWithTag := aead.Seal(nil, nonce, plaintext, headers.GetFileHeaderBytes(header))
 	if _, err := outFile.Write(ciphertextWithTag); err != nil {
 		return fmt.Errorf("fejl ved skrivning af krypteret data: %w", err)
 	}
-	fmt.Printf("Kryptering fuldført. Output filstørrelse: %.2f MB\n", float64(headerLen+int64(len(ciphertextWithTag)))/(1024*1024))
+	fmt.Printf("Kryptering fuldført.\n")
 
 	return nil
 }
@@ -155,4 +160,12 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 
 	fmt.Println("Dekryptering fuldført.")
 	return nil
+}
+
+func getRandomBytes(howManyBytes int) ([]byte, error) {
+	randomBytes := make([]byte, howManyBytes)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return nil, fmt.Errorf("kunne ikke generere tilfældige bytes: %w", err)
+	}
+	return randomBytes, nil
 }
