@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/vilshansen/cipherforge-go/constants"
 	"github.com/vilshansen/cipherforge-go/fileutils"
 )
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Printf(constants.HelpText)
-		return
+		fmt.Println("Brug af programmet:")
+		flag.Usage()
+		os.Exit(1)
 	}
 
 	defer func() {
@@ -24,17 +24,19 @@ func main() {
 	operation, inputFile, outputFile, password, err := getParameters()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Fejl ved hentning af parametre: %v\n", err)
-		return
+		os.Exit(1)
 	}
 
 	switch operation {
 	case "encrypt":
 		if err := fileutils.EncryptFile(inputFile, outputFile, password); err != nil {
 			fmt.Fprintf(os.Stderr, "Fejl ved kryptering: %v\n", err)
+			os.Exit(1)
 		}
 	case "decrypt":
 		if err := fileutils.DecryptFile(inputFile, outputFile, password); err != nil {
 			fmt.Fprintf(os.Stderr, "Fejl ved dekryptering: %v\n", err)
+			os.Exit(1)
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "ugyldig operation. Brug -ef (encrypt) eller -df (decrypt)")

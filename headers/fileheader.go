@@ -42,7 +42,7 @@ func GetFileHeaderBytes(header FileHeader) []byte {
 func WriteFileHeader(header FileHeader, output io.Writer) error {
 	headerData := GetFileHeaderBytes(header)
 	n, err := output.Write(headerData)
-	if n == 0 || err != nil {
+	if n != len(headerData) || err != nil {
 		return fmt.Errorf("fejl ved skrivning af header: %w", err)
 	}
 	return nil

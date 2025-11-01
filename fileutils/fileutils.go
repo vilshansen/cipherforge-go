@@ -28,18 +28,25 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 	defer cryptoutils.ZeroBytes(nonce)
 
-	password := userPassword
-	if password == "" {
-		password = cryptoutils.GenerateSecurePassword(constants.PasswordLength)
-		fmt.Printf("Tilfældigt kodeord er genereret: %s\n", password)
+	var passwordBytes []byte
+	if userPassword != "" {
+		fmt.Println("Anvender bruger-angivet kodeord til kryptering.")
+		passwordBytes = []byte(userPassword)
+	} else {
+		fmt.Println("Genererer tilfældigt, sikkert kodeord til kryptering...")
+		if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
+			return fmt.Errorf("fejl ved generering af tilfældigt kodeord: %w", err)
+		}
+		fmt.Printf("Tilfældigt kodeord er genereret: %s\n", string(passwordBytes))
 	}
 
 	fmt.Printf("Afleder sikker krypteringsnøgle med Argon2id ud fra kodeord...\n")
 
-	key, err := cryptoutils.DeriveKeyArgon2id([]byte(password), salt)
+	key, err := cryptoutils.DeriveKeyArgon2id(passwordBytes, salt)
 	if err != nil {
 		return fmt.Errorf("fejl i nøgleafledning: %w", err)
 	}
+	defer cryptoutils.ZeroBytes(passwordBytes)
 	defer cryptoutils.ZeroBytes(key)
 
 	inFile, err := os.Open(inputFile)
@@ -90,17 +97,15 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	var passwordChars []byte
 	var err error
 
-	password := userPassword
-
-	if password == "" {
+	passwordChars = []byte(userPassword)
+	if len(passwordChars) == 0 {
 		fmt.Println("Indtast dit kodeord til dekryptering:")
 		passwordChars, err = term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
 			return fmt.Errorf("kunne ikke læse kodeord fra terminalen: %w", err)
 		}
-		password = string(passwordChars)
-		defer cryptoutils.ZeroBytes(passwordChars)
 	}
+	defer cryptoutils.ZeroBytes(passwordChars)
 
 	inFile, err := os.Open(inputFile)
 	if err != nil {
@@ -122,9 +127,13 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	fmt.Printf("Afleder sikker krypteringsnøgle med Argon2id ud fra kodeord...\n")
 
 	// Læs: Søg 0 bytes væk fra nuværende position for at få den aktuelle offset
-	currentPos, _ := inFile.Seek(0, io.SeekCurrent)
+	currentPos, err := inFile.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("fejl ved læsning af nuværende position: %w", err)
+	}
+
 	headerLen := currentPos
-	key, err := cryptoutils.DeriveKeyArgon2id([]byte(password), header.Argon2Salt)
+	key, err := cryptoutils.DeriveKeyArgon2id(passwordChars, header.Argon2Salt)
 	if err != nil {
 		return fmt.Errorf("fejl i nøgleafledning: %w", err)
 	}

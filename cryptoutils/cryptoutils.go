@@ -3,26 +3,25 @@ package cryptoutils
 import (
 	"crypto/rand"
 	"fmt"
-	"log"
 	"math/big"
 
 	"github.com/vilshansen/cipherforge-go/constants"
 	"golang.org/x/crypto/argon2"
 )
 
-func GenerateSecurePassword(length int) string {
+func GenerateSecurePassword(length int) ([]byte, error) {
 	poolLen := big.NewInt(int64(len(constants.CharacterPool)))
 	result := make([]byte, length)
 
 	for i := 0; i < length; i++ {
 		idx, err := rand.Int(rand.Reader, poolLen)
 		if err != nil {
-			log.Fatalf("Fejl ved generering af sikkert, tilfældigt indeks: %v", err)
+			return nil, fmt.Errorf("fejl ved generering af sikkert, tilfældigt indeks: %v", err)
 		}
 		result[i] = constants.CharacterPool[idx.Int64()]
 	}
 
-	return string(result)
+	return result, nil
 }
 
 func DeriveKeyArgon2id(password []byte, salt []byte) ([]byte, error) {
