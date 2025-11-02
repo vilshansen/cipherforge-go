@@ -16,7 +16,7 @@ import (
 )
 
 func EncryptFile(inputFile string, outputFile string, userPassword string) error {
-	salt, err := getRandomBytes(constants.ArgonSaltLength)
+	salt, err := getRandomBytes(constants.Argon2SaltLength)
 	if err != nil {
 		return fmt.Errorf("fejl ved generering af salt: %w", err)
 	}
