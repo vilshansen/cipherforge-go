@@ -529,35 +529,3 @@ func (r *slowReader) Read(p []byte) (n int, err error) {
 	}
 	return 0, nil
 }
-
-// Benchmark tests
-func BenchmarkGetFileHeaderBytes(b *testing.B) {
-	header := createTestHeader(&testing.T{})
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = GetFileHeaderBytes(header)
-	}
-}
-
-func BenchmarkWriteFileHeader(b *testing.B) {
-	header := createTestHeader(&testing.T{})
-	var buf bytes.Buffer
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf.Reset()
-		WriteFileHeader(header, &buf)
-	}
-}
-
-func BenchmarkReadFileHeader(b *testing.B) {
-	header := createTestHeader(&testing.T{})
-	headerBytes := GetFileHeaderBytes(header)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		reader := bytes.NewReader(headerBytes)
-		ReadFileHeader(reader)
-	}
-}

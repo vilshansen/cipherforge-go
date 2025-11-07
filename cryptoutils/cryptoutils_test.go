@@ -454,47 +454,6 @@ func removeHyphens(password []byte) []byte {
 	return bytes.ReplaceAll(password, []byte("-"), []byte{})
 }
 
-// Benchmark tests
-func BenchmarkGenerateSecurePassword(b *testing.B) {
-	lengths := []int{16, 32, 64}
-	for _, length := range lengths {
-		b.Run(string(rune(length)), func(b *testing.B) {
-			for i := 0; i < b.N; i++ {
-				password, err := GenerateSecurePassword(length)
-				if err != nil {
-					b.Fatalf("GenerateSecurePassword failed: %v", err)
-				}
-				ZeroBytes(password) // Clean up
-			}
-		})
-	}
-}
-
-func BenchmarkDeriveKeyArgon2id(b *testing.B) {
-	password := []byte("benchmark-password")
-	salt := make([]byte, constants.Argon2SaltLength)
-	rand.Read(salt)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		key, err := DeriveKeyArgon2id(password, salt)
-		if err != nil {
-			b.Fatalf("DeriveKeyArgon2id failed: %v", err)
-		}
-		ZeroBytes(key) // Clean up
-	}
-}
-
-func BenchmarkGenerateSalt(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		salt, err := GenerateSalt()
-		if err != nil {
-			b.Fatalf("GenerateSalt failed: %v", err)
-		}
-		ZeroBytes(salt) // Clean up
-	}
-}
-
 // Test that our Argon2 implementation matches the standard library's implementation
 // when using equivalent parameters
 func TestDeriveKeyArgon2id_MatchesStandardLibrary(t *testing.T) {
@@ -852,37 +811,4 @@ func TestXChaCha20Poly1305_WithArgon2Key(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Benchmark against standard library to ensure our wrapper doesn't add significant overhead
-func BenchmarkDeriveKeyArgon2id_VsStandardLibrary(b *testing.B) {
-	password := []byte("benchmark-password")
-	salt := make([]byte, constants.Argon2SaltLength)
-	for i := range salt {
-		salt[i] = byte(i)
-	}
-
-	b.Run("OurImplementation", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			key, err := DeriveKeyArgon2id(password, salt)
-			if err != nil {
-				b.Fatalf("DeriveKeyArgon2id failed: %v", err)
-			}
-			ZeroBytes(key)
-		}
-	})
-
-	b.Run("StandardLibrary", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			key := argon2.IDKey(
-				password,
-				salt,
-				constants.Argon2Iterations,
-				constants.Argon2Memory,
-				constants.Argon2Threads,
-				constants.KeySize,
-			)
-			ZeroBytes(key)
-		}
-	})
 }

@@ -1,6 +1,7 @@
 package fileutils
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -29,15 +30,36 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	defer cryptoutils.ZeroBytes(nonce)
 
 	var passwordBytes []byte
-	if userPassword != "" {
-		fmt.Println("Anvender bruger-angivet kodeord til kryptering.")
-		passwordBytes = []byte(userPassword)
-	} else {
-		fmt.Println("Genererer tilfældigt, sikkert kodeord til kryptering...")
-		if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
-			return fmt.Errorf("fejl ved generering af tilfældigt kodeord: %w", err)
+	var passwordBytesVerify []byte
+	if userPassword == "" {
+		fmt.Println("Indtast dit kodeord til kryptering, eller tryk enter for at generere et stærkt kodeord:")
+		passwordBytes, err = readPasswordFromTerminal(passwordBytes, err)
+		if err != nil {
+			return err
 		}
-		fmt.Printf("Tilfældigt kodeord er genereret: %s\n", string(passwordBytes))
+		if len(passwordBytes) > 0 {
+			fmt.Println("Bekræft dit kodeord til kryptering:")
+			passwordBytesVerify, err = readPasswordFromTerminal(passwordBytesVerify, err)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(passwordBytes, passwordBytesVerify) {
+				return fmt.Errorf("de to indtastede kodeord stemmer ikke overens")
+			}
+		}
+		if passwordBytes == nil {
+			fmt.Println("Intet kodeord indtastet...")
+			passwordBytes, err = generateSecurePassword(passwordBytes, err)
+		}
+		if err != nil {
+			return err
+		}
+	} else {
+		passwordBytes = []byte(userPassword)
+		fmt.Println("Bruger kodeord fra kommandolinje.")
+		if err != nil {
+			return err
+		}
 	}
 
 	fmt.Printf("Afleder sikker krypteringsnøgle med Argon2id ud fra kodeord...\n")
@@ -91,6 +113,23 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	fmt.Printf("Kryptering fuldført.\n")
 
 	return nil
+}
+
+func readPasswordFromTerminal(passwordBytes []byte, err error) ([]byte, error) {
+	passwordBytes, err = term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return nil, fmt.Errorf("kunne ikke læse kodeord fra terminalen: %w", err)
+	}
+	return passwordBytes, nil
+}
+
+func generateSecurePassword(passwordBytes []byte, err error) ([]byte, error) {
+	fmt.Println("Genererer tilfældigt, sikkert kodeord til kryptering...")
+	if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
+		return nil, fmt.Errorf("fejl ved generering af tilfældigt kodeord: %w", err)
+	}
+	fmt.Printf("Tilfældigt kodeord er genereret: %s\n", string(passwordBytes))
+	return passwordBytes, nil
 }
 
 func DecryptFile(inputFile, outputFile, userPassword string) error {

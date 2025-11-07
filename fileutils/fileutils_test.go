@@ -58,12 +58,6 @@ func TestEncryptFile(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "successful encryption with empty password",
-			content:  "Another test content",
-			password: "",
-			wantErr:  false,
-		},
-		{
 			name:     "encrypt empty file",
 			content:  "",
 			password: "test-password",
@@ -578,59 +572,6 @@ func TestEncryptFile_MemorySafety(t *testing.T) {
 	// If we get here without panics, memory management is likely working
 	// In a real scenario, you might use more advanced techniques to verify
 	// that memory was actually zeroed, but that's complex in Go tests
-}
-
-// Benchmark tests
-func BenchmarkEncryptFile(b *testing.B) {
-	// Create test file once
-	content := string(make([]byte, 1024*1024)) // 1MB
-	inputFile, _ := os.CreateTemp("", "bench_encrypt_in_*")
-	inputFile.WriteString(content)
-	inputFile.Close()
-	defer os.Remove(inputFile.Name())
-
-	outputFile := inputFile.Name() + ".enc"
-	defer os.Remove(outputFile)
-
-	password := "benchmark-password"
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		err := EncryptFile(inputFile.Name(), outputFile, password)
-		if err != nil {
-			b.Fatalf("EncryptFile failed: %v", err)
-		}
-		os.Remove(outputFile) // Clean up for next iteration
-	}
-}
-
-func BenchmarkDecryptFile(b *testing.B) {
-	// Create and encrypt test file once
-	content := string(make([]byte, 1024*1024)) // 1MB
-	inputFile, _ := os.CreateTemp("", "bench_decrypt_in_*")
-	inputFile.WriteString(content)
-	inputFile.Close()
-	defer os.Remove(inputFile.Name())
-
-	encryptedFile := inputFile.Name() + ".enc"
-	password := "benchmark-password"
-
-	err := EncryptFile(inputFile.Name(), encryptedFile, password)
-	if err != nil {
-		b.Fatalf("Setup failed: %v", err)
-	}
-	defer os.Remove(encryptedFile)
-
-	decryptedFile := inputFile.Name() + ".dec"
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		err := DecryptFile(encryptedFile, decryptedFile, password)
-		if err != nil {
-			b.Fatalf("DecryptFile failed: %v", err)
-		}
-		os.Remove(decryptedFile) // Clean up for next iteration
-	}
 }
 
 // Helper function to check if string contains substring
