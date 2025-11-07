@@ -29,17 +29,16 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 	defer cryptoutils.ZeroBytes(nonce)
 
-	var passwordBytes []byte
-	var passwordBytesVerify []byte
-	if userPassword == "" {
+	var passwordBytes []byte = []byte(userPassword)
+	if len(passwordBytes) == 0 {
 		fmt.Println("Indtast dit kodeord til kryptering, eller tryk enter for at generere et stærkt kodeord:")
-		passwordBytes, err = readPasswordFromTerminal(passwordBytes, err)
+		passwordBytes, err = readPasswordFromTerminal()
 		if err != nil {
 			return err
 		}
 		if len(passwordBytes) > 0 {
 			fmt.Println("Bekræft dit kodeord til kryptering:")
-			passwordBytesVerify, err = readPasswordFromTerminal(passwordBytesVerify, err)
+			passwordBytesVerify, err := readPasswordFromTerminal()
 			if err != nil {
 				return err
 			}
@@ -115,8 +114,8 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	return nil
 }
 
-func readPasswordFromTerminal(passwordBytes []byte, err error) ([]byte, error) {
-	passwordBytes, err = term.ReadPassword(int(syscall.Stdin))
+func readPasswordFromTerminal() ([]byte, error) {
+	var passwordBytes, err = term.ReadPassword(int(syscall.Stdin))
 	if err != nil {
 		return nil, fmt.Errorf("kunne ikke læse kodeord fra terminalen: %w", err)
 	}
