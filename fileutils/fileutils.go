@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"syscall"
 
 	"github.com/vilshansen/cipherforge-go/constants"
@@ -83,7 +82,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	defer cryptoutils.ZeroBytes(nonce)
 
 	header := headers.FileHeader{
-		MagicMarker: constants.MagicMarker, ScryptSalt: salt, ScryptN: constants.ScryptN, ScryptR: constants.ScryptR, ScryptP: constants.ScryptP, XChaChaNonce: nonce, FileName: filepath.Base(inputFile),
+		MagicMarker: constants.MagicMarker, ScryptSalt: salt, ScryptN: constants.ScryptN, ScryptR: constants.ScryptR, ScryptP: constants.ScryptP, XChaChaNonce: nonce,
 	}
 
 	if err := headers.WriteFileHeader(header, outFile); err != nil {

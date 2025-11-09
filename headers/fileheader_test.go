@@ -31,7 +31,6 @@ func createTestHeader(t *testing.T) FileHeader {
 		ScryptR:      R,
 		ScryptP:      P,
 		XChaChaNonce: nonce,
-		FileName:     "testfile.txt",
 	}
 }
 
@@ -54,7 +53,6 @@ func TestFileHeader_GetFileHeaderBytes(t *testing.T) {
 				MagicMarker:  constants.MagicMarker,
 				ScryptSalt:   make([]byte, constants.SaltLength),
 				XChaChaNonce: make([]byte, constants.XNonceSize),
-				FileName:     "",
 			},
 			wantErr:  false,
 			checkLen: true,
@@ -65,7 +63,6 @@ func TestFileHeader_GetFileHeaderBytes(t *testing.T) {
 				MagicMarker:  constants.MagicMarker,
 				ScryptSalt:   make([]byte, constants.SaltLength),
 				XChaChaNonce: make([]byte, constants.XNonceSize),
-				FileName:     strings.Repeat("a", 1000), // Very long filename
 			},
 			wantErr:  false,
 			checkLen: true,
@@ -76,7 +73,6 @@ func TestFileHeader_GetFileHeaderBytes(t *testing.T) {
 				MagicMarker:  constants.MagicMarker,
 				ScryptSalt:   make([]byte, constants.SaltLength),
 				XChaChaNonce: make([]byte, constants.XNonceSize),
-				FileName:     "file with spaces and spéciål chàrs.txt",
 			},
 			wantErr:  false,
 			checkLen: true,
@@ -110,9 +106,6 @@ func TestFileHeader_GetFileHeaderBytes(t *testing.T) {
 				if !bytes.Equal(parsedHeader.XChaChaNonce, tt.header.XChaChaNonce) {
 					t.Error("XChaChaNonce mismatch")
 				}
-				if parsedHeader.FileName != tt.header.FileName {
-					t.Errorf("FileName mismatch: got %q, want %q", parsedHeader.FileName, tt.header.FileName)
-				}
 			}
 		})
 	}
@@ -136,7 +129,6 @@ func TestWriteFileHeader(t *testing.T) {
 				MagicMarker:  constants.MagicMarker,
 				ScryptSalt:   []byte{},
 				XChaChaNonce: make([]byte, constants.XNonceSize),
-				FileName:     "test.txt",
 			},
 			wantErr: false, // Empty salt is technically valid
 		},
@@ -288,56 +280,6 @@ func TestReadFileHeader(t *testing.T) {
 			wantErr:     true,
 			errContains: "unexpected EOF",
 		},
-		{
-			name: "truncated filename length",
-			data: func() []byte {
-				var buf bytes.Buffer
-				buf.Write([]byte(constants.MagicMarker))
-
-				// Write valid salt
-				binaryWrite(&buf, uint32(constants.SaltLength))
-				buf.Write(make([]byte, constants.SaltLength))
-
-				binaryWrite(&buf, uint32(constants.ScryptN))
-				binaryWrite(&buf, uint32(constants.ScryptR))
-				binaryWrite(&buf, uint32(constants.ScryptP))
-
-				// Write valid nonce
-				binaryWrite(&buf, uint32(constants.XNonceSize))
-				buf.Write(make([]byte, constants.XNonceSize))
-
-				// Don't write filename length at all
-				return buf.Bytes()
-			}(),
-			wantErr:     true,
-			errContains: "længde på filnavn",
-		},
-		{
-			name: "truncated filename data",
-			data: func() []byte {
-				var buf bytes.Buffer
-				buf.Write([]byte(constants.MagicMarker))
-
-				// Write valid salt
-				binaryWrite(&buf, uint32(constants.SaltLength))
-				buf.Write(make([]byte, constants.SaltLength))
-
-				binaryWrite(&buf, uint32(constants.ScryptN))
-				binaryWrite(&buf, uint32(constants.ScryptR))
-				binaryWrite(&buf, uint32(constants.ScryptP))
-
-				// Write valid nonce
-				binaryWrite(&buf, uint32(constants.XNonceSize))
-				buf.Write(make([]byte, constants.XNonceSize))
-
-				// Write filename length but truncated data
-				binaryWrite(&buf, uint32(10)) // 10 byte filename
-				buf.Write([]byte("abc"))      // Only 3 bytes
-				return buf.Bytes()
-			}(),
-			wantErr:     true,
-			errContains: "læsning af filnavn",
-		},
 	}
 
 	for _, tt := range tests {
@@ -387,50 +329,11 @@ func TestReadFileHeader(t *testing.T) {
 }
 
 func TestReadFileHeader_EdgeCases(t *testing.T) {
-	t.Run("extremely long filename", func(t *testing.T) {
-		// Create header with very long filename
-		header := createTestHeader(t)
-		header.FileName = strings.Repeat("x", 10000) // 10KB filename
-
-		headerBytes := GetFileHeaderBytes(header)
-		reader := bytes.NewReader(headerBytes)
-
-		parsedHeader, err := ReadFileHeader(reader)
-		if err != nil {
-			t.Errorf("ReadFileHeader() failed with long filename: %v", err)
-			return
-		}
-
-		if parsedHeader.FileName != header.FileName {
-			t.Errorf("Long filename corrupted: got length %d, want %d",
-				len(parsedHeader.FileName), len(header.FileName))
-		}
-	})
-
-	t.Run("filename with null bytes", func(t *testing.T) {
-		header := createTestHeader(t)
-		header.FileName = "file\x00with\x00null.txt" // Filename with null bytes
-
-		headerBytes := GetFileHeaderBytes(header)
-		reader := bytes.NewReader(headerBytes)
-
-		parsedHeader, err := ReadFileHeader(reader)
-		if err != nil {
-			t.Errorf("ReadFileHeader() failed with null bytes in filename: %v", err)
-			return
-		}
-
-		if parsedHeader.FileName != header.FileName {
-			t.Errorf("Filename with null bytes corrupted")
-		}
-	})
-
 	t.Run("minimum valid header", func(t *testing.T) {
 		header := FileHeader{
 			MagicMarker:  constants.MagicMarker,
 			ScryptSalt:   make([]byte, constants.SaltLength),
 			XChaChaNonce: make([]byte, constants.XNonceSize),
-			FileName:     "", // Empty filename
 		}
 
 		headerBytes := GetFileHeaderBytes(header)
@@ -441,9 +344,17 @@ func TestReadFileHeader_EdgeCases(t *testing.T) {
 			t.Errorf("ReadFileHeader() failed with minimum valid header: %v", err)
 			return
 		}
-
-		if parsedHeader.FileName != "" {
-			t.Errorf("Empty filename not preserved: got %q", parsedHeader.FileName)
+		if parsedHeader.MagicMarker != header.MagicMarker {
+			t.Errorf("Minimum header corrupted MagicMarker: got %q, want %q",
+				parsedHeader.MagicMarker, header.MagicMarker)
+		}
+		if len(parsedHeader.ScryptSalt) != constants.SaltLength {
+			t.Errorf("Minimum header corrupted ScryptSalt length: got %d, want %d",
+				len(parsedHeader.ScryptSalt), constants.SaltLength)
+		}
+		if len(parsedHeader.XChaChaNonce) != constants.XNonceSize {
+			t.Errorf("Minimum header corrupted XChaChaNonce length: got %d, want %d",
+				len(parsedHeader.XChaChaNonce), constants.XNonceSize)
 		}
 	})
 }
@@ -461,11 +372,19 @@ func TestReadFileHeader_WithCustomReader(t *testing.T) {
 			t.Errorf("ReadFileHeader() failed with slow reader: %v", err)
 			return
 		}
-
-		if parsedHeader.FileName != header.FileName {
-			t.Errorf("Slow reader corrupted filename: got %q, want %q",
-				parsedHeader.FileName, header.FileName)
+		if parsedHeader.MagicMarker != header.MagicMarker {
+			t.Errorf("Minimum header corrupted MagicMarker: got %q, want %q",
+				parsedHeader.MagicMarker, header.MagicMarker)
 		}
+		if len(parsedHeader.ScryptSalt) != constants.SaltLength {
+			t.Errorf("Minimum header corrupted ScryptSalt length: got %d, want %d",
+				len(parsedHeader.ScryptSalt), constants.SaltLength)
+		}
+		if len(parsedHeader.XChaChaNonce) != constants.XNonceSize {
+			t.Errorf("Minimum header corrupted XChaChaNonce length: got %d, want %d",
+				len(parsedHeader.XChaChaNonce), constants.XNonceSize)
+		}
+
 	})
 }
 
