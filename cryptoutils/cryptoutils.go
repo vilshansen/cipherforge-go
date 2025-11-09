@@ -6,7 +6,7 @@ import (
 	"math/big"
 
 	"github.com/vilshansen/cipherforge-go/constants"
-	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/scrypt"
 )
 
 func GenerateSecurePassword(length int) ([]byte, error) {
@@ -36,29 +36,34 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 	return result, nil
 }
 
-func DeriveKeyArgon2id(password []byte, salt []byte) ([]byte, error) {
+func DeriveKeyScrypt(password []byte, salt []byte, N int, R int, P int) ([]byte, error) {
 	if len(password) == 0 {
 		return nil, fmt.Errorf("password cannot be empty")
 	}
-	if len(salt) != constants.Argon2SaltLength {
+
+	if len(salt) != constants.SaltLength {
 		return nil, fmt.Errorf("invalid salt length")
 	}
 
-	key := argon2.IDKey(
+	key, err := scrypt.Key(
 		password,
 		salt,
-		constants.Argon2Iterations,
-		constants.Argon2Memory,
-		constants.Argon2Threads,
+		N,
+		R,
+		P,
 		constants.KeySize,
 	)
+
+	if err != nil {
+		return nil, fmt.Errorf("scrypt derivation failed: %w", err)
+	}
 
 	return key, nil
 }
 
 // Generates a secure salt for encryption
 func GenerateSalt() ([]byte, error) {
-	salt := make([]byte, constants.Argon2SaltLength)
+	salt := make([]byte, constants.SaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return nil, fmt.Errorf("failed to generate salt: %w", err)
 	}

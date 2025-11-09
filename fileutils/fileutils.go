@@ -17,18 +17,7 @@ import (
 )
 
 func EncryptFile(inputFile string, outputFile string, userPassword string) error {
-	salt, err := getRandomBytes(constants.Argon2SaltLength)
-	if err != nil {
-		return fmt.Errorf("fejl ved generering af salt: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(salt)
-
-	nonce, err := getRandomBytes(constants.XNonceSize)
-	if err != nil {
-		return fmt.Errorf("fejl ved generering af nonce: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(nonce)
-
+	var err error
 	var passwordBytes []byte = []byte(userPassword)
 	if len(passwordBytes) == 0 {
 		fmt.Println("Indtast dit kodeord til kryptering, eller tryk enter for at generere et stærkt kodeord:")
@@ -61,14 +50,19 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		}
 	}
 
-	fmt.Printf("Afleder sikker krypteringsnøgle med Argon2id ud fra kodeord...\n")
+	fmt.Printf("Afleder sikker krypteringsnøgle med scrypt ud fra kodeord...\n")
 
-	key, err := cryptoutils.DeriveKeyArgon2id(passwordBytes, salt)
+	salt, err := getRandomBytes(constants.SaltLength)
+	if err != nil {
+		return fmt.Errorf("fejl ved generering af salt: %w", err)
+	}
+	defer cryptoutils.ZeroBytes(salt)
+
+	key, err := cryptoutils.DeriveKeyScrypt(passwordBytes, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 	if err != nil {
 		return fmt.Errorf("fejl i nøgleafledning: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(passwordBytes)
-	defer cryptoutils.ZeroBytes(key)
 
 	inFile, err := os.Open(inputFile)
 	if err != nil {
@@ -82,8 +76,14 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 	defer outFile.Close()
 
+	nonce, err := getRandomBytes(constants.XNonceSize)
+	if err != nil {
+		return fmt.Errorf("fejl ved generering af nonce: %w", err)
+	}
+	defer cryptoutils.ZeroBytes(nonce)
+
 	header := headers.FileHeader{
-		MagicMarker: constants.MagicMarker, Argon2Salt: salt, XChaChaNonce: nonce, FileName: filepath.Base(inputFile),
+		MagicMarker: constants.MagicMarker, ScryptSalt: salt, ScryptN: constants.ScryptN, ScryptR: constants.ScryptR, ScryptP: constants.ScryptP, XChaChaNonce: nonce, FileName: filepath.Base(inputFile),
 	}
 
 	if err := headers.WriteFileHeader(header, outFile); err != nil {
@@ -162,7 +162,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		return fmt.Errorf("fejl ved læsning af header: %w", err)
 	}
 
-	fmt.Printf("Afleder sikker krypteringsnøgle med Argon2id ud fra kodeord...\n")
+	fmt.Printf("Afleder sikker krypteringsnøgle med scrypt ud fra kodeord...\n")
 
 	// Læs: Søg 0 bytes væk fra nuværende position for at få den aktuelle offset
 	currentPos, err := inFile.Seek(0, io.SeekCurrent)
@@ -171,7 +171,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	}
 
 	headerLen := currentPos
-	key, err := cryptoutils.DeriveKeyArgon2id(passwordChars, header.Argon2Salt)
+	key, err := cryptoutils.DeriveKeyScrypt(passwordChars, header.ScryptSalt, header.ScryptN, header.ScryptR, header.ScryptP)
 	if err != nil {
 		return fmt.Errorf("fejl i nøgleafledning: %w", err)
 	}

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/vilshansen/cipherforge-go/constants"
-	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/scrypt"
 )
 
 func TestGenerateSecurePassword(t *testing.T) {
@@ -134,7 +134,7 @@ func TestGenerateSecurePassword_Randomness(t *testing.T) {
 
 func TestDeriveKeyArgon2id(t *testing.T) {
 	validPassword := []byte("test-password-123")
-	validSalt := make([]byte, constants.Argon2SaltLength)
+	validSalt := make([]byte, constants.SaltLength)
 	// Initialize salt with some test data
 	for i := range validSalt {
 		validSalt[i] = byte(i % 256)
@@ -185,7 +185,7 @@ func TestDeriveKeyArgon2id(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			key, err := DeriveKeyArgon2id(tt.password, tt.salt)
+			key, err := DeriveKeyScrypt(tt.password, tt.salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DeriveKeyArgon2id() error = %v, wantErr %v", err, tt.wantErr)
@@ -233,16 +233,16 @@ func TestDeriveKeyArgon2id(t *testing.T) {
 func TestDeriveKeyArgon2id_Deterministic(t *testing.T) {
 	// Test that same password+salt produces same key
 	password := []byte("same-password")
-	salt := make([]byte, constants.Argon2SaltLength)
+	salt := make([]byte, constants.SaltLength)
 	rand.Read(salt) // Use random salt for test
 
-	key1, err := DeriveKeyArgon2id(password, salt)
+	key1, err := DeriveKeyScrypt(password, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 	if err != nil {
 		t.Fatalf("First DeriveKeyArgon2id() failed: %v", err)
 	}
 	defer ZeroBytes(key1)
 
-	key2, err := DeriveKeyArgon2id(password, salt)
+	key2, err := DeriveKeyScrypt(password, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 	if err != nil {
 		t.Fatalf("Second DeriveKeyArgon2id() failed: %v", err)
 	}
@@ -257,16 +257,16 @@ func TestDeriveKeyArgon2id_DifferentInputs(t *testing.T) {
 	// Test that different passwords produce different keys
 	password1 := []byte("password-one")
 	password2 := []byte("password-two")
-	salt := make([]byte, constants.Argon2SaltLength)
+	salt := make([]byte, constants.SaltLength)
 	rand.Read(salt)
 
-	key1, err := DeriveKeyArgon2id(password1, salt)
+	key1, err := DeriveKeyScrypt(password1, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 	if err != nil {
 		t.Fatalf("DeriveKeyArgon2id() for password1 failed: %v", err)
 	}
 	defer ZeroBytes(key1)
 
-	key2, err := DeriveKeyArgon2id(password2, salt)
+	key2, err := DeriveKeyScrypt(password2, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 	if err != nil {
 		t.Fatalf("DeriveKeyArgon2id() for password2 failed: %v", err)
 	}
@@ -285,8 +285,8 @@ func TestGenerateSalt(t *testing.T) {
 		}
 		defer ZeroBytes(salt)
 
-		if len(salt) != constants.Argon2SaltLength {
-			t.Errorf("GenerateSalt() length = %d, want %d", len(salt), constants.Argon2SaltLength)
+		if len(salt) != constants.SaltLength {
+			t.Errorf("GenerateSalt() length = %d, want %d", len(salt), constants.SaltLength)
 		}
 
 		// Check salt is not all zeros (extremely unlikely with crypto/rand)
@@ -496,19 +496,19 @@ func TestDeriveKeyArgon2id_MatchesStandardLibrary(t *testing.T) {
 			passwordBytes := []byte(tt.password)
 
 			// Generate key using our function
-			ourKey, err := DeriveKeyArgon2id(passwordBytes, tt.salt)
+			ourKey, err := DeriveKeyScrypt(passwordBytes, tt.salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 			if err != nil {
 				t.Fatalf("DeriveKeyArgon2id failed: %v", err)
 			}
 			defer ZeroBytes(ourKey)
 
 			// Generate key using standard library with same parameters
-			stdKey := argon2.IDKey(
+			stdKey, err := scrypt.Key(
 				passwordBytes,
 				tt.salt,
-				constants.Argon2Iterations,
-				constants.Argon2Memory,
-				constants.Argon2Threads,
+				constants.ScryptN,
+				constants.ScryptR,
+				constants.ScryptP,
 				constants.KeySize,
 			)
 			defer ZeroBytes(stdKey)
@@ -548,22 +548,22 @@ func TestDeriveKeyArgon2id_KnownVectors(t *testing.T) {
 			passwordBytes := []byte(tt.password)
 			saltBytes := []byte(tt.salt)
 
-			if len(saltBytes) != constants.Argon2SaltLength {
+			if len(saltBytes) != constants.SaltLength {
 				// Pad or truncate salt to required length
-				paddedSalt := make([]byte, constants.Argon2SaltLength)
+				paddedSalt := make([]byte, constants.SaltLength)
 				copy(paddedSalt, saltBytes)
 				saltBytes = paddedSalt
 			}
 
 			// Generate key using our function
-			key1, err := DeriveKeyArgon2id(passwordBytes, saltBytes)
+			key1, err := DeriveKeyScrypt(passwordBytes, saltBytes, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 			if err != nil {
 				t.Fatalf("DeriveKeyArgon2id failed: %v", err)
 			}
 			defer ZeroBytes(key1)
 
 			// Generate key again - should be identical
-			key2, err := DeriveKeyArgon2id(passwordBytes, saltBytes)
+			key2, err := DeriveKeyScrypt(passwordBytes, saltBytes, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 			if err != nil {
 				t.Fatalf("DeriveKeyArgon2id failed on second call: %v", err)
 			}
@@ -579,79 +579,72 @@ func TestDeriveKeyArgon2id_KnownVectors(t *testing.T) {
 	}
 }
 
-// Test interoperability with other Argon2 implementations
-func TestDeriveKeyArgon2id_CrossImplementation(t *testing.T) {
-	// This test documents the parameters needed to reproduce our keys in other implementations
-	t.Run("parameter documentation", func(t *testing.T) {
-		password := "interop-test-password"
-		salt := []byte("interop-test-salt")
+// scryptKeyHelper generates a key using the specified parameters.
+func scryptKeyHelper(password, salt []byte, N, r, p, keyLen int) ([]byte, error) {
+	return scrypt.Key(password, salt, N, r, p, keyLen)
+}
 
-		if len(salt) != constants.Argon2SaltLength {
-			paddedSalt := make([]byte, constants.Argon2SaltLength)
-			copy(paddedSalt, salt)
-			salt = paddedSalt
-		}
+// TestScryptProperties verifies the core cryptographic properties of scrypt.
+func TestScryptProperties(t *testing.T) {
+	password := []byte("strong_test_password")
+	salt := []byte("static_test_salt")
 
-		key, err := DeriveKeyArgon2id([]byte(password), salt)
+	// 1. Consistency Check: Same inputs must produce the same output.
+	t.Run("Consistency", func(t *testing.T) {
+		hash1, err := scryptKeyHelper(password, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP, constants.KeySize)
 		if err != nil {
-			t.Fatalf("Key derivation failed: %v", err)
+			t.Fatalf("Scrypt failed on first hash: %v", err)
 		}
-		defer ZeroBytes(key)
 
-		t.Logf("Argon2id parameters:")
-		t.Logf("  Password:    %s", password)
-		t.Logf("  Salt:        %x", salt)
-		t.Logf("  Iterations:  %d", constants.Argon2Iterations)
-		t.Logf("  Memory:      %d KiB", constants.Argon2Memory)
-		t.Logf("  Threads:     %d", constants.Argon2Threads)
-		t.Logf("  Key length:  %d bytes", constants.KeySize)
-		t.Logf("  Derived key: %x", key)
+		hash2, err := scryptKeyHelper(password, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP, constants.KeySize)
+		if err != nil {
+			t.Fatalf("Scrypt failed on second hash: %v", err)
+		}
 
-		// This output can be used to verify against other Argon2 implementations
+		if !bytes.Equal(hash1, hash2) {
+			t.Errorf("scrypt is not consistent: hash1 and hash2 must be identical.")
+		}
 	})
 
-	// Test that changing any parameter produces different results
-	t.Run("parameter sensitivity", func(t *testing.T) {
-		password := []byte("test-password")
-		salt := make([]byte, constants.Argon2SaltLength)
-		for i := range salt {
-			salt[i] = byte(i)
-		}
-
-		// Original key
-		originalKey, err := DeriveKeyArgon2id(password, salt)
-		if err != nil {
-			t.Fatalf("Original key derivation failed: %v", err)
-		}
-		defer ZeroBytes(originalKey)
-
-		// Test with different password
-		diffPassword := []byte("test-password2")
-		diffKey1, err := DeriveKeyArgon2id(diffPassword, salt)
-		if err != nil {
-			t.Fatalf("Different password key derivation failed: %v", err)
-		}
-		defer ZeroBytes(diffKey1)
-
-		if bytes.Equal(originalKey, diffKey1) {
-			t.Error("Different password produced same key")
-		}
-
-		// Test with different salt
-		diffSalt := make([]byte, constants.Argon2SaltLength)
-		for i := range diffSalt {
-			diffSalt[i] = byte(i + 1)
-		}
-		diffKey2, err := DeriveKeyArgon2id(password, diffSalt)
-		if err != nil {
-			t.Fatalf("Different salt key derivation failed: %v", err)
-		}
-		defer ZeroBytes(diffKey2)
-
-		if bytes.Equal(originalKey, diffKey2) {
-			t.Error("Different salt produced same key")
+	// Check that the two consistent hashes are not all zeros (a sanity check).
+	t.Run("NonZeroOutput", func(t *testing.T) {
+		hash, _ := scryptKeyHelper(password, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP, constants.KeySize)
+		if len(hash) == 0 {
+			t.Fatal("Scrypt returned a zero-length hash.")
 		}
 	})
+
+	// 2. Sensitivity Check: Changing any single parameter must produce a different output.
+
+	// Establish a known good hash to compare against.
+	baseHash, err := scryptKeyHelper(password, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP, constants.KeySize)
+	if err != nil {
+		t.Fatalf("Failed to generate base hash: %v", err)
+	}
+
+	sensitivityTests := []struct {
+		name            string
+		N, r, p, keyLen int
+	}{
+		{"Change N", constants.ScryptN * 2, constants.ScryptR, constants.ScryptP, constants.KeySize},
+		{"Change r", constants.ScryptN, constants.ScryptR + 1, constants.ScryptP, constants.KeySize},
+		{"Change p", constants.ScryptN, constants.ScryptR, constants.ScryptP + 1, constants.KeySize},
+		{"Change Key Size", constants.ScryptN, constants.ScryptR, constants.ScryptP, constants.KeySize + 1},
+	}
+
+	for _, tt := range sensitivityTests {
+		t.Run("Sensitivity_"+tt.name, func(t *testing.T) {
+			newHash, err := scryptKeyHelper(password, salt, tt.N, tt.r, tt.p, tt.keyLen)
+			if err != nil {
+				t.Fatalf("Scrypt failed for test %s: %v", tt.name, err)
+			}
+
+			// The new hash MUST be different from the base hash
+			if bytes.Equal(baseHash, newHash) {
+				t.Errorf("scrypt failed sensitivity test: Changing %s should result in a different hash.", tt.name)
+			}
+		})
+	}
 }
 
 // XChaCha20-Poly1305 test vectors
@@ -737,7 +730,7 @@ func TestXChaCha20Poly1305_WithArgon2Key(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Derive key using our Argon2 implementation
-			key, err := DeriveKeyArgon2id([]byte(tt.password), tt.salt)
+			key, err := DeriveKeyScrypt([]byte(tt.password), tt.salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 			if err != nil {
 				t.Fatalf("Key derivation failed: %v", err)
 			}

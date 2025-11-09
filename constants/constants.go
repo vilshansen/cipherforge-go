@@ -1,16 +1,20 @@
 package constants
 
 const (
-	MagicMarker      = "CIPHERFORGE-V00003"
-	KeySize          = 32 // 256-bit XChaCha20 nøgle
-	XNonceSize       = 24 // 192-bit XChaCha20 Nonce (Extended Nonce)
-	TagSize          = 16 // 128-bit Poly1305 autentificeringstag
-	PasswordLength   = 45 // Standard længde for tilfældigt password.
-	CharacterPool    = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	Argon2Iterations = 10        // iterations
-	Argon2Memory     = 64 * 1024 // 64MB in KiB
-	Argon2Threads    = 4         // parallelism
-	Argon2SaltLength = 16        // 128-bit salt
+	// If Argon2id is not available, use scrypt with a minimum CPU/memory
+	// cost parameter of (2^17), a minimum block size of 8 (1024 bytes),
+	// and a parallelization parameter of 1.
+	// Source: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+	MagicMarker    = "CIPHERFORGE-V00003"
+	KeySize        = 32 // 256-bit XChaCha20 nøgle
+	XNonceSize     = 24 // 192-bit XChaCha20 Nonce (Extended Nonce)
+	TagSize        = 16 // 128-bit Poly1305 autentificeringstag
+	PasswordLength = 45 // Standard længde for tilfældigt password.
+	CharacterPool  = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	ScryptN        = 1 << 18 // 262144, CPU/memory cost parameter
+	ScryptR        = 8       // block size
+	ScryptP        = 1       // parallelization parameter
+	SaltLength     = 16      // 128-bit salt
 )
 
 // HelpText indeholder den fulde, formaterede hjælpevejledning til CLI-værktøjet.
