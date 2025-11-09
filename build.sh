@@ -7,6 +7,9 @@
 # Stop scriptet øjeblikkeligt, hvis en kommando fejler
 set -e
 
+GIT_COMMIT=$(git rev-parse --short HEAD)
+VERSION="1.00"
+
 # Navnet på kildekoden
 SOURCE_FILE="cipherforge.go"
 
@@ -26,6 +29,10 @@ PLATFORMS=(
 mkdir -p bin
 # 1. Opret mappe til originale filer
 mkdir -p bin/unpacked
+DIST_DIR=dist
+mkdir -p ${DIST_DIR}
+
+echo "Building version ${VERSION}, commit: ${GIT_COMMIT}"
 
 echo "Starter tvær-kompilering af ${SOURCE_FILE}..."
 echo "Total targets: ${#PLATFORMS[@]}"
@@ -46,16 +53,22 @@ for PLATFORM in "${PLATFORMS[@]}"; do
 
     echo "Bygger: ${TARGET_OS}/${TARGET_ARCH} -> ${OUTPUT_NAME}"
 
+    # Define the full path to the variable to inject
+    LDFLAGS="-s -w -X github.com/vilshansen/cipherforge-go/constants.GitCommit=${GIT_COMMIT} -X github.com/vilshansen/cipherforge-go/constants.Version=${VERSION}"
+
     # Tvær-kompileringskommandoen gemmer originalen i 'bin/unpacked'
     # 1. Gem den originale, ukomprimerede fil her.
     GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
-        -ldflags="-s -w" \
+        -ldflags="${LDFLAGS}" \
         -o bin/unpacked/${OUTPUT_NAME} \
         ${SOURCE_FILE}
 
     # Kopier den ukomprimerede fil til 'bin/' før UPX, så UPX kan arbejde på den.
     cp bin/unpacked/${OUTPUT_NAME} bin/
 done
+
+cp -R bin ${DIST_DIR}/
+tar -czvf ${DIST_DIR}/cipherforge_source.tar.gz --exclude=bin --exclude=.git .
 
 echo "------------------------------------------------------"
 echo "Kompilering fuldført for alle platforme!"

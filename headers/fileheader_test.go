@@ -199,7 +199,7 @@ func TestReadFileHeader(t *testing.T) {
 		},
 		{
 			name:        "truncated magic marker",
-			data:        []byte("CIPHERFORGE"), // Partial magic marker
+			data:        []byte("CIPHERFO"), // Partial magic marker
 			wantErr:     true,
 			errContains: "magic marker",
 		},

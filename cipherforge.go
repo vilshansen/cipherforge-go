@@ -11,7 +11,8 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Print(constants.HelpText)
+		helpText := fmt.Sprintf(constants.HelpText, constants.GitCommit, constants.Version)
+		fmt.Print(helpText)
 		os.Exit(1)
 	}
 
