@@ -31,38 +31,38 @@ modern cryptographic standards (XChaCha20-Poly1305 and scrypt key
 derivation).
 
 USAGE:
-  cipherforge [OPTIONS] -i <input_file> -o <output_file>
+  cipherforge [COMMAND] -i <input_file> -o <output_file> [-p [pass_phrase]]
 
-ACTIONS:
-  -e, --encrypt           Encrypts the specified input file.
-  -d, --decrypt           Decrypts the specified input file.
+COMMANDS:
+  -ef, --encrypt           Encrypts the specified input file.
+  -df, --decrypt           Decrypts the specified input file.
 
 OPTIONS:
   -i, --input <file>      Path to the input file (to be encrypted or 
                           decrypted).
   -o, --output <file>     Path for the output file (ciphertext or 
                           plaintext).
-  -p, --password <word>   Optional: Provides the password directly via
+  -p, --password <word>   Optionally, provides the password directly via
                           command line.
                           
-                          NOTE: If this flag is omitted:
-                          1. Encryption: A random, strong password is
-						     generated and displayed.
-                          2. Decryption: The user is prompted for
-						     interactive password entry.
+                          If this flag is omitted when encrypting, a
+                          random, strong password is generated and
+                          displayed. If this flag is omitted when de-
+                          crypting, the user is prompted for a passphrase.
                           
                           For security, interactive entry is always
-						  preferred for decryption to prevent logging the
-						  password in shell history.
+                          preferred for decryption to prevent logging the
+                          password in shell history.
 
 EXAMPLES:
   # Encrypt file using an auto-generated password:
-  cipherforge -e -i secrets.txt -o secrets.cf
+  cipherforge -ef -i secrets.txt -o secrets.cfo
   
   # Decrypt file (prompts for password):
-  cipherforge -d -i secrets.cf -o secrets_unlocked.txt
+  cipherforge -df -i secrets.cfo -o secrets_decrypted.txt
 
-SOURCE CODE: https://github.com/vilshansen/cipherforge-go/
+SOURCE CODE:
+  https://github.com/vilshansen/cipherforge-go/
 
 TECHNICAL SPECIFICATION AND FORMAT:
 
@@ -74,7 +74,7 @@ current stable version (v1.00) was first published in 2025.
 TECHNICAL IMPLEMENTATION:
 
 CipherForge takes its input from the specified file (-i) and must be
-explicitly instructed to encrypt or decrypt (via -e or -d).
+explicitly instructed to encrypt or decrypt (via -ef or -df).
 
 ENCRYPTION PROCESS:
 
@@ -90,12 +90,12 @@ K = scrypt(p, s, N, R, P, len).
 
 Where:
 
-K: The resulting 32-byte derived encryption key.
-p: The user-provided password (pass phrase).
-s: The 16-byte random salt used to diversify the output.
-N: The CPU/Memory Cost Parameter
-R: The Block Size Parameter
-P: The Parallelization Parameter
+K  : The resulting 32-byte derived encryption key.
+p  : The user-provided password (pass phrase).
+s  : The 16-byte random salt used to diversify the output.
+N  : The CPU/Memory Cost Parameter
+R  : The Block Size Parameter
+P  : The Parallelization Parameter
 len: The desired length of the derived key
 
 The default parameters used for encryption are currently N=2^18 (262144),
