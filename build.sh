@@ -16,13 +16,13 @@ SOURCE_FILE="cipherforge.go"
 # --- Definér Kompileringsmatrix ---
 PLATFORMS=(
     "linux/amd64"    # Linux Server/Desktop (Standard)
-    #"linux/arm64"    # Linux ARM (Modern Servers, Raspberry Pi 64-bit)
-    #"linux/386"      # Linux 32-bit (Older systems)
-    #"windows/amd64"  # Windows 64-bit (Standard)
-    #"windows/386"    # Windows 32-bit
-    #"darwin/amd64"   # macOS Intel (Older Macs)
-    #"darwin/arm64"   # macOS Apple Silicon (M-series)
-    #"freebsd/amd64"  # FreeBSD
+    "linux/arm64"    # Linux ARM (Modern Servers, Raspberry Pi 64-bit)
+    "linux/386"      # Linux 32-bit (Older systems)
+    "windows/amd64"  # Windows 64-bit (Standard)
+    "windows/386"    # Windows 32-bit
+    "darwin/amd64"   # macOS Intel (Older Macs)
+    "darwin/arm64"   # macOS Apple Silicon (M-series)
+    "freebsd/amd64"  # FreeBSD
 )
 
 DIST_DIR=dist
