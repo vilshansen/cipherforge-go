@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/vilshansen/cipherforge-go/constants"
@@ -222,4 +224,30 @@ func getRandomBytes(howManyBytes int) ([]byte, error) {
 		return nil, fmt.Errorf("kunne ikke generere tilfældige bytes: %w", err)
 	}
 	return randomBytes, nil
+}
+
+// expandInputPath tager en sti eller et wildcard-mønster og returnerer en liste af matchende filer.
+func ExpandInputPath(inputPattern string) ([]string, error) {
+	// 1. Tjek om inputPattern er et gyldigt wildcard-mønster
+	if !strings.ContainsAny(inputPattern, "*?[]") {
+		// Hvis det ikke er et wildcard, behandl det som en enkelt fil
+		_, err := os.Stat(inputPattern)
+		if err != nil {
+			return nil, fmt.Errorf("inputfilen findes ikke: %w", err)
+		}
+		return []string{inputPattern}, nil
+	}
+
+	// 2. Udfør wildcard-ekspansion
+	matches, err := filepath.Glob(inputPattern)
+	if err != nil {
+		return nil, fmt.Errorf("fejl ved ekspansion af wildcard-mønster: %w", err)
+	}
+
+	// 3. Tjek for match
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("intet match fundet for mønsteret: %s", inputPattern)
+	}
+
+	return matches, nil
 }

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -26,7 +27,7 @@ func main() {
 		}
 	}()
 
-	operation, inputFile, outputFile, password, err := getParameters()
+	operation, inputPattern, outputDir, password, err := getParameters()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Fejl ved hentning af parametre: %v\n", err)
 		os.Exit(1)
@@ -42,19 +43,57 @@ func main() {
 		password = resolvedPassword
 	}
 
-	switch operation {
-	case "encrypt":
-		if err := fileutils.EncryptFile(inputFile, outputFile, password); err != nil {
-			fmt.Fprintf(os.Stderr, "Fejl ved kryptering: %v\n", err)
+	inputFiles, err := fileutils.ExpandInputPath(inputPattern)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Fejl ved håndtering af inputsti: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Tjek at outputDir er en mappe (hvis der er flere filer) eller en fil (hvis der er én fil)
+	if len(inputFiles) > 1 {
+		stat, err := os.Stat(outputDir)
+		if os.IsNotExist(err) || !stat.IsDir() {
+			fmt.Fprintf(os.Stderr, "Fejl: Når flere filer matches, skal output(-o) være en eksisterende mappe.\n")
 			os.Exit(1)
 		}
-	case "decrypt":
-		if err := fileutils.DecryptFile(inputFile, outputFile, password); err != nil {
-			fmt.Fprintf(os.Stderr, "Fejl ved dekryptering: %v\n", err)
-			os.Exit(1)
+	}
+
+	// Behandl hver fil
+	for _, inputFile := range inputFiles {
+
+		// Bestem outputfilnavnet baseret på inputfilnavnet og outputmappen
+		var currentOutputFile string
+		if len(inputFiles) == 1 {
+			// Hvis kun én fil, brug outputDir som output filnavn
+			currentOutputFile = outputDir
+		} else {
+			// Hvis flere filer, brug outputDir som mappe og konstruer filnavn
+			currentOutputFile = filepath.Join(outputDir, filepath.Base(inputFile)+".cfo")
+			if operation == "decrypt" {
+				currentOutputFile = filepath.Join(outputDir, strings.TrimSuffix(filepath.Base(inputFile), ".cfo"))
+			}
 		}
-	default:
-		fmt.Fprintf(os.Stderr, "ugyldig operation. Brug -ef (encrypt) eller -df (decrypt)")
+
+		// Tjek for input == output (meget vigtigt!)
+		if inputFile == currentOutputFile {
+			fmt.Fprintf(os.Stderr, "Fejl: Inputfil (%s) og Outputfil (%s) skal være forskellige.\n", inputFile, currentOutputFile)
+			continue // Spring denne fil over og fortsæt
+		}
+
+		fmt.Printf("Behandler fil: %s -> %s\n", inputFile, currentOutputFile)
+
+		switch operation {
+		case "encrypt":
+			if err := fileutils.EncryptFile(inputFile, currentOutputFile, password); err != nil {
+				fmt.Fprintf(os.Stderr, "Fejl ved kryptering af %s: %v\n", inputFile, err)
+			}
+		case "decrypt":
+			if err := fileutils.DecryptFile(inputFile, currentOutputFile, password); err != nil {
+				fmt.Fprintf(os.Stderr, "Fejl ved dekryptering af %s: %v\n", inputFile, err)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "ugyldig operation. Brug -ef (encrypt) eller -df (decrypt)")
+		}
 	}
 }
 
@@ -123,7 +162,7 @@ func resolvePassword(operation string) (string, error) {
 	return "", fmt.Errorf("intern fejl: ugyldig operation")
 }
 
-func getParameters() (operation string, inputFile string, outputFile string, password string, err error) {
+func getParameters() (operation string, inputPattern string, outputFile string, password string, err error) {
 	// Define flags
 	encryptFlag := flag.Bool("ef", false, "Encrypt file")
 	decryptFlag := flag.Bool("df", false, "Decrypt file")
@@ -142,17 +181,13 @@ func getParameters() (operation string, inputFile string, outputFile string, pas
 		return "", "", "", "", fmt.Errorf("input and output files must be specified with -i and -o flags")
 	}
 
-	if *inputFileFlag == *outputFileFlag {
-		return "", "", "", "", fmt.Errorf("input and output files must be different")
-	}
-
 	if *encryptFlag {
 		operation = "encrypt"
 	} else if *decryptFlag {
 		operation = "decrypt"
 	}
 
-	inputFile = *inputFileFlag
+	inputPattern = *inputFileFlag
 	outputFile = *outputFileFlag
 	password = *pwdFlag
 	return
