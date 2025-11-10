@@ -25,12 +25,7 @@ PLATFORMS=(
     "freebsd/amd64"  # FreeBSD
 )
 
-# Opret output mapper
-mkdir -p bin
-# 1. Opret mappe til originale filer
-mkdir -p bin/unpacked
 DIST_DIR=dist
-mkdir -p ${DIST_DIR}
 
 echo "Building version ${VERSION}, commit: ${GIT_COMMIT}"
 
@@ -38,58 +33,57 @@ echo "Starter tvær-kompilering af ${SOURCE_FILE}..."
 echo "Total targets: ${#PLATFORMS[@]}"
 echo "------------------------------------------------------"
 
+rm -rf ${DIST_DIR}
+
 # --- Kompileringsloop ---
 for PLATFORM in "${PLATFORMS[@]}"; do
     # Split GOOS/GOARCH fra platformsvariablen
     TARGET_OS=$(echo $PLATFORM | cut -d '/' -f 1)
     TARGET_ARCH=$(echo $PLATFORM | cut -d '/' -f 2)
 
+    mkdir -p ${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}
+    
     # Bestem output filnavn og tilføj .exe for Windows
     if [ "${TARGET_OS}" = "windows" ]; then
-        OUTPUT_NAME="cipherforge_${TARGET_OS}_${TARGET_ARCH}.exe"
+        DIST_OUTPUT_FILE=${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}/"cfo.exe"
     else
-        OUTPUT_NAME="cipherforge_${TARGET_OS}_${TARGET_ARCH}"
+        DIST_OUTPUT_FILE=${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}/"cfo"
     fi
 
-    echo "Bygger: ${TARGET_OS}/${TARGET_ARCH} -> ${OUTPUT_NAME}"
+    echo "Bygger: ${TARGET_OS}/${TARGET_ARCH} -> ${DIST_OUTPUT_FILE}"
 
     # Define the full path to the variable to inject
     LDFLAGS="-s -w -X github.com/vilshansen/cipherforge-go/constants.GitCommit=${GIT_COMMIT} -X github.com/vilshansen/cipherforge-go/constants.Version=${VERSION}"
 
-    # Tvær-kompileringskommandoen gemmer originalen i 'bin/unpacked'
+    # Tvær-kompileringskommandoen gemmer originalen i 'bin/originals'
     # 1. Gem den originale, ukomprimerede fil her.
     GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
         -ldflags="${LDFLAGS}" \
-        -o bin/unpacked/${OUTPUT_NAME} \
+        -o ${DIST_OUTPUT_FILE} \
         ${SOURCE_FILE}
 
     # Kopier den ukomprimerede fil til 'bin/' før UPX, så UPX kan arbejde på den.
-    cp bin/unpacked/${OUTPUT_NAME} bin/
+    mkdir -p ${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}
+    cp ${DIST_OUTPUT_FILE} ${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}
 done
 
-cp -R bin ${DIST_DIR}/
-tar -czvf ${DIST_DIR}/cipherforge_source.tar.gz --exclude=bin --exclude=.git .
+tar -czf ${DIST_DIR}/cipherforge_source.tar.gz --exclude=dist --exclude=.git .
 
 echo "------------------------------------------------------"
 echo "Kompilering fuldført for alle platforme!"
-echo "Starter komprimering af understøttede filer i bin/*..."
+echo "Starter komprimering af understøttede filer i dist/compressed/*..."
 echo "------------------------------------------------------"
 
 # --- Komprimering ---
 # 2. Ignorer FreeBSD og Darwin (macOS) eksplicit under UPX.
 # UPX komprimerer filstørrelsen for Linux og Windows.
-find bin/ -maxdepth 1 \
+find ${DIST_DIR}/compressed/ \
     -type f \
-    ! -name "*darwin*" \
-    ! -name "*freebsd*" \
-    ! -path "*/unpacked/*" \
+    ! -path "*darwin*" \
+    ! -path "*freebsd*" \
     -exec upx -9 "{}" \;
 
 echo "------------------------------------------------------"
 echo "Kompilering og komprimering fuldført!"
-echo "Følgende komprimerede filer er klar til distribution (i bin/):"
-ls -l bin/cipherforge_*
-
-echo ""
-echo "Originale (ukomprimerede) filer er gemt i bin/unpacked/."
-ls -l bin/unpacked/cipherforge_*
+echo "Følgende filer er klar til distribution (originale filer ligger i mappen originals):"
+find ${DIST_DIR} -type f

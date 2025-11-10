@@ -142,6 +142,10 @@ func getParameters() (operation string, inputFile string, outputFile string, pas
 		return "", "", "", "", fmt.Errorf("input and output files must be specified with -i and -o flags")
 	}
 
+	if *inputFileFlag == *outputFileFlag {
+		return "", "", "", "", fmt.Errorf("input and output files must be different")
+	}
+
 	if *encryptFlag {
 		operation = "encrypt"
 	} else if *decryptFlag {

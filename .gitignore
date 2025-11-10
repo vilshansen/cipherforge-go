@@ -1,3 +1,5 @@
 lorem-ipsum-*.txt
 bin/*
 dist/*
+test.txt.cfo
+test.txt
