@@ -39,7 +39,8 @@ COMMANDS:
 
 OPTIONS:
   -i, --input <file>      Path to the input file (to be encrypted or 
-                          decrypted).
+                          decrypted). Note: Quotes are required for
+                          wildcard arguments.
   -o, --output <file>     Path for the output file (ciphertext or 
                           plaintext).
   -p, --password <word>   Optionally, provides the password directly via
@@ -58,8 +59,14 @@ EXAMPLES:
   # Encrypt file using an auto-generated password:
   cipherforge -ef -i secrets.txt -o secrets.cfo
   
+  # Encrypt all text files using a supplied password:
+  cipherforge -ef -i "*.txt" -o encrcypted_folder -p VerySecretPassword
+  
   # Decrypt file (prompts for password):
   cipherforge -df -i secrets.cfo -o secrets_decrypted.txt
+
+  # Decrypt all text files using a supplied password:
+  cipherforge -df -i "*.txt" -o decrypted_folder -p VerySecretPassword
 
 SOURCE CODE:
   https://github.com/vilshansen/cipherforge-go/
