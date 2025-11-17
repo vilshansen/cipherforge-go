@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -23,13 +24,13 @@ func main() {
 
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "Fatal fejl: %v\n", r)
+			fmt.Fprintf(os.Stderr, "Fatal error: %v\n", r)
 		}
 	}()
 
-	operation, inputPattern, outputDir, password, err := getParameters()
+	operation, inputPattern, password, err := getParameters()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Fejl ved hentning af parametre: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error getting parameters: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -37,7 +38,7 @@ func main() {
 	if password == "" {
 		resolvedPassword, err := resolvePassword(operation)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Fejl ved kodeordshåndtering: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error getting password: %v\n", err)
 			os.Exit(1)
 		}
 		password = resolvedPassword
@@ -45,17 +46,8 @@ func main() {
 
 	inputFiles, err := fileutils.ExpandInputPath(inputPattern)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Fejl ved håndtering af inputsti: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error getting file input path: %v\n", err)
 		os.Exit(1)
-	}
-
-	// Tjek at outputDir er en mappe (hvis der er flere filer) eller en fil (hvis der er én fil)
-	if len(inputFiles) > 1 {
-		stat, err := os.Stat(outputDir)
-		if os.IsNotExist(err) || !stat.IsDir() {
-			fmt.Fprintf(os.Stderr, "Fejl: Når flere filer matches, skal output(-o) være en eksisterende mappe.\n")
-			os.Exit(1)
-		}
 	}
 
 	// Behandl hver fil
@@ -63,36 +55,42 @@ func main() {
 
 		// Bestem outputfilnavnet baseret på inputfilnavnet og outputmappen
 		var currentOutputFile string
-		if len(inputFiles) == 1 {
-			// Hvis kun én fil, brug outputDir som output filnavn
-			currentOutputFile = outputDir
+
+		// Hvis flere filer, brug outputDir som mappe og konstruer filnavn
+		if operation == "encrypt" {
+			currentOutputFile = filepath.Join(filepath.Dir(inputFile), filepath.Base(inputFile)+".cfo")
 		} else {
-			// Hvis flere filer, brug outputDir som mappe og konstruer filnavn
-			currentOutputFile = filepath.Join(outputDir, filepath.Base(inputFile)+".cfo")
-			if operation == "decrypt" {
-				currentOutputFile = filepath.Join(outputDir, strings.TrimSuffix(filepath.Base(inputFile), ".cfo"))
-			}
+			currentOutputFile = filepath.Join(filepath.Dir(inputFile), strings.TrimSuffix(filepath.Base(inputFile), ".cfo"))
 		}
 
-		// Tjek for input == output (meget vigtigt!)
-		if inputFile == currentOutputFile {
-			fmt.Fprintf(os.Stderr, "Fejl: Inputfil (%s) og Outputfil (%s) skal være forskellige.\n", inputFile, currentOutputFile)
+		fmt.Printf("Processing: %s -> %s", inputFile, currentOutputFile)
+
+		_, err := os.Stat(inputFile)
+		if errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, " (input file not found, skipping)\n")
 			continue // Spring denne fil over og fortsæt
 		}
 
-		fmt.Printf("Behandler fil: %s -> %s\n", inputFile, currentOutputFile)
+		_, err = os.Stat(currentOutputFile)
+		// If err is nil, the file/path exists.
+		if err == nil {
+			fmt.Fprintf(os.Stderr, " (output file exists, skipping)\n")
+			continue // Spring denne fil over og fortsæt
+		}
+
+		fmt.Println()
 
 		switch operation {
 		case "encrypt":
 			if err := fileutils.EncryptFile(inputFile, currentOutputFile, password); err != nil {
-				fmt.Fprintf(os.Stderr, "Fejl ved kryptering af %s: %v\n", inputFile, err)
+				fmt.Fprintf(os.Stderr, "Error encrypting %s: %v\n", inputFile, err)
 			}
 		case "decrypt":
 			if err := fileutils.DecryptFile(inputFile, currentOutputFile, password); err != nil {
-				fmt.Fprintf(os.Stderr, "Fejl ved dekryptering af %s: %v\n", inputFile, err)
+				fmt.Fprintf(os.Stderr, "Error decrypting %s: %v\n", inputFile, err)
 			}
 		default:
-			fmt.Fprintf(os.Stderr, "ugyldig operation. Brug -ef (encrypt) eller -df (decrypt)")
+			fmt.Fprintf(os.Stderr, "invalid operation. Use -ef (encrypt) or -df (decrypt)")
 		}
 	}
 }
@@ -115,38 +113,36 @@ func readPasswordFromTerminal(prompt string) (string, error) {
 // Handles interactive password prompting and generation logic
 func resolvePassword(operation string) (string, error) {
 	if operation == "encrypt" {
-		fmt.Println("Indtast kodeord til kryptering, eller tryk ENTER for at generere et stærkt kodeord:")
-		p, err := readPasswordFromTerminal("Kodeord: ")
+		p, err := readPasswordFromTerminal("Enter password for encryption, or press ENTER to generate a strong password: ")
 		if err != nil {
 			return "", err
 		}
 
 		if p == "" {
 			// User entered blank, generate secure password
-			fmt.Println("Intet kodeord angivet. Genererer sikkert, tilfældigt kodeord...")
+			fmt.Println("No password specified. Generating secure, random password...")
 			securePass, err := cryptoutils.GenerateSecurePassword(constants.PasswordLength)
 			if err != nil {
 				return "", err
 			}
 			// Display the generated password for the user to save it
-			fmt.Printf("Dit autogenererede kodeord er: %s\n", securePass)
+			fmt.Printf("Your auto-generated password is: %s\n", securePass)
 			return string(securePass), nil
 		}
 
 		// User entered a password, prompt for verification
-		pVerify, err := readPasswordFromTerminal("Bekræft kodeord: ")
+		pVerify, err := readPasswordFromTerminal("Confirm password: ")
 		if err != nil {
 			return "", err
 		}
 		if p != pVerify {
-			return "", fmt.Errorf("de to indtastede kodeord stemmer ikke overens")
+			return "", fmt.Errorf("The two passwords entered do not match")
 		}
 		return p, nil
 
 	} else if operation == "decrypt" {
 		for { // Loop until a non-blank password is provided
-			fmt.Println("Indtast kodeord til dekryptering:")
-			p, err := readPasswordFromTerminal("Kodeord: ")
+			p, err := readPasswordFromTerminal("Enter password for decryption: ")
 			if err != nil {
 				return "", err
 			}
@@ -155,30 +151,25 @@ func resolvePassword(operation string) (string, error) {
 				return p, nil
 			}
 			// If p is blank, warn the user and continue the loop
-			fmt.Fprintln(os.Stderr, "Fejl: Kodeordet må ikke være tomt ved dekryptering. Prøv igen.")
+			fmt.Fprintln(os.Stderr, "Error: The password cannot be empty during decryption. Please try again.")
 		}
 	}
 	// Should be unreachable
-	return "", fmt.Errorf("intern fejl: ugyldig operation")
+	return "", fmt.Errorf("internal error: invalid operation")
 }
 
-func getParameters() (operation string, inputPattern string, outputFile string, password string, err error) {
+func getParameters() (operation string, inputPattern string, password string, err error) {
 	// Define flags
 	encryptFlag := flag.Bool("ef", false, "Encrypt file")
 	decryptFlag := flag.Bool("df", false, "Decrypt file")
-	inputFileFlag := flag.String("i", "", "Input file")
-	outputFileFlag := flag.String("o", "", "Output file")
 	pwdFlag := flag.String("p", "", "Password (optional)")
+	inputFileFlag := os.Args[len(os.Args)-1]
 
 	// Parse flags
 	flag.Parse()
 
 	if (*encryptFlag && *decryptFlag) || (!*encryptFlag && !*decryptFlag) {
-		return "", "", "", "", fmt.Errorf("must specify either -ef (encrypt) or -df (decrypt), but not both")
-	}
-
-	if *inputFileFlag == "" || *outputFileFlag == "" {
-		return "", "", "", "", fmt.Errorf("input and output files must be specified with -i and -o flags")
+		return "", "", "", fmt.Errorf("must specify either -ef (encrypt) or -df (decrypt), but not both")
 	}
 
 	if *encryptFlag {
@@ -187,8 +178,8 @@ func getParameters() (operation string, inputPattern string, outputFile string, 
 		operation = "decrypt"
 	}
 
-	inputPattern = *inputFileFlag
-	outputFile = *outputFileFlag
+	inputPattern = inputFileFlag
 	password = *pwdFlag
+
 	return
 }

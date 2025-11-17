@@ -145,7 +145,7 @@ func readMagicMarker(input io.Reader, fileHeader *FileHeader) (*FileHeader, erro
 	}
 	fileHeader.MagicMarker = string(magic)
 	if fileHeader.MagicMarker != constants.MagicMarker {
-		return fileHeader, fmt.Errorf("ukendt filformat. Forventet: %s, Fundet: %s", constants.MagicMarker, fileHeader.MagicMarker)
+		return fileHeader, fmt.Errorf("unknown file format. Expected: %s, Found: %s", constants.MagicMarker, fileHeader.MagicMarker)
 	}
 	return fileHeader, nil
 }

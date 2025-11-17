@@ -195,7 +195,7 @@ func TestReadFileHeader(t *testing.T) {
 			name:        "invalid magic marker",
 			data:        []byte("INVALID-MAGIC-MARKER-123"),
 			wantErr:     true,
-			errContains: "ukendt filformat",
+			errContains: "unknown file format",
 		},
 		{
 			name:        "truncated magic marker",
@@ -408,7 +408,7 @@ func TestReadMagicMarker(t *testing.T) {
 			data:        "INVALID-MAGIC-MARKER",
 			wantMarker:  "",
 			wantErr:     true,
-			errContains: "ukendt filformat",
+			errContains: "unknown file format",
 		},
 		{
 			name:        "empty data",

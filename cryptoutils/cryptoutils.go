@@ -19,7 +19,7 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 	for i := 0; i < charsNeeded; i++ {
 		idx, err := rand.Int(rand.Reader, poolLen)
 		if err != nil {
-			return nil, fmt.Errorf("fejl ved generering af sikkert, tilfældigt indeks: %v", err)
+			return nil, fmt.Errorf("Error generating secure, random index: %v", err)
 		}
 		randomChars[i] = constants.CharacterPool[idx.Int64()]
 	}

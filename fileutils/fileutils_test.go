@@ -141,7 +141,7 @@ func TestEncryptFile_ErrorCases(t *testing.T) {
 			outputFile:  "output.enc",
 			password:    "test",
 			wantErr:     true,
-			errContains: "kunne ikke åbne inputfil",
+			errContains: "unable to open input file",
 		},
 		{
 			name:        "invalid output path",
@@ -149,7 +149,7 @@ func TestEncryptFile_ErrorCases(t *testing.T) {
 			outputFile:  "/invalid/path/output.enc",
 			password:    "test",
 			wantErr:     true,
-			errContains: "kunne ikke oprette outputfil",
+			errContains: "unable to open output file",
 		},
 	}
 
@@ -234,7 +234,7 @@ func TestDecryptFile(t *testing.T) {
 			return
 		}
 
-		if !contains(err.Error(), "autentificering mislykkedes") {
+		if !contains(err.Error(), "authentication failed") {
 			t.Errorf("DecryptFile() wrong error with incorrect password: %v", err)
 		}
 	})
@@ -301,7 +301,7 @@ func TestDecryptFile_ErrorCases(t *testing.T) {
 			outputFile:  "output.dec",
 			password:    "test",
 			wantErr:     true,
-			errContains: "kunne ikke åbne inputfil",
+			errContains: "unable to open input file",
 		},
 		{
 			name: "invalid output path",
@@ -325,7 +325,7 @@ func TestDecryptFile_ErrorCases(t *testing.T) {
 			outputFile:  "/invalid/path/that/does/not/exist/output.dec",
 			password:    "test-password",
 			wantErr:     true,
-			errContains: "kunne ikke oprette outputfil",
+			errContains: "unable to create output file",
 		},
 		{
 			name: "corrupted encrypted file - invalid magic marker",
@@ -337,7 +337,7 @@ func TestDecryptFile_ErrorCases(t *testing.T) {
 			outputFile:  "output.dec",
 			password:    "test",
 			wantErr:     true,
-			errContains: "ukendt filformat", // Matches the actual error message
+			errContains: "unknown file format", // Matches the actual error message
 		},
 		{
 			name: "truncated encrypted file",
@@ -616,7 +616,7 @@ func TestDecryptFile_CorruptedHeader(t *testing.T) {
 
 	if err == nil {
 		t.Error("DecryptFile should have failed with corrupted magic marker")
-	} else if !contains(err.Error(), "magic marker") && !contains(err.Error(), "ukendt filformat") {
+	} else if !contains(err.Error(), "magic marker") && !contains(err.Error(), "unknown file format") {
 		t.Errorf("DecryptFile wrong error with corrupted header: %v", err)
 	}
 

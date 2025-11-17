@@ -31,17 +31,17 @@ modern cryptographic standards (XChaCha20-Poly1305 and scrypt key
 derivation).
 
 USAGE:
-  cipherforge [COMMAND] -i <input_file> -o <output_file> [-p [pass_phrase]]
+  cipherforge [COMMAND] <input_file> [-p [pass_phrase]]
 
 COMMANDS:
-  -ef, --encrypt           Encrypts the specified input file.
-  -df, --decrypt           Decrypts the specified input file.
+  -ef, --encrypt           Encrypts the specified input file(s).
+  -df, --decrypt           Decrypts the specified input file(s).
 
 OPTIONS:
-  -i, --input <file>      Path to the input file (to be encrypted or 
+  -i, --input <file(s)>   Path to the input file(s) (to be encrypted or 
                           decrypted). Note: Quotes are required for
                           wildcard arguments.
-  -o, --output <file>     Path for the output file (ciphertext or 
+  -o, --output <file(s)>  Path for the output file (ciphertext or 
                           plaintext).
   -p, --password <word>   Optionally, provides the password directly via
                           command line.
@@ -57,16 +57,16 @@ OPTIONS:
 
 EXAMPLES:
   # Encrypt file using an auto-generated password:
-  cipherforge -ef -i secrets.txt -o secrets.cfo
+  cipherforge -ef secrets.txt
   
   # Encrypt all text files using a supplied password:
-  cipherforge -ef -i "*.txt" -o encrcypted_folder -p VerySecretPassword
+  cipherforge -ef "*.txt" -p VerySecretPassword
   
   # Decrypt file (prompts for password):
-  cipherforge -df -i secrets.cfo -o secrets_decrypted.txt
+  cipherforge -df secrets.cfo
 
   # Decrypt all text files using a supplied password:
-  cipherforge -df -i "*.txt" -o decrypted_folder -p VerySecretPassword
+  cipherforge -df "*.txt" -p VerySecretPassword
 
 SOURCE CODE:
   https://github.com/vilshansen/cipherforge-go/
@@ -80,7 +80,7 @@ current stable version (v1.00) was first published in 2025.
 
 TECHNICAL IMPLEMENTATION:
 
-CipherForge takes its input from the specified file (-i) and must be
+CipherForge takes its input from the specified file(s) and must be
 explicitly instructed to encrypt or decrypt (via -ef or -df).
 
 ENCRYPTION PROCESS:

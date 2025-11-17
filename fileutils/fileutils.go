@@ -21,23 +21,23 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	var err error
 	var passwordBytes []byte = []byte(userPassword)
 	if len(passwordBytes) == 0 {
-		fmt.Println("Indtast dit kodeord til kryptering, eller tryk enter for at generere et stærkt kodeord:")
+		fmt.Println("Enter your password for encryption, or press enter to generate a strong password:")
 		passwordBytes, err = readPasswordFromTerminal()
 		if err != nil {
 			return err
 		}
 		if len(passwordBytes) > 0 {
-			fmt.Println("Bekræft dit kodeord til kryptering:")
+			fmt.Println("Confirm your password for encryption: ")
 			passwordBytesVerify, err := readPasswordFromTerminal()
 			if err != nil {
 				return err
 			}
 			if !bytes.Equal(passwordBytes, passwordBytesVerify) {
-				return fmt.Errorf("de to indtastede kodeord stemmer ikke overens")
+				return fmt.Errorf("The two passwords entered do not match")
 			}
 		}
 		if passwordBytes == nil {
-			fmt.Println("Intet kodeord indtastet...")
+			fmt.Println("No password entered...")
 			passwordBytes, err = generateSecurePassword(passwordBytes, err)
 		}
 		if err != nil {
@@ -45,41 +45,38 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		}
 	} else {
 		passwordBytes = []byte(userPassword)
-		fmt.Println("Bruger kodeord fra kommandolinje.")
 		if err != nil {
 			return err
 		}
 	}
 
-	fmt.Printf("Afleder sikker krypteringsnøgle med scrypt ud fra kodeord...\n")
-
 	salt, err := getRandomBytes(constants.SaltLength)
 	if err != nil {
-		return fmt.Errorf("fejl ved generering af salt: %w", err)
+		return fmt.Errorf("error generating salt: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(salt)
 
 	key, err := cryptoutils.DeriveKeyScrypt(passwordBytes, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
 	if err != nil {
-		return fmt.Errorf("fejl i nøgleafledning: %w", err)
+		return fmt.Errorf("error during key derivation: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(passwordBytes)
 
 	inFile, err := os.Open(inputFile)
 	if err != nil {
-		return fmt.Errorf("kunne ikke åbne inputfil: %w", err)
+		return fmt.Errorf("unable to open input file: %w", err)
 	}
 	defer inFile.Close()
 
 	outFile, err := os.Create(outputFile)
 	if err != nil {
-		return fmt.Errorf("kunne ikke oprette outputfil: %w", err)
+		return fmt.Errorf("unable to open output file: %w", err)
 	}
 	defer outFile.Close()
 
 	nonce, err := getRandomBytes(constants.XNonceSize)
 	if err != nil {
-		return fmt.Errorf("fejl ved generering af nonce: %w", err)
+		return fmt.Errorf("error generating nonce: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(nonce)
 
@@ -88,29 +85,24 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 
 	if err := headers.WriteFileHeader(header, outFile); err != nil {
-		return fmt.Errorf("fejl ved skrivning af header: %w", err)
+		return fmt.Errorf("error writing header: %w", err)
 	}
 
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return fmt.Errorf("kunne ikke initialisere XChaCha20-Poly1305: %w", err)
+		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
-
-	fmt.Println("Læser inputfil ind i hukommelsen til kryptering...")
 
 	plaintext, err := io.ReadAll(inFile)
 	if err != nil {
-		return fmt.Errorf("fejl ved læsning af inputfil: %w", err)
+		return fmt.Errorf("error reading input file: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(plaintext)
 
-	fmt.Printf("Krypterer fil med XChaCha20-Poly1305...\n")
-
 	ciphertextWithTag := aead.Seal(nil, nonce, plaintext, headers.GetFileHeaderBytes(header))
 	if _, err := outFile.Write(ciphertextWithTag); err != nil {
-		return fmt.Errorf("fejl ved skrivning af krypteret data: %w", err)
+		return fmt.Errorf("error writing encrypted data: %w", err)
 	}
-	fmt.Printf("Kryptering fuldført.\n")
 
 	return nil
 }
@@ -118,17 +110,17 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 func readPasswordFromTerminal() ([]byte, error) {
 	var passwordBytes, err = term.ReadPassword(int(syscall.Stdin))
 	if err != nil {
-		return nil, fmt.Errorf("kunne ikke læse kodeord fra terminalen: %w", err)
+		return nil, fmt.Errorf("could not read password from the terminal: %w", err)
 	}
 	return passwordBytes, nil
 }
 
 func generateSecurePassword(passwordBytes []byte, err error) ([]byte, error) {
-	fmt.Println("Genererer tilfældigt, sikkert kodeord til kryptering...")
+	fmt.Println("Genererating secure, random password for encryption...")
 	if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
-		return nil, fmt.Errorf("fejl ved generering af tilfældigt kodeord: %w", err)
+		return nil, fmt.Errorf("error generating secure password: %w", err)
 	}
-	fmt.Printf("Tilfældigt kodeord er genereret: %s\n", string(passwordBytes))
+	fmt.Printf("Generated password: %s\n", string(passwordBytes))
 	return passwordBytes, nil
 }
 
@@ -138,90 +130,81 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 
 	passwordChars = []byte(userPassword)
 	if len(passwordChars) == 0 {
-		fmt.Println("Indtast dit kodeord til dekryptering:")
+		fmt.Println("Enter password for decryption:")
 		passwordChars, err = term.ReadPassword(int(syscall.Stdin))
 		if err != nil {
-			return fmt.Errorf("kunne ikke læse kodeord fra terminalen: %w", err)
+			return fmt.Errorf("unable to read password from the terminal: %w", err)
 		}
 	}
 	defer cryptoutils.ZeroBytes(passwordChars)
 
 	inFile, err := os.Open(inputFile)
 	if err != nil {
-		return fmt.Errorf("kunne ikke åbne inputfil: %w", err)
+		return fmt.Errorf("unable to open input file: %w", err)
 	}
 	defer inFile.Close()
 
 	stat, err := inFile.Stat()
 	if err != nil {
-		return fmt.Errorf("kunne ikke læse filstørrelse: %w", err)
+		return fmt.Errorf("unable to read file size: %w", err)
 	}
 	fileSize := stat.Size()
 
 	header, err := headers.ReadFileHeader(inFile)
 	if err != nil {
-		return fmt.Errorf("fejl ved læsning af header: %w", err)
+		return fmt.Errorf("error reading header: %w", err)
 	}
-
-	fmt.Printf("Afleder sikker krypteringsnøgle med scrypt ud fra kodeord...\n")
 
 	// Læs: Søg 0 bytes væk fra nuværende position for at få den aktuelle offset
 	currentPos, err := inFile.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return fmt.Errorf("fejl ved læsning af nuværende position: %w", err)
+		return fmt.Errorf("error reading current file position: %w", err)
 	}
 
 	headerLen := currentPos
 	key, err := cryptoutils.DeriveKeyScrypt(passwordChars, header.ScryptSalt, header.ScryptN, header.ScryptR, header.ScryptP)
 	if err != nil {
-		return fmt.Errorf("fejl i nøgleafledning: %w", err)
+		return fmt.Errorf("error during key derivation: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(key)
 
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return fmt.Errorf("kunne ikke initialisere XChaCha20-Poly1305: %w", err)
+		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
 
 	ciphertextWithTagLen := fileSize - headerLen
 	ciphertextWithTag := make([]byte, ciphertextWithTagLen)
 
-	fmt.Println("Læser inputfil ind i hukommelsen til dekryptering...")
-
 	if _, err := io.ReadFull(inFile, ciphertextWithTag); err != nil {
-		return fmt.Errorf("fejl ved læsning af krypteret data: %w", err)
+		return fmt.Errorf("error reading encrypted data: %w", err)
 	}
-
-	fmt.Println("Dekrypterer og autentificerer filen...")
 
 	aad := headers.GetFileHeaderBytes(header)
 
-	fmt.Printf("Dekrypterer fil med XChaCha20-Poly1305...\n")
-
 	plaintext, err := aead.Open(nil, header.XChaChaNonce, ciphertextWithTag, aad)
 	if err != nil {
-		return fmt.Errorf("autentificering mislykkedes pga. forkert kodeord eller fejl i inputfil: %w", err)
+		return fmt.Errorf("Authentication failed due to incorrect password or error in input file: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(plaintext)
 
 	outFile, err := os.Create(outputFile)
 	if err != nil {
-		return fmt.Errorf("kunne ikke oprette outputfil: %w", err)
+		return fmt.Errorf("unable to create output file: %w", err)
 	}
 	defer outFile.Close()
 
 	if _, err := outFile.Write(plaintext); err != nil {
-		return fmt.Errorf("fejl ved skrivning af dekrypteret data: %w", err)
+		return fmt.Errorf("error writing decrypted data: %w", err)
 	}
 
-	fmt.Println("Dekryptering fuldført.")
 	return nil
 }
 
 func getRandomBytes(howManyBytes int) ([]byte, error) {
 	randomBytes := make([]byte, howManyBytes)
 	if _, err := rand.Read(randomBytes); err != nil {
-		return nil, fmt.Errorf("kunne ikke generere tilfældige bytes: %w", err)
+		return nil, fmt.Errorf("unable to generate random bytes: %w", err)
 	}
 	return randomBytes, nil
 }
@@ -233,7 +216,7 @@ func ExpandInputPath(inputPattern string) ([]string, error) {
 		// Hvis det ikke er et wildcard, behandl det som en enkelt fil
 		_, err := os.Stat(inputPattern)
 		if err != nil {
-			return nil, fmt.Errorf("inputfilen findes ikke: %w", err)
+			return nil, fmt.Errorf("input file does not exist: %w", err)
 		}
 		return []string{inputPattern}, nil
 	}
@@ -241,12 +224,12 @@ func ExpandInputPath(inputPattern string) ([]string, error) {
 	// 2. Udfør wildcard-ekspansion
 	matches, err := filepath.Glob(inputPattern)
 	if err != nil {
-		return nil, fmt.Errorf("fejl ved ekspansion af wildcard-mønster: %w", err)
+		return nil, fmt.Errorf("error during expansion of wildcard pattern: %w", err)
 	}
 
 	// 3. Tjek for match
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("intet match fundet for mønsteret: %s", inputPattern)
+		return nil, fmt.Errorf("no match found for pattern: %s", inputPattern)
 	}
 
 	return matches, nil
