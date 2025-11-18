@@ -59,11 +59,11 @@ func main() {
 		// Hvis flere filer, brug outputDir som mappe og konstruer filnavn
 		if operation == "encrypt" {
 			currentOutputFile = filepath.Join(filepath.Dir(inputFile), filepath.Base(inputFile)+".cfo")
+			fmt.Printf("Encrypting %s -> %s", inputFile, currentOutputFile)
 		} else {
 			currentOutputFile = filepath.Join(filepath.Dir(inputFile), strings.TrimSuffix(filepath.Base(inputFile), ".cfo"))
+			fmt.Printf("Decrypting %s -> %s", inputFile, currentOutputFile)
 		}
-
-		fmt.Printf("Processing: %s -> %s", inputFile, currentOutputFile)
 
 		_, err := os.Stat(inputFile)
 		if errors.Is(err, os.ErrNotExist) {
