@@ -27,9 +27,6 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 	// Insert hyphens every 5 characters
 	var result []byte
 	for i := 0; i < charsNeeded; i++ {
-		if i > 0 && i%5 == 0 {
-			result = append(result, '-')
-		}
 		result = append(result, randomChars[i])
 	}
 
