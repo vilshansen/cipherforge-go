@@ -160,25 +160,25 @@ func resolvePassword(operation string) (string, error) {
 
 func getParameters() (operation string, inputPattern string, password string, err error) {
 	// Define flags
-	encryptFlag := flag.Bool("ef", false, "Encrypt file")
-	decryptFlag := flag.Bool("df", false, "Decrypt file")
+	encryptFlag := flag.String("ef", "", "Encrypt file")
+	decryptFlag := flag.String("df", "", "Decrypt file")
 	pwdFlag := flag.String("p", "", "Password (optional)")
-	inputFileFlag := os.Args[len(os.Args)-1]
 
 	// Parse flags
 	flag.Parse()
 
-	if (*encryptFlag && *decryptFlag) || (!*encryptFlag && !*decryptFlag) {
+	if *encryptFlag == *decryptFlag {
 		return "", "", "", fmt.Errorf("must specify either -ef (encrypt) or -df (decrypt), but not both")
 	}
 
-	if *encryptFlag {
+	if *encryptFlag != "" {
+		inputPattern = *encryptFlag
 		operation = "encrypt"
-	} else if *decryptFlag {
+	} else if *decryptFlag != "" {
+		inputPattern = *decryptFlag
 		operation = "decrypt"
 	}
 
-	inputPattern = inputFileFlag
 	password = *pwdFlag
 
 	return
