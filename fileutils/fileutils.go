@@ -22,7 +22,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	var err error
 	var passwordBytes []byte = []byte(userPassword)
 	if len(passwordBytes) == 0 {
-		fmt.Println("Enter your password for encryption, or press enter for at generere et stærkt kodeord:")
+		fmt.Println("Enter password for encryption, or press enter to have one generated for you: ")
 		passwordBytes, err = readPasswordFromTerminal()
 		if err != nil {
 			return err
@@ -34,21 +34,20 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 				return err
 			}
 			if !bytes.Equal(passwordBytes, passwordBytesVerify) {
-				return fmt.Errorf("The two passwords entered do not match")
+				return fmt.Errorf("the two passwords entered do not match")
 			}
 		}
 		if passwordBytes == nil {
 			fmt.Println("No password entered...")
-			passwordBytes, err = generateSecurePassword(passwordBytes, err)
+			if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
+				return fmt.Errorf("error generating secure password: %w", err)
+			}
 		}
 		if err != nil {
 			return err
 		}
 	} else {
 		passwordBytes = []byte(userPassword)
-		if err != nil {
-			return err
-		}
 	}
 
 	salt, err := getRandomBytes(constants.SaltLength)
@@ -63,15 +62,14 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 	defer cryptoutils.ZeroBytes(passwordBytes)
 
-	// --- NECESSARY CHANGE START: STAGE 1 - COMPRESSION TO TEMP FILE ---
-
-	// Generate a unique name for the temporary file
 	randomSuffix, err := getRandomBytes(8)
 	if err != nil {
-		return fmt.Errorf("fejl ved generering af sikkert, tilfældigt indeks: %w", err)
+		return fmt.Errorf("error generating random file suffix: %w", err)
 	}
+
+	// Generate a unique name for the temporary file
 	tempFilePath := fmt.Sprintf("%s.cfo_temp_compressed.%x", inputFile, randomSuffix)
-	defer os.Remove(tempFilePath) // Cleanup the temp file
+	defer os.Remove(tempFilePath)
 
 	inFile, err := os.Open(inputFile)
 	if err != nil {
@@ -87,6 +85,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	// Stream compression: Read from inFile -> GZIP Writer -> Write to tempFile
 	gzipWriter := gzip.NewWriter(tempFile)
 
+	// Copy inFile -> tempFile (compressed GZIP stream)
 	if _, err := io.Copy(gzipWriter, inFile); err != nil {
 		tempFile.Close() // Close before returning error
 		return fmt.Errorf("error during gzip compression: %w", err)
@@ -101,8 +100,6 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		return fmt.Errorf("error closing temporary file handle: %w", err)
 	}
 
-	// --- STAGE 2: READ COMPRESSED TEMP FILE FOR ENCRYPTION ---
-
 	// Re-open the temporary file for reading the compressed data
 	compressedFile, err := os.Open(tempFilePath)
 	if err != nil {
@@ -116,8 +113,6 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		return fmt.Errorf("error reading compressed data from temp file: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(compressedPlaintext)
-
-	// --- NECESSARY CHANGE END: STREAMING TO TEMP FILE ---
 
 	outFile, err := os.Create(outputFile)
 	if err != nil {
@@ -144,7 +139,6 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
 
-	// The old 'plaintext' variable is replaced by 'compressedPlaintext'
 	aad := headers.GetFileHeaderBytes(header)
 	ciphertextWithTag := aead.Seal(nil, nonce, compressedPlaintext, aad)
 
@@ -160,15 +154,6 @@ func readPasswordFromTerminal() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not read password from the terminal: %w", err)
 	}
-	return passwordBytes, nil
-}
-
-func generateSecurePassword(passwordBytes []byte, err error) ([]byte, error) {
-	fmt.Println("Genererating secure, random password for encryption...")
-	if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
-		return nil, fmt.Errorf("error generating secure password: %w", err)
-	}
-	fmt.Printf("Generated password: %s\n", string(passwordBytes))
 	return passwordBytes, nil
 }
 
@@ -232,7 +217,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	// Decrypt the data (output is the compressed data)
 	compressedPlaintext, err := aead.Open(nil, header.XChaChaNonce, ciphertextWithTag, aad)
 	if err != nil {
-		return fmt.Errorf("Authentication failed due to incorrect password or error in input file: %w", err)
+		return fmt.Errorf("authentication failed due to incorrect password or error in input file: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(compressedPlaintext) // Zero compressed data after use
 

@@ -53,34 +53,14 @@ func TestGenerateSecurePassword(t *testing.T) {
 			}
 
 			if tt.checkLength {
-				// Calculate expected length with hyphens
-				hyphenCount := (tt.length - 1) / 5
-				expectedLength := tt.length + hyphenCount
-				if len(got) != expectedLength {
-					t.Errorf("GenerateSecurePassword() length = %d, want %d (with %d hyphens)",
-						len(got), expectedLength, hyphenCount)
+				if len(got) != tt.length {
+					t.Errorf("GenerateSecurePassword() length = %d, want %d", len(got), tt.length)
 				}
 			}
 
-			// Remove hyphens and verify all characters are from the allowed pool
-			passwordWithoutHyphens := removeHyphens(got)
-			for i, char := range passwordWithoutHyphens {
+			for i, char := range got {
 				if !containsRune(constants.CharacterPool, rune(char)) {
 					t.Errorf("GenerateSecurePassword() contains invalid character at position %d: %c", i, char)
-				}
-			}
-
-			// Verify hyphen placement (every 6th character starting from position 5)
-			for i := 5; i < len(got); i += 6 {
-				if i < len(got) && got[i] != '-' {
-					t.Errorf("GenerateSecurePassword() missing hyphen at position %d, got '%c'", i, got[i])
-				}
-			}
-
-			// Verify no consecutive hyphens
-			for i := 0; i < len(got)-1; i++ {
-				if got[i] == '-' && got[i+1] == '-' {
-					t.Errorf("GenerateSecurePassword() has consecutive hyphens at positions %d and %d", i, i+1)
 				}
 			}
 

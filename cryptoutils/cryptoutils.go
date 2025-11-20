@@ -10,6 +10,8 @@ import (
 )
 
 func GenerateSecurePassword(length int) ([]byte, error) {
+	fmt.Println("Genererating secure, random password for encryption...")
+
 	poolLen := big.NewInt(int64(len(constants.CharacterPool)))
 
 	// Generate the required number of random characters
@@ -29,6 +31,8 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 	for i := 0; i < charsNeeded; i++ {
 		result = append(result, randomChars[i])
 	}
+
+	fmt.Printf("Generated password: %s\n", result)
 
 	return result, nil
 }

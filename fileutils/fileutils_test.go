@@ -65,7 +65,7 @@ func TestEncryptFile(t *testing.T) {
 		},
 		{
 			name:     "encrypt large content",
-			content:  string(make([]byte, 1024*1024)), // 1MB of zeros
+			content:  string(make([]byte, 1024*1024)), // 1MB of zeros, highly compressible
 			password: "large-file-password",
 			wantErr:  false,
 		},
@@ -101,10 +101,15 @@ func TestEncryptFile(t *testing.T) {
 				return
 			}
 
-			// Encrypted file should be larger than original due to header and authentication tag
-			if stat.Size() <= int64(len(tt.content)) {
-				t.Errorf("EncryptFile() encrypted file size %d should be larger than original %d",
-					stat.Size(), len(tt.content))
+			// Basic sanity check - encrypted file should not be empty
+			if stat.Size() == 0 {
+				t.Error("EncryptFile() output file is empty")
+				return
+			}
+
+			// For non-empty original content, encrypted file should have some data
+			if tt.content != "" && stat.Size() < int64(len(constants.MagicMarker)) {
+				t.Errorf("Encrypted file too small: %d bytes", stat.Size())
 			}
 
 			// Verify file is actually encrypted (not plaintext)
