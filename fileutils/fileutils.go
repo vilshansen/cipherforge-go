@@ -2,7 +2,7 @@ package fileutils
 
 import (
 	"bytes"
-	"compress/gzip" // <-- NECESSARY CHANGE: Add GZIP import
+	"compress/gzip"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -19,32 +19,38 @@ import (
 )
 
 func EncryptFile(inputFile string, outputFile string, userPassword string) error {
+	passwordBytes := []byte(userPassword)
 	var err error
-	var passwordBytes []byte = []byte(userPassword)
+
 	if len(passwordBytes) == 0 {
 		fmt.Println("Enter password for encryption, or press enter to have one generated for you: ")
 		passwordBytes, err = readPasswordFromTerminal()
 		if err != nil {
 			return err
 		}
+
 		if len(passwordBytes) > 0 {
+			// User entered a password, require confirmation
 			fmt.Println("Confirm your password for encryption: ")
 			passwordBytesVerify, err := readPasswordFromTerminal()
 			if err != nil {
+				// Security: Zero input copy before returning error
+				cryptoutils.ZeroBytes(passwordBytes)
 				return err
 			}
 			if !bytes.Equal(passwordBytes, passwordBytesVerify) {
+				// Security: Zero both passwords immediately on confirmation failure
+				cryptoutils.ZeroBytes(passwordBytes)
+				cryptoutils.ZeroBytes(passwordBytesVerify)
 				return fmt.Errorf("the two passwords entered do not match")
 			}
-		}
-		if passwordBytes == nil {
-			fmt.Println("No password entered...")
+			cryptoutils.ZeroBytes(passwordBytesVerify) // Zero verification copy
+		} else {
+			// User pressed enter, generate password
+			fmt.Println("No password entered. Generating secure password...")
 			if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
 				return fmt.Errorf("error generating secure password: %w", err)
 			}
-		}
-		if err != nil {
-			return err
 		}
 	}
 
@@ -149,7 +155,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 }
 
 func readPasswordFromTerminal() ([]byte, error) {
-	var passwordBytes, err = term.ReadPassword(int(syscall.Stdin))
+	passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
 	if err != nil {
 		return nil, fmt.Errorf("could not read password from the terminal: %w", err)
 	}
@@ -249,11 +255,11 @@ func getRandomBytes(howManyBytes int) ([]byte, error) {
 	return randomBytes, nil
 }
 
-// expandInputPath tager en sti eller et wildcard-mønster og returnerer en liste af matchende filer.
+// ExpandInputPath takes a path or a wildcard pattern and returns a list of matching files.
 func ExpandInputPath(inputPattern string) ([]string, error) {
-	// 1. Tjek om inputPattern er et gyldigt wildcard-mønster
+	// 1. Check if inputPattern contains a wildcard pattern
 	if !strings.ContainsAny(inputPattern, "*?[]") {
-		// Hvis det ikke er et wildcard, behandl det som en enkelt fil
+		// If it is not a wildcard, treat it as a single file
 		_, err := os.Stat(inputPattern)
 		if err != nil {
 			return nil, fmt.Errorf("input file does not exist: %w", err)
@@ -261,13 +267,13 @@ func ExpandInputPath(inputPattern string) ([]string, error) {
 		return []string{inputPattern}, nil
 	}
 
-	// 2. Udfør wildcard-ekspansion
+	// 2. Perform wildcard expansion
 	matches, err := filepath.Glob(inputPattern)
 	if err != nil {
 		return nil, fmt.Errorf("error during expansion of wildcard pattern: %w", err)
 	}
 
-	// 3. Tjek for match
+	// 3. Check for matches
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no match found for pattern: %s", inputPattern)
 	}
