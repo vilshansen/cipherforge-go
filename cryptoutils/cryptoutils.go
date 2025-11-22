@@ -30,8 +30,6 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 		randomChars[i] = constants.CharacterPool[idx.Int64()]
 	}
 
-	fmt.Printf("Generated password: %s\n", randomChars)
-
 	return randomChars, nil
 }
 

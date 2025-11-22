@@ -18,6 +18,13 @@ const (
 	ScryptR        = 8       // block size
 	ScryptP        = 1       // parallelization parameter
 	SaltLength     = 16      // 128-bit salt
+	// ChunkSize defines the maximum size of a data chunk to be encrypted/decrypted.
+	ChunkSize = 65536 // 64 KiB
+	// CounterLength is the size of the counter appended to the nonce prefix.
+	CounterLength = 8 // uint64 counter
+	// NoncePrefixLength is the fixed, random prefix of the 24-byte XChaCha nonce.
+	// 24 bytes (XNonceSize) - 8 bytes (Counter) = 16 bytes (Prefix)
+	NoncePrefixLength = 16
 )
 
 // HelpText indeholder den fulde, formaterede hjælpevejledning til CLI-værktøjet.
@@ -85,72 +92,79 @@ explicitly instructed to encrypt or decrypt (via -ef or -df).
 
 ENCRYPTION PROCESS:
 
-First, a 16-byte cryptographically secure random salt (s) and a 24-byte
-nonce (initialization vector) are generated. The nonce is a unique, non-
-repeating random value required by the XChaCha20-Poly1305 cipher mode.
+The file undergoes a two-step streaming process: Compression then Encryption.
 
-Next, a 32-byte (256-bit) encryption key (K) is derived from the user's
-password (p) using the scrypt key derivation algorithm (KDF). The full
-function signature is defined as:
+1. Compression: The plaintext input is compressed using GZIP. This is 
+   crucial for securing file boundaries and reducing final file size.
 
-K = scrypt(p, s, N, R, P, len).
+2. Key Derivation: A 16-byte random salt (s) and a 32-byte (256-bit) 
+   encryption key (K) are derived from the user's password (p) using the 
+   high-cost scrypt key derivation algorithm (KDF). The full function 
+   signature is defined as: K = scrypt(p, s, N, R, P, len).
 
 Where:
 
-K  : The resulting 32-byte derived encryption key.
-p  : The user-provided password (pass phrase).
-s  : The 16-byte random salt used to diversify the output.
-N  : The CPU/Memory Cost Parameter
-R  : The Block Size Parameter
-P  : The Parallelization Parameter
-len: The desired length of the derived key
+K   : The resulting 32-byte derived encryption key.
+p   : The user-provided password (pass phrase).
+s   : The 16-byte random salt used to diversify the output.
+N   : The CPU/Memory Cost Parameter
+R   : The Block Size Parameter
+P   : The Parallelization Parameter
+len : The desired length of the derived key
 
 The default parameters used for encryption are currently N=2^18 (262144),
 R=8, P=1, and len is 32 bytes (256 bits).
 
-A structured header containing all necessary metadata and KDF parameters is
-constructed and written to the output file. This header is included in the
-Authenticated Associated Data (AAD).
+A 16-byte fixed nonce prefix (initialization vector) is generated and 
+stored in the file header, followed by an 8-byte zero counter, resulting 
+in the required 24-byte nonce for XChaCha20-Poly1305. For each data 
+segment, the 8-byte counter is incremented, ensuring a unique, non-
+repeating 24-byte nonce is used for every encrypted chunk. This entire 
+file header is included in the Additional Authenticated Data (AAD).
 
-The derived encryption key (K) is used to initialize the XChaCha20-Poly1305
-AEAD algorithm. The entire plaintext input is encrypted, and a 16-byte
-Authentication Tag is generated using the generated Nonce (IV) and the full
-header above as the AAD.
+The compressed data is then encrypted in segments (chunks) of up to 
+64KB. Each segment's resulting ciphertext (which includes a 16-byte Poly1305 
+Authentication Tag) is prefixed with an 8-byte length field before being 
+written to the file.
 
 During decryption and verification, the entire header is read and the Magic
 Marker (a unique CipherForge file format identifier) is validated. The salt,
 nonce, and scrypt Parameters (N, R, P) are extracted from the header. The
 encryption key is derived using the user-provided password and the extracted
 KDF parameters. The remaining file content (ciphertext + authentication tag)
-is read. The re-derived key, nonce, ciphertext, and the full header (as AAD)
-are passed to the aead.Open() function. The Poly1305 tag verification
-(authentication check) must succeed to recover the plaintext. Failure
-results in an authentication failure, preventing the output of tampered
-or corrupted data.
+is processed segment-by-segment. The re-derived key, nonce, ciphertext, and 
+the full header (as AAD) are passed to the aead.Open() function. The Poly1305 
+tag verification (authentication check) must succeed to recover the plaintext. 
+Failure results in an authentication failure, preventing the output of tampered
+or corrupted data. Only if the authentication succeeds is the plaintext segment 
+passed to the GZIP decompression stream.
 
 ENCODED BINARY FILE FORMAT:
 
 The encrypted file is a binary structure consisting of a fixed-size header
-(80 bytes) followed immediately by the encrypted payload. All multi-byte
-values (lengths and parameters) are written using big-endian byte order.
+followed immediately by the encrypted payload. All multi-byte values 
+(lengths and parameters) are written using big-endian byte order.
 
 DIAGRAM OF BINARY LAYOUT
 
-+----------------- HEADER (AAD FIELD) DETAILS (80 Bytes) -----------------+
-| Field Name     | Data Type          | Length   | Value/Purpose          |
-|----------------+--------------------+----------+------------------------+
-| Magic Marker   | string/byte array  | 11 bytes | "CIPHERFORGE"          |
-| Salt Length    | uint32             | 4 bytes  | Scrypt salt length     |
-| Scrypt Salt    | byte array         | 16 bytes | Random scrypt salt     |
-| Scrypt N       | uint32             | 4 bytes  | CPU/Memory cost        |
-| Scrypt R       | uint32             | 4 bytes  | Block size             |
-| Scrypt P       | uint32             | 4 bytes  | Parallelization        |
-| Nonce Length   | uint32             | 4 bytes  | XChaCha20 nonce length |
-| XChaCha Nonce  | byte array         | 24 bytes | Random init. vector    |
-| Ciphertext     | byte array         | Variable | Encrypted ciphertext   |
-| Auth. Tag      | byte array         | 16 bytes | XChaCha20 auth. tag    |
-|----------------+-------------------------+----------------+-------------+
-| All fields up to (but not including) the ciphertext are included in the |
-| XChaCha20 Additional Authenticated Data for complete data integrity.    |
-+-------------------------------------------------------------------------+
++------------------- HEADER (AAD FIELD) DETAILS (67 Bytes) -------------------+
+| Field Name       | Data Type          | Length   | Value/Purpose            |
+|------------------+--------------------+----------+--------------------------+
+| Magic Marker     | string/byte array  | 11 bytes | "CIPHERFORGE"            |
+| Salt Length      | uint32             | 4 bytes  | Scrypt salt length       |
+| Scrypt Salt      | byte array         | 16 bytes | Random scrypt salt       |
+| Scrypt N         | uint32             | 4 bytes  | CPU/Memory cost          |
+| Scrypt R         | uint32             | 4 bytes  | Block size               |
+| Scrypt P         | uint32             | 4 bytes  | Parallelization          |
+| XChaCha Nonce    | byte array         | 24 bytes | 16-byte fixed prefix +   |
+|                  |                    |          | 8-byte zero counter      |
+| Segment Length   | uint64             | 8 bytes  | Length Ciphertext + Tag  |
+| Ciphertext + Tag | byte array         | Variable | Enc. GZIP data block +   |
+|                  |                    |          | 16-byte tag              |
+|------------------+--------------------+----------+--------------------------+
+| All header fields are included in the XChaCha20 Additional                  |
+| Authenticated Data for complete data integrity.                             |
+| Repeat Segment Length + Ciphertext + Tag structure until EOF. Decrypted     |
+| segments contain the compressed (GZIP) plaintext data.                      |
++-----------------------------------------------------------------------------+
 `

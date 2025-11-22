@@ -6,3 +6,5 @@ test.txt
 test-output/lorem-ipsum-utf8-dec.txt.cfo
 test-output/lorem-ipsum-utf8-enc.txt.cfo
 test-output/lorem-ipsum-utf8.txt.cfo
+lipsum.txt
+lipsum.txt.cfo
