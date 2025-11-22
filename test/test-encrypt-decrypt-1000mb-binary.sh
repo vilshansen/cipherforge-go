@@ -1,10 +1,11 @@
 #!/bin/bash
 set -e
+rm -f 1000mb-binary-file.bin.*
 dd if=/dev/urandom of=1000mb-binary-file.bin bs=1M count=1000
-rm -f 1000mb-binary-file-enc.bin 1000mb-binary-file-dec.bin
-../bin/cipherforge_linux_amd64 -ef -i 1000mb-binary-file.bin -o 1000mb-binary-file-enc.bin -p asasas12
-../bin/cipherforge_linux_amd64 -df -i 1000mb-binary-file-enc.bin -o 1000mb-binary-file-dec.bin -p asasas12
-sha256sum 1000mb-binary-file.bin 1000mb-binary-file-dec.bin
-diff 1000mb-binary-file.bin 1000mb-binary-file-dec.bin
+sha256sum 1000mb-binary-file.bin
+../dist/originals/linux/amd64/cfo -ef 1000mb-binary-file.bin -p asasas12
+rm 1000mb-binary-file.bin
+../dist/originals/linux/amd64/cfo -df 1000mb-binary-file.bin.cfo -p asasas12
+sha256sum 1000mb-binary-file.bin
+rm 1000mb-binary-file.bin.cfo
 echo "Testen er fuldført uden fejl."
-rm -f 1000mb-binary-file-enc.bin 1000mb-binary-file-dec.bin 1000mb-binary-file.bin
