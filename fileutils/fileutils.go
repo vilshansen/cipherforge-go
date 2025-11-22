@@ -46,8 +46,6 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		if err != nil {
 			return err
 		}
-	} else {
-		passwordBytes = []byte(userPassword)
 	}
 
 	salt, err := getRandomBytes(constants.SaltLength)
@@ -138,6 +136,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	if err != nil {
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
+	defer cryptoutils.ZeroBytes(key)
 
 	aad := headers.GetFileHeaderBytes(header)
 	ciphertextWithTag := aead.Seal(nil, nonce, compressedPlaintext, aad)
