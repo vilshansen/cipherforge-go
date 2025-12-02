@@ -2,7 +2,6 @@ package fileutils
 
 import (
 	"bytes"
-	"compress/gzip"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -110,45 +109,11 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 
 	aad := headers.GetFileHeaderBytes(header)
 
-	// --- 3. Single-Pass Streaming Setup (Compression -> Encryption) ---
-
-	// Create a pipe to connect the GZIP writer (Compression) to the encryption loop (Reader).
-	pipeReader, pipeWriter := io.Pipe()
-
-	// Channel to signal when the GZIP compression goroutine is finished or returns an error.
-	compressionDone := make(chan error, 1)
-
-	// Start the Compression Goroutine: reads from inFile, compresses, and writes to pipeWriter
-	go func() {
-		// CRITICAL: Close the writer when done to signal EOF to the reader (encryption loop).
-		// Use CloseWithError if an error occurs during compression.
-		defer pipeWriter.Close()
-
-		gzipWriter := gzip.NewWriter(pipeWriter)
-
-		// Copy plaintext from the input file into the gzip writer, which streams
-		// the compressed data into the pipeWriter.
-		_, copyErr := io.Copy(gzipWriter, inFile)
-
-		if copyErr != nil {
-			// If copy failed, close the pipe with the error
-			pipeWriter.CloseWithError(fmt.Errorf("error streaming compression: %w", copyErr))
-			compressionDone <- copyErr
-			return
-		}
-
-		// Close the gzip writer to flush any buffered data and write the GZIP footer.
-		if gzCloseErr := gzipWriter.Close(); gzCloseErr != nil {
-			pipeWriter.CloseWithError(fmt.Errorf("error closing gzip stream: %w", gzCloseErr))
-			compressionDone <- gzCloseErr
-			return
-		}
-
-		// Compression successful (pipeWriter.Close() called by defer)
-		compressionDone <- nil
-	}()
-
-	// --- 4. Encryption Loop (Reads from Pipe) ---
+	file, err := os.Open(inputFile)
+	if err != nil {
+		return fmt.Errorf("unable to open input file: %w", err)
+	}
+	defer file.Close()
 
 	plaintextBuf := make([]byte, constants.ChunkSize)
 	var segmentCounter uint64 = 0
@@ -156,8 +121,10 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 
 	// The encryption loop now reads from the pipeReader.
 	for {
-		// Read compressed data from the pipe, which is being written concurrently by the goroutine.
-		n, readErr := io.ReadFull(pipeReader, plaintextBuf)
+		n, readErr := io.ReadFull(file, plaintextBuf)
+		if (readErr != nil && readErr != io.EOF) && n == 0 {
+			return fmt.Errorf("error reading input file: %w", readErr)
+		}
 
 		// The segment is only the part that was successfully read
 		plaintextSegment := plaintextBuf[:n]
@@ -166,9 +133,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 			// 1. Get segment nonce (noncePrefix + counter)
 			segmentNonce, nErr := getSegmentNonce(noncePrefix, segmentCounter)
 			if nErr != nil {
-				// Close the reader immediately upon error
-				pipeReader.CloseWithError(fmt.Errorf("error generating segment nonce: %w", nErr))
-				return nErr
+				return fmt.Errorf("error reading input file: %w", nErr)
 			}
 
 			// 2. Encrypt segment
@@ -190,19 +155,11 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 			segmentCounter++
 		}
 
-		// Check read error *after* processing any bytes read
 		if readErr != nil {
 			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-				break // Done reading from the pipe (compression stream finished)
+				break // Done reading from the input file
 			}
-			// If the error came from the compression goroutine, it will be wrapped in the pipeReader's error
-			return fmt.Errorf("error reading compressed data stream from pipe: %w", readErr)
 		}
-	}
-
-	// Check if the compression goroutine finished without an error
-	if compressionErr := <-compressionDone; compressionErr != nil {
-		return fmt.Errorf("compression goroutine failed: %w", compressionErr)
 	}
 
 	return nil
@@ -261,108 +218,59 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	}
 	defer outFile.Close()
 
-	// --- 1. DECOMPRESSION GOROUTINE SETUP ---
-	// Create a pipe to stream decrypted chunks (compressed data) into the GZIP reader.
-	pipeReader, pipeWriter := io.Pipe()
-
-	// Start the decompression goroutine. This will block until pipeWriter is closed (EOF)
-	// or until an error occurs.
-	decompressionDone := make(chan error, 1)
-	go func() {
-		defer pipeReader.Close()
-
-		gzipReader, gzErr := gzip.NewReader(pipeReader)
-		if gzErr != nil {
-			decompressionDone <- fmt.Errorf("error initializing gzip reader (data corrupt?): %w", gzErr)
-			return
-		}
-		defer gzipReader.Close()
-
-		// io.Copy reads decompressed data from gzipReader and writes to outFile
-		_, copyErr := io.Copy(outFile, gzipReader)
-		decompressionDone <- copyErr
-	}()
-	// --- END GOROUTINE SETUP ---
-
-	// --- 2. DECRYPTION STREAMING LOOP ---
-	// The pipeWriter must be closed after the loop to signal EOF to the gzipReader.
-	// We use a local closure to ensure it's called once upon any exit.
-	defer func() {
-		if r := recover(); r != nil {
-			pipeWriter.Close()
-			panic(r)
-		}
-	}()
-	var loopErr error
-
-	func() {
-		defer pipeWriter.Close() // CRITICAL: This ensures EOF is sent to the reader (preventing deadlock)
-
-		sizeBuf := make([]byte, constants.CounterLength) // 8-byte buffer to read segment length
-		var segmentCounter uint64 = 0
-
-		for {
-			// 1. Read segment length (8 bytes)
-			if _, err := io.ReadFull(inFile, sizeBuf); err != nil {
-				if err == io.EOF {
-					break // Normal EOF, all segments read
-				}
-				loopErr = fmt.Errorf("error reading segment length: %w", err)
-				return // Exit loop and close pipeWriter
-			}
-
-			segmentLen := binary.LittleEndian.Uint64(sizeBuf)
-
-			// 2. Read the full ciphertext segment
-			ciphertextWithTag := make([]byte, segmentLen)
-			if _, err := io.ReadFull(inFile, ciphertextWithTag); err != nil {
-				loopErr = fmt.Errorf("error reading encrypted data segment: %w", err)
-				return // Exit loop and close pipeWriter
-			}
-
-			// 3. Get segment nonce
-			segmentNonce, nErr := getSegmentNonce(noncePrefix, segmentCounter)
-			if nErr != nil {
-				loopErr = fmt.Errorf("error generating segment nonce: %w", nErr)
-				return // Exit loop and close pipeWriter
-			}
-
-			// 4. Decrypt the data
-			plaintextSegment, dErr := aead.Open(nil, segmentNonce, ciphertextWithTag, aad)
-			// Zero the ciphertext memory immediately after decryption attempt
-			cryptoutils.ZeroBytes(ciphertextWithTag)
-
-			if dErr != nil {
-				loopErr = fmt.Errorf("authentication failed due to incorrect password or error in input file: %w", dErr)
-				return // Exit loop and close pipeWriter
-			}
-
-			// 5. Write the decrypted segment (compressed data) to the pipe
-			if _, err := pipeWriter.Write(plaintextSegment); err != nil {
-				loopErr = fmt.Errorf("error writing decrypted segment to pipe: %w", err)
-				return // Exit loop and close pipeWriter
-			}
-
-			// Security: Zero plaintext segment after use
-			cryptoutils.ZeroBytes(plaintextSegment)
-
-			segmentCounter++
-		}
-	}()
-	// --- END DECRYPTION STREAMING LOOP ---
-
-	// If the loop returned an error (loopErr is not nil), return it immediately.
-	if loopErr != nil {
-		// Note: pipeWriter.Close() was already called by the inner defer.
-		// The decompression goroutine will receive EOF/error and stop.
-		// We still need to wait for it to clean up.
-		<-decompressionDone
-		return loopErr
+	if err != nil {
+		return fmt.Errorf("unable to open input file: %w", err)
 	}
 
-	// If the loop finished successfully, wait for the decompression goroutine to complete.
-	if copyErr := <-decompressionDone; copyErr != nil {
-		return fmt.Errorf("error during decompression and writing: %w", copyErr)
+	sizeBuf := make([]byte, constants.CounterLength) // 8-byte buffer to read segment length
+	var segmentCounter uint64 = 0
+
+	for {
+		var err error
+		// 1. Read segment length (8 bytes)
+		if _, err = io.ReadFull(inFile, sizeBuf); err != nil {
+			if err == io.EOF {
+				break // Normal EOF, all segments read
+			}
+			return fmt.Errorf("error reading input file: %w", err)
+		}
+
+		segmentLen := binary.LittleEndian.Uint64(sizeBuf)
+
+		// 2. Read the full ciphertext segment
+		ciphertextWithTag := make([]byte, segmentLen)
+		if _, err := io.ReadFull(inFile, ciphertextWithTag); err != nil {
+			return fmt.Errorf("error reading ciphertext segment: %w", err)
+		}
+
+		// 3. Get segment nonce
+		segmentNonce, nErr := getSegmentNonce(noncePrefix, segmentCounter)
+		if nErr != nil {
+			return fmt.Errorf("error generating segment nonce: %w", nErr)
+		}
+
+		// 4. Decrypt the data
+		plaintextSegment, dErr := aead.Open(nil, segmentNonce, ciphertextWithTag, aad)
+		// Zero the ciphertext memory immediately after decryption attempt
+		cryptoutils.ZeroBytes(ciphertextWithTag)
+
+		if dErr != nil {
+			return fmt.Errorf("authentication failed due to incorrect password or error in input file: %w", dErr)
+		}
+
+		// 5. Write the decrypted segment to output file
+		if _, err := outFile.Write(plaintextSegment); err != nil {
+			return fmt.Errorf("error writing decrypted segment to output file: %w", err)
+		}
+
+		// Security: Zero plaintext segment after use
+		cryptoutils.ZeroBytes(plaintextSegment)
+
+		segmentCounter++
+
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break // Done reading from the input file
+		}
 	}
 
 	return nil
