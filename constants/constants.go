@@ -113,9 +113,9 @@ ENCRYPTION PROCESS
 
 ENCODED BINARY FILE FORMAT
 
-The encrypted file is a binary structure consisting of a fixed-size header
-followed immediately by the encrypted payload. All multi-byte values 
-(lengths and parameters) are written using big-endian byte order.
+  The encrypted file is a binary structure consisting of a fixed-size header
+  followed immediately by the encrypted payload. All multi-byte values 
+  (lengths and parameters) are written using big-endian byte order.
 
 DIAGRAM OF BINARY LAYOUT
 
