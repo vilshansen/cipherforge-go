@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/schollz/progressbar/v3"
+
 	"github.com/vilshansen/cipherforge-go/constants"
 	"github.com/vilshansen/cipherforge-go/cryptoutils"
 	"github.com/vilshansen/cipherforge-go/headers"
@@ -80,6 +82,15 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 	defer file.Close()
 
+	fileInfo, err := inFile.Stat()
+	if err != nil {
+		return fmt.Errorf("error getting file info: %w", err)
+	}
+	totalBytes := fileInfo.Size()
+
+	// Initialize the progress bar with the total file size
+	bar := progressbar.DefaultBytes(totalBytes, "Encrypting")
+
 	plaintextBuf := make([]byte, constants.ChunkSize)
 	var segmentCounter uint64 = 0
 	sizeBuf := make([]byte, constants.CounterLength) // 8-byte buffer to write segment length
@@ -117,11 +128,14 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 				return fmt.Errorf("error writing encrypted data segment: %w", err)
 			}
 
+			bar.Add(n)
+
 			segmentCounter++
 		}
 
 		if readErr != nil {
 			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+				bar.Finish()
 				break // Done reading from the input file
 			}
 		}
@@ -148,6 +162,15 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		return fmt.Errorf("unable to open input file: %w", err)
 	}
 	defer inFile.Close()
+
+	fileInfo, err := inFile.Stat()
+	if err != nil {
+		return fmt.Errorf("error getting file info: %w", err)
+	}
+	totalBytes := fileInfo.Size()
+
+	// Initialize the progress bar with the total file size
+	bar := progressbar.DefaultBytes(totalBytes, "Decrypting")
 
 	header, err := headers.ReadFileHeader(inFile)
 	if err != nil {
@@ -206,6 +229,8 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 			return fmt.Errorf("error generating segment nonce: %w", nErr)
 		}
 
+		bar.Add(int(segmentLen))
+
 		// 4. Decrypt the data
 		plaintextSegment, dErr := aead.Open(nil, segmentNonce, ciphertextWithTag, aad)
 		// Zero the ciphertext memory immediately after decryption attempt
@@ -226,6 +251,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		segmentCounter++
 
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			bar.Finish()
 			break // Done reading from the input file
 		}
 	}
