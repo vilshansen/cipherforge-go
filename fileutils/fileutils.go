@@ -18,41 +18,12 @@ import (
 	"golang.org/x/term"
 )
 
-// EncryptFile encrypts the specified file using XChaCha20-Poly1305, streaming
-// the data through GZIP compression and then chunked encryption in a single pass.
 func EncryptFile(inputFile string, outputFile string, userPassword string) error {
-	passwordBytes := []byte(userPassword)
-	var err error
-
-	// --- 1. Password Handling and Key Derivation (KDF) ---
-
-	if len(passwordBytes) == 0 {
-		fmt.Println("Enter password for encryption, or press enter to have one generated for you: ")
-		passwordBytes, err = readPasswordFromTerminal()
-		if err != nil {
-			return err
-		}
-
-		if len(passwordBytes) > 0 {
-			fmt.Println("Confirm your password for encryption: ")
-			passwordBytesVerify, err := readPasswordFromTerminal()
-			if err != nil {
-				cryptoutils.ZeroBytes(passwordBytes)
-				return err
-			}
-			if !bytes.Equal(passwordBytes, passwordBytesVerify) {
-				cryptoutils.ZeroBytes(passwordBytes)
-				cryptoutils.ZeroBytes(passwordBytesVerify)
-				return fmt.Errorf("the two passwords entered do not match")
-			}
-			cryptoutils.ZeroBytes(passwordBytesVerify)
-		} else {
-			fmt.Println("No password entered. Generating secure password...")
-			if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
-				return fmt.Errorf("error generating secure password: %w", err)
-			}
-		}
+	passwordBytes, err := handlePasswordInput(userPassword)
+	if err != nil {
+		return fmt.Errorf("error handling password input: %w", err)
 	}
+	defer cryptoutils.ZeroBytes(passwordBytes)
 
 	salt, err := getRandomBytes(constants.SaltLength)
 	if err != nil {
@@ -60,14 +31,11 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 	defer cryptoutils.ZeroBytes(salt)
 
-	key, err := cryptoutils.DeriveKeyScrypt(passwordBytes, salt, constants.ScryptN, constants.ScryptR, constants.ScryptP)
+	key, err := cryptoutils.DeriveKeyScrypt(passwordBytes, salt)
 	if err != nil {
 		return fmt.Errorf("error during key derivation: %w", err)
 	}
-	// Zero password memory immediately after key derivation
-	defer cryptoutils.ZeroBytes(passwordBytes)
-
-	// --- 2. File Setup and Header ---
+	defer cryptoutils.ZeroBytes(key)
 
 	inFile, err := os.Open(inputFile)
 	if err != nil {
@@ -81,23 +49,22 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 	defer outFile.Close()
 
-	// Generate a 16-byte nonce prefix for streaming mode
-	noncePrefix, err := getRandomBytes(constants.NoncePrefixLength)
+	// The full 24-byte nonce is stored in the header, with the last 8 bytes being 0 (counter start)
+	noncePrefix, err := getNoncePrefix()
 	if err != nil {
 		return fmt.Errorf("error generating nonce prefix: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(noncePrefix)
 
-	// The full 24-byte nonce is stored in the header, with the last 8 bytes being 0 (counter start)
-	fullNonce := make([]byte, constants.NoncePrefixLength+constants.CounterLength)
-	copy(fullNonce, noncePrefix)
+	fullNonce, err := getFullNonce(noncePrefix)
+	if err != nil {
+		return fmt.Errorf("error generating full nonce: %w", err)
+	}
 	defer cryptoutils.ZeroBytes(fullNonce)
 
-	header := headers.FileHeader{
-		MagicMarker: constants.MagicMarker, ScryptSalt: salt, ScryptN: constants.ScryptN, ScryptR: constants.ScryptR, ScryptP: constants.ScryptP, XChaChaNonce: fullNonce,
-	}
-
-	if err := headers.WriteFileHeader(header, outFile); err != nil {
+	header := getFileHeader(salt, fullNonce)
+	headerData := headers.GetFileHeaderBytes(*header)
+	if err := headers.WriteFileHeader(headerData, outFile); err != nil {
 		return fmt.Errorf("error writing header: %w", err)
 	}
 
@@ -106,8 +73,6 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
 	defer cryptoutils.ZeroBytes(key)
-
-	aad := headers.GetFileHeaderBytes(header)
 
 	file, err := os.Open(inputFile)
 	if err != nil {
@@ -133,11 +98,11 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 			// 1. Get segment nonce (noncePrefix + counter)
 			segmentNonce, nErr := getSegmentNonce(noncePrefix, segmentCounter)
 			if nErr != nil {
-				return fmt.Errorf("error reading input file: %w", nErr)
+				return fmt.Errorf("error getting segment nonce: %w", nErr)
 			}
 
 			// 2. Encrypt segment
-			ciphertextWithTag := aead.Seal(nil, segmentNonce, plaintextSegment, aad)
+			ciphertextWithTag := aead.Seal(nil, segmentNonce, plaintextSegment, headerData)
 
 			// 3. Write segment length (8 bytes)
 			segmentLen := uint64(len(ciphertextWithTag))
@@ -165,14 +130,6 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	return nil
 }
 
-func readPasswordFromTerminal() ([]byte, error) {
-	passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
-	if err != nil {
-		return nil, fmt.Errorf("could not read password from the terminal: %w", err)
-	}
-	return passwordBytes, nil
-}
-
 func DecryptFile(inputFile, outputFile, userPassword string) error {
 	passwordChars := []byte(userPassword)
 	var err error
@@ -197,7 +154,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		return fmt.Errorf("error reading header: %w", err)
 	}
 
-	key, err := cryptoutils.DeriveKeyScrypt(passwordChars, header.ScryptSalt, header.ScryptN, header.ScryptR, header.ScryptP)
+	key, err := cryptoutils.DeriveKeyScrypt(passwordChars, header.ScryptSalt)
 	if err != nil {
 		return fmt.Errorf("error during key derivation: %w", err)
 	}
@@ -322,7 +279,70 @@ func getSegmentNonce(noncePrefix []byte, counter uint64) ([]byte, error) {
 	nonce := make([]byte, constants.NoncePrefixLength+constants.CounterLength)
 	copy(nonce, noncePrefix)
 
-	// Append counter in little-endian format
+	// Append counter in little-endian format, to ensure  the counter bytes
+	// are arranged in the order expected by the Go crypto library's
+	// implementation of XChaCha20-Poly1305
 	binary.LittleEndian.PutUint64(nonce[constants.NoncePrefixLength:], counter)
 	return nonce, nil
+}
+
+func getNoncePrefix() ([]byte, error) {
+	noncePrefix, err := getRandomBytes(constants.NoncePrefixLength)
+	if err != nil {
+		return nil, fmt.Errorf("error generating random bytes: %w", err)
+	}
+	defer cryptoutils.ZeroBytes(noncePrefix)
+	return noncePrefix, nil
+}
+
+func getFullNonce(noncePrefix []byte) ([]byte, error) {
+	fullNonce := make([]byte, constants.NoncePrefixLength+constants.CounterLength)
+	copy(fullNonce, noncePrefix)
+	return fullNonce, nil
+}
+
+func getFileHeader(salt []byte, fullNonce []byte) *headers.FileHeader {
+	return &headers.FileHeader{
+		MagicMarker: constants.MagicMarker, ScryptSalt: salt, ScryptN: constants.ScryptN, ScryptR: constants.ScryptR, ScryptP: constants.ScryptP, XChaChaNonce: fullNonce,
+	}
+}
+
+func handlePasswordInput(userPassword string) ([]byte, error) {
+	passwordBytes := []byte(userPassword)
+	if len(passwordBytes) == 0 {
+		fmt.Println("Enter password for encryption, or press enter to have one generated for you: ")
+		passwordBytes, err := readPasswordFromTerminal()
+		if err != nil {
+			return nil, err
+		}
+
+		if len(passwordBytes) > 0 {
+			fmt.Println("Confirm your password for encryption: ")
+			passwordBytesVerify, err := readPasswordFromTerminal()
+			if err != nil {
+				cryptoutils.ZeroBytes(passwordBytes)
+				return nil, err
+			}
+			if !bytes.Equal(passwordBytes, passwordBytesVerify) {
+				cryptoutils.ZeroBytes(passwordBytes)
+				cryptoutils.ZeroBytes(passwordBytesVerify)
+				return nil, fmt.Errorf("the two passwords entered do not match")
+			}
+			cryptoutils.ZeroBytes(passwordBytesVerify)
+		} else {
+			fmt.Println("No password entered. Generating secure password...")
+			if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
+				return nil, fmt.Errorf("error generating secure password: %w", err)
+			}
+		}
+	}
+	return passwordBytes, nil
+}
+
+func readPasswordFromTerminal() ([]byte, error) {
+	passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return nil, fmt.Errorf("could not read password from the terminal: %w", err)
+	}
+	return passwordBytes, nil
 }

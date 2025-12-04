@@ -27,9 +27,9 @@ func createTestHeader(t *testing.T) FileHeader {
 	return FileHeader{
 		MagicMarker:  constants.MagicMarker,
 		ScryptSalt:   salt,
-		ScryptN:      N,
-		ScryptR:      R,
-		ScryptP:      P,
+		ScryptN:      (uint32)(N),
+		ScryptR:      (uint32)(R),
+		ScryptP:      (uint32)(P),
 		XChaChaNonce: nonce,
 	}
 }
@@ -138,7 +138,7 @@ func TestWriteFileHeader(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
 
-			err := WriteFileHeader(tt.header, &buf)
+			err := WriteFileHeader(GetFileHeaderBytes(tt.header), &buf)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("WriteFileHeader() error = %v, wantErr %v", err, tt.wantErr)
 				return

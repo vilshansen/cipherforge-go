@@ -42,8 +42,8 @@ USAGE
 
 COMMANDS
 
-  -ef                      Encrypts the specified input file(s).
-  -df                      Decrypts the specified input file(s).
+  -e                      Encrypts the specified input file(s).
+  -d                      Decrypts the specified input file(s).
 
 OPTIONS
 
@@ -62,16 +62,16 @@ OPTIONS
 EXAMPLES
 
   # Encrypt file using an auto-generated password:
-  cipherforge -ef secrets.txt
+  cipherforge -e secrets.txt
   
   # Encrypt all text files using a supplied password:
-  cipherforge -ef "*.txt" -p VerySecretPassword
+  cipherforge -e "*.txt" -p VerySecretPassword
   
   # Decrypt file (prompts for password):
-  cipherforge -df secrets.cfo
+  cipherforge -d secrets.cfo
 
   # Decrypt all text files using a supplied password:
-  cipherforge -df "*.txt" -p VerySecretPassword
+  cipherforge -d "*.txt" -p VerySecretPassword
 
 SOURCE CODE
 
@@ -128,6 +128,7 @@ DIAGRAM OF BINARY LAYOUT
   | Scrypt N         | uint32             | 4 bytes  | CPU/Memory cost          |
   | Scrypt R         | uint32             | 4 bytes  | Block size               |
   | Scrypt P         | uint32             | 4 bytes  | Parallelization          |
+  | Nonce Length     | uint32             | 4 bytes  | XChaCha nonce length     |
   | XChaCha Nonce    | byte array         | 24 bytes | 16-byte fixed prefix +   |
   |                  |                    |          | 8-byte zero counter      |
   +---------------- ENCRYPTED PAYLOAD DETAILS (VARIABLE LENGTH) ----------------+

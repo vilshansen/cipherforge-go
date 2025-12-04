@@ -90,7 +90,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "Error decrypting %s: %v\n", inputFile, err)
 			}
 		default:
-			fmt.Fprintf(os.Stderr, "invalid operation. Use -ef (encrypt) or -df (decrypt)")
+			fmt.Fprintf(os.Stderr, "invalid operation. Use -e (encrypt) or -d (decrypt)")
 		}
 	}
 }
@@ -160,15 +160,15 @@ func resolvePassword(operation string) (string, error) {
 
 func getParameters() (operation string, inputPattern string, password string, err error) {
 	// Define flags
-	encryptFlag := flag.String("ef", "", "Encrypt file")
-	decryptFlag := flag.String("df", "", "Decrypt file")
+	encryptFlag := flag.String("e", "", "Encrypt file")
+	decryptFlag := flag.String("d", "", "Decrypt file")
 	pwdFlag := flag.String("p", "", "Password (optional)")
 
 	// Parse flags
 	flag.Parse()
 
 	if *encryptFlag == *decryptFlag {
-		return "", "", "", fmt.Errorf("must specify either -ef (encrypt) or -df (decrypt), but not both")
+		return "", "", "", fmt.Errorf("must specify either -e (encrypt) or -d (decrypt), but not both")
 	}
 
 	if *encryptFlag != "" {

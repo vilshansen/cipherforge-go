@@ -33,9 +33,7 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 	return randomChars, nil
 }
 
-// DeriveKeyScrypt uses the scrypt algorithm to derive a cryptographic key
-// from a password and salt using the given parameters N, R, and P.
-func DeriveKeyScrypt(password []byte, salt []byte, N int, R int, P int) ([]byte, error) {
+func DeriveKeyScrypt(password []byte, salt []byte) ([]byte, error) {
 	if len(password) == 0 {
 		return nil, fmt.Errorf("password cannot be empty")
 	}
@@ -44,24 +42,12 @@ func DeriveKeyScrypt(password []byte, salt []byte, N int, R int, P int) ([]byte,
 		return nil, fmt.Errorf("invalid salt length")
 	}
 
-	if N <= 1 || (N&(N-1)) != 0 {
-		return nil, fmt.Errorf("scrypt N must be a power of 2 greater than 1, got %d", N)
-	}
-
-	if R <= 0 || P <= 0 {
-		return nil, fmt.Errorf("scrypt R and P must be positive")
-	}
-
-	if int64(R)*int64(P) >= (1 << 30) {
-		return nil, fmt.Errorf("scrypt R * P must be less than 2^30")
-	}
-
 	key, err := scrypt.Key(
 		password,
 		salt,
-		N,
-		R,
-		P,
+		constants.ScryptN,
+		constants.ScryptR,
+		constants.ScryptP,
 		constants.KeySize,
 	)
 

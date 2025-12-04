@@ -11,16 +11,16 @@ Værktøjet følger den kryptografiske konstruktion **Encrypt-then-MAC (EtM)** f
 Krypterer en fil og gemmer den som et nyt output. Hvis intet \-p flag angives, genereres et stærkt, tilfældigt password, som skal gemmes sikkert af brugeren.
 
 \# Standard kryptering (genererer tilfældigt password)  
-go run cipherforge.go \-ef \<input\_fil\> \<output\_fil\>
+go run cipherforge.go \-e \<input\_fil\> \<output\_fil\>
 
 \# Kryptering med specifikt password  
-go run cipherforge.go \-ef \<input\_fil\> \<output\_fil\> \-p \<dit\_password\>
+go run cipherforge.go \-e \<input\_fil\> \<output\_fil\> \-p \<dit\_password\>
 
 ### **Dekryptering**
 
 Dekrypterer en krypteret fil. Kræver passwordindtastning via terminalen (skjult input).
 
-go run cipherforge.go \-df \<input\_fil\> \<output\_fil\>
+go run cipherforge.go \-d \<input\_fil\> \<output\_fil\>
 
 ## **🔐 Kryptografiske Detaljer**
 

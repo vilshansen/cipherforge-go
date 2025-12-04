@@ -12,9 +12,9 @@ import (
 type FileHeader struct {
 	MagicMarker  string
 	ScryptSalt   []byte
-	ScryptN      int
-	ScryptR      int
-	ScryptP      int
+	ScryptN      uint32
+	ScryptR      uint32
+	ScryptP      uint32
 	XChaChaNonce []byte
 }
 
@@ -30,13 +30,13 @@ func GetFileHeaderBytes(header FileHeader) []byte {
 	buf.Write(header.ScryptSalt)
 
 	// Skriv scrypt N
-	binary.Write(&buf, binary.BigEndian, int32(header.ScryptN))
+	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptN))
 
 	// Skriv scrypt R
-	binary.Write(&buf, binary.BigEndian, int32(header.ScryptR))
+	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptR))
 
 	// Skriv scrypt P
-	binary.Write(&buf, binary.BigEndian, int32(header.ScryptP))
+	binary.Write(&buf, binary.BigEndian, uint32(header.ScryptP))
 
 	// Skriv XNonce (Længde + Data)
 	binary.Write(&buf, binary.BigEndian, uint32(len(header.XChaChaNonce)))
@@ -45,8 +45,7 @@ func GetFileHeaderBytes(header FileHeader) []byte {
 	return buf.Bytes()
 }
 
-func WriteFileHeader(header FileHeader, output io.Writer) error {
-	headerData := GetFileHeaderBytes(header)
+func WriteFileHeader(headerData []byte, output io.Writer) error {
 	n, err := output.Write(headerData)
 	if n != len(headerData) || err != nil {
 		return fmt.Errorf("fejl ved skrivning af header: %w", err)
@@ -89,7 +88,7 @@ func readScryptN(input io.Reader, fileHeader *FileHeader) (*FileHeader, error) {
 	if err := binary.Read(input, binary.BigEndian, &ScryptN); err != nil {
 		return fileHeader, fmt.Errorf("fejl ved læsning af scrypt N: %w", err)
 	}
-	fileHeader.ScryptN = int(ScryptN)
+	fileHeader.ScryptN = uint32(ScryptN)
 	return fileHeader, nil
 }
 
@@ -98,7 +97,7 @@ func readScryptR(input io.Reader, fileHeader *FileHeader) (*FileHeader, error) {
 	if err := binary.Read(input, binary.BigEndian, &ScryptR); err != nil {
 		return fileHeader, fmt.Errorf("fejl ved læsning af scrypt R: %w", err)
 	}
-	fileHeader.ScryptR = int(ScryptR)
+	fileHeader.ScryptR = uint32(ScryptR)
 	return fileHeader, nil
 }
 
@@ -107,7 +106,7 @@ func readScryptP(input io.Reader, fileHeader *FileHeader) (*FileHeader, error) {
 	if err := binary.Read(input, binary.BigEndian, &ScryptP); err != nil {
 		return fileHeader, fmt.Errorf("fejl ved læsning af scrypt P: %w", err)
 	}
-	fileHeader.ScryptP = int(ScryptP)
+	fileHeader.ScryptP = uint32(ScryptP)
 	return fileHeader, nil
 }
 
