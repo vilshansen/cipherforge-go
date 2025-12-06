@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"time"
 
+	"github.com/schollz/progressbar/v3"
 	"github.com/vilshansen/cipherforge-go/constants"
 	"golang.org/x/crypto/scrypt"
 )
@@ -34,6 +36,24 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 }
 
 func DeriveKeyScrypt(password []byte, salt []byte) ([]byte, error) {
+	bar := progressbar.NewOptions(-1,
+		// Set the display description
+		progressbar.OptionSetDescription("Deriving key from passwod..."),
+		// Set the spinner animation using an official type
+		progressbar.OptionSpinnerType(14), // Type 14 is a simple revolving character
+		// Ensure the bar is displayed immediately
+		progressbar.OptionShowElapsedTimeOnFinish())
+
+	defer bar.Finish()
+
+	// Run the spinner in a goroutine so it doesn't block the Scrypt call
+	go func() {
+		for !bar.IsFinished() {
+			bar.Add(1)
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
 	if len(password) == 0 {
 		return nil, fmt.Errorf("password cannot be empty")
 	}

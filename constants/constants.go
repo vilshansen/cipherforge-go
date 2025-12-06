@@ -19,7 +19,7 @@ const (
 	ScryptP        = 1       // parallelization parameter
 	SaltLength     = 16      // 128-bit salt
 	// ChunkSize defines the maximum size of a data chunk to be encrypted/decrypted.
-	ChunkSize = 65536 // 64 KiB
+	ChunkSize = 1048576 // 1 MiB
 	// CounterLength is the size of the counter appended to the nonce prefix.
 	CounterLength = 8 // uint64 counter
 	// NoncePrefixLength is the fixed, random prefix of the 24-byte XChaCha nonce.

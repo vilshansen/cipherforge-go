@@ -90,6 +90,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 
 	// Initialize the progress bar with the total file size
 	bar := progressbar.DefaultBytes(totalBytes, "Encrypting")
+	defer bar.Finish()
 
 	plaintextBuf := make([]byte, constants.ChunkSize)
 	var segmentCounter uint64 = 0
@@ -135,7 +136,6 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 
 		if readErr != nil {
 			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-				bar.Finish()
 				break // Done reading from the input file
 			}
 		}
@@ -171,6 +171,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 
 	// Initialize the progress bar with the total file size
 	bar := progressbar.DefaultBytes(totalBytes, "Decrypting")
+	defer bar.Finish()
 
 	header, err := headers.ReadFileHeader(inFile)
 	if err != nil {
@@ -251,7 +252,6 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		segmentCounter++
 
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			bar.Finish()
 			break // Done reading from the input file
 		}
 	}
