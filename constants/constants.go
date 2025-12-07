@@ -38,26 +38,21 @@ derivation).
 
 USAGE
 
-  cipherforge [COMMAND] <input_file> [-p [pass_phrase]]
+  cipherforge [COMMAND] <input_file> [-p <pass_phrase>]
 
 COMMANDS
 
-  -e                      Encrypts the specified input file(s).
-  -d                      Decrypts the specified input file(s).
+  -e                      Encrypt the specified input file(s).
+  -d                      Decrypt the specified input file(s).
 
 OPTIONS
 
-  -p <pass phrase>        Optionally, provides the password directly via
+  -p <pass phrase>        Optionally, provide the password directly via
                           command line.
                           
-                          If this flag is omitted when encrypting, a
-                          random, strong password is generated and
-                          displayed. If this flag is omitted when de-
-                          crypting, the user is prompted for a passphrase.
-                          
-                          For security, interactive entry is always
-                          preferred for decryption to prevent logging the
-                          password in shell history.
+If the -p flag is omitted when encrypting, a random, strong password is
+generated and displayed. If the flag is omitted when decrypting, the user is
+prompted for a passphrase.
 
 EXAMPLES
 
@@ -92,54 +87,53 @@ ENCRYPTION PROCESS
   encryption key are derived from the user's password using the 
   high-cost scrypt key derivation algorithm.
   
-  The default parameters used for encryption are currently N=2^18 (CPU/
-  Memory cost), R=8 (block size parameter), P=1 (parallelization parameter).
-  These parameters provide a strong defense against brute-force attacks
-  while balancing performance for typical desktop and server environments.
-  The salt and scrypt parameters are stored in the file header to allow
-  for future adjustments without breaking compatibility.
+  The default parameters used for encryption are currently N=2^18 (CPU/Memory
+  cost), R=8 (block size parameter), P=1 (parallelization parameter). These
+  parameters provide a strong defense against brute-force attacks while
+  balancing performance for typical desktop and server environments. The salt
+  and scrypt parameters are stored in the file header to allow for future
+  adjustments without breaking compatibility.
 
-  A 16-byte fixed nonce prefix (initialization vector) is generated and 
-  stored in the file header, followed by an 8-byte zero counter, resulting
-  in the required 24-byte nonce for XChaCha20-Poly1305. For each data 
-  segment, the 8-byte counter is incremented, ensuring a unique, non-
-  repeating 24-byte nonce is used for every encrypted chunk. This entire 
-  file header is included in the Additional Authenticated Data (AAD).
+  A 16-byte fixed nonce prefix (initialization vector) is generated and stored
+  in the file header, followed by an 8-byte zero counter, resulting in the
+  required 24-byte nonce for XChaCha20-Poly1305. For each data segment, the
+  8-byte counter is incremented, ensuring a unique, non-repeating 24-byte
+  nonce is used for every encrypted chunk. This entire file header is included
+  in the Additional Authenticated Data (AAD).
 
-  The data is then encrypted in segments of up to 64KB. Each segment's
-  resulting ciphertext (which includes a 16-byte Poly1305 Authentication
-  Tag) is prefixed with an 8-byte length field before being written to
-  the file.
+  The data is then encrypted in segments of up to 1 MB. Each segment's
+  resulting ciphertext (which includes a 16-byte Poly1305 Authentication Tag)
+  is prefixed with an 8-byte length field before being written to the file.
 
 ENCODED BINARY FILE FORMAT
 
   The encrypted file is a binary structure consisting of a fixed-size header
-  followed immediately by the encrypted payload. All multi-byte values 
-  (lengths and parameters) are written using big-endian byte order.
+  followed immediately by the encrypted payload. All multi-byte values (lengths
+  and parameters) are written using big-endian byte order.
 
 DIAGRAM OF BINARY LAYOUT
 
-  +------------------- HEADER (AAD FIELD) DETAILS (67 Bytes) -------------------+
-  | Field Name       | Data Type          | Length   | Value/Purpose            |
-  |------------------+--------------------+----------+--------------------------+
-  | Magic Marker     | string/byte array  | 11 bytes | "CIPHERFORGE"            |
-  | Salt Length      | uint32             | 4 bytes  | Scrypt salt length       |
-  | Scrypt Salt      | byte array         | 16 bytes | Random scrypt salt       |
-  | Scrypt N         | uint32             | 4 bytes  | CPU/Memory cost          |
-  | Scrypt R         | uint32             | 4 bytes  | Block size               |
-  | Scrypt P         | uint32             | 4 bytes  | Parallelization          |
-  | Nonce Length     | uint32             | 4 bytes  | XChaCha nonce length     |
-  | XChaCha Nonce    | byte array         | 24 bytes | 16-byte fixed prefix +   |
-  |                  |                    |          | 8-byte zero counter      |
-  +---------------- ENCRYPTED PAYLOAD DETAILS (VARIABLE LENGTH) ----------------+
-  | Field Name       | Data Type          | Length   | Value/Purpose            |
-  |------------------+--------------------+----------+--------------------------+
-  | Segment Length   | uint64             | 8 bytes  | Length Ciphertext + Tag  |
-  | Ciphertext       | byte array         | <= 64 KB | Encrypted data block     |
-  | Poly1305 tag     | byte array         | 16 bytes | Authentication tag       |
-  |------------------+--------------------+----------+--------------------------+
-  | All header fields are included in the XChaCha20 Additional Authenticated    |
-  | data for complete data integrity. Repeat Segment Length + Ciphertext + Tag  |
-  | structure until EOF. Decrypted segments contain the plaintext data.         |
-  +-----------------------------------------------------------------------------+
+  +------------------- HEADER (AAD FIELD) DETAILS (67 Bytes) ------------------+
+  | Field Name       | Data Type          | Length   | Value/Purpose           |
+  |------------------+--------------------+----------+-------------------------+
+  | Magic Marker     | string/byte array  | 11 bytes | "CIPHERFORGE"           |
+  | Salt Length      | uint32             | 4 bytes  | Scrypt salt length      |
+  | Scrypt Salt      | byte array         | 16 bytes | Random scrypt salt      |
+  | Scrypt N         | uint32             | 4 bytes  | CPU/Memory cost         |
+  | Scrypt R         | uint32             | 4 bytes  | Block size              |
+  | Scrypt P         | uint32             | 4 bytes  | Parallelization         |
+  | Nonce Length     | uint32             | 4 bytes  | XChaCha nonce length    |
+  | XChaCha Nonce    | byte array         | 24 bytes | 16-byte fixed prefix +  |
+  |                  |                    |          | 8-byte zero counter     |
+  +---------------- ENCRYPTED PAYLOAD DETAILS (VARIABLE LENGTH) ---------------+
+  | Field Name       | Data Type          | Length   | Value/Purpose           |
+  |------------------+--------------------+----------+-------------------------+
+  | Segment Length   | uint64             | 8 bytes  | Length Ciphertext + Tag |
+  | Ciphertext       | byte array         | <= 1 MB  | Encrypted data block    |
+  | Poly1305 tag     | byte array         | 16 bytes | Authentication tag      |
+  |------------------+--------------------+----------+-------------------------+
+  | All header fields are included in the XChaCha20 Additional Authenticated   |
+  | data for complete data integrity. Repeat Segment Length + Ciphertext + Tag |
+  | structure until EOF. Decrypted segments contain the plaintext data.        |
+  +----------------------------------------------------------------------------+
 `

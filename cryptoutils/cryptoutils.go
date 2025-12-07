@@ -16,7 +16,7 @@ import (
 // GenerateSecurePassword generates a cryptographically secure, random password
 // of the specified length from the predefined character pool.
 func GenerateSecurePassword(length int) ([]byte, error) {
-	fmt.Println("Genererating secure, random password for encryption...")
+	fmt.Println("Generating secure, random password for encryption...")
 
 	poolLen := big.NewInt(int64(len(constants.CharacterPool)))
 

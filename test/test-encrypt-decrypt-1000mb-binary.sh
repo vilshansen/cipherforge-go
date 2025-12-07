@@ -7,5 +7,5 @@ sha256sum 1000mb-binary-file.bin
 rm 1000mb-binary-file.bin
 ../dist/originals/linux/amd64/cfo -d 1000mb-binary-file.bin.cfo -p asasas12
 sha256sum 1000mb-binary-file.bin
-rm 1000mb-binary-file.bin.cfo
+rm 1000mb-binary-file.*
 echo "Testen er fuldført uden fejl, hvis de to sha256summer ovenfor er ens."
