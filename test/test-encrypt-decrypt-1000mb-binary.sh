@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 rm -f 1000mb-binary-file.bin.*
-dd if=/dev/urandom of=1000mb-binary-file.bin bs=1M count=1000
+dd status=progress if=/dev/urandom of=1000mb-binary-file.bin bs=1M count=1000
 sha256sum 1000mb-binary-file.bin
 ../dist/originals/linux/amd64/cfo -e 1000mb-binary-file.bin -p asasas12
 rm 1000mb-binary-file.bin

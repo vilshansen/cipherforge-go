@@ -59,10 +59,10 @@ func main() {
 		// Hvis flere filer, brug outputDir som mappe og konstruer filnavn
 		if operation == "encrypt" {
 			currentOutputFile = filepath.Join(filepath.Dir(inputFile), filepath.Base(inputFile)+".cfo")
-			fmt.Printf("Encrypting %s -> %s", inputFile, currentOutputFile)
+			fmt.Printf("\rEncrypting %s -> %s", inputFile, currentOutputFile)
 		} else {
 			currentOutputFile = filepath.Join(filepath.Dir(inputFile), strings.TrimSuffix(filepath.Base(inputFile), ".cfo"))
-			fmt.Printf("Decrypting %s -> %s", inputFile, currentOutputFile)
+			fmt.Printf("\rDecrypting %s -> %s", inputFile, currentOutputFile)
 		}
 
 		_, err := os.Stat(inputFile)
@@ -93,6 +93,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "invalid operation. Use -e (encrypt) or -d (decrypt)")
 		}
 	}
+	fmt.Println()
 }
 
 // Helper to read password securely without echoing

@@ -2,7 +2,7 @@
 set -e
 rm -f *-binary-file.bin.*
 for i in {1..5}; do
-    dd if=/dev/urandom of=1kb-binary-file-$(printf "%03d" "$i").bin bs=1KB count=1
+    dd status=progress if=/dev/urandom of=1kb-binary-file-$(printf "%03d" "$i").bin bs=1KB count=1
 done
 sha256sum 1kb-binary-file-*.bin
 ../dist/originals/linux/amd64/cfo -e "1kb-binary-file-*.bin" -p asasas12

@@ -8,7 +8,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/schollz/progressbar/v3"
 	"github.com/vilshansen/cipherforge-go/constants"
 	"golang.org/x/crypto/scrypt"
 )
@@ -35,24 +34,33 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 	return randomChars, nil
 }
 
-func DeriveKeyScrypt(password []byte, salt []byte) ([]byte, error) {
-	bar := progressbar.NewOptions(-1,
-		// Set the display description
-		progressbar.OptionSetDescription("Deriving key from passwod..."),
-		// Set the spinner animation using an official type
-		progressbar.OptionSpinnerType(14), // Type 14 is a simple revolving character
-		// Ensure the bar is displayed immediately
-		progressbar.OptionShowElapsedTimeOnFinish())
+func runSimpleSpinner(prefix string, doneFlag *bool) {
+	//spinners := []string{"—", "\\", "|", "/"}
+	spinners := []string{"⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽", "⣾"}
+	i := 0
 
-	defer bar.Finish()
+	// Create a ticker to control the spin rate
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop() // Ensure the ticker is stopped when the function exits
 
-	// Run the spinner in a goroutine so it doesn't block the Scrypt call
-	go func() {
-		for !bar.IsFinished() {
-			bar.Add(1)
-			time.Sleep(50 * time.Millisecond)
+	for range ticker.C {
+		// 1. Check the flag on every tick
+		if *doneFlag {
+			// Received signal to stop: clear the line and exit
+			// \r returns the cursor to the beginning of the line
+			fmt.Printf("\r%s... Done.          ", prefix)
+			return
 		}
-	}()
+		// 2. Print the next spinner character
+		fmt.Printf("\r%s... %s", prefix, spinners[i])
+		i = (i + 1) % len(spinners) // Cycle the index
+	}
+}
+
+func DeriveKeyScrypt(password []byte, salt []byte) ([]byte, error) {
+
+	done := false
+	go runSimpleSpinner("Deriving key using scrypt", &done)
 
 	if len(password) == 0 {
 		return nil, fmt.Errorf("password cannot be empty")
@@ -74,6 +82,8 @@ func DeriveKeyScrypt(password []byte, salt []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scrypt derivation failed: %w", err)
 	}
+
+	done = true
 
 	return key, nil
 }

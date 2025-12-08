@@ -27,8 +27,10 @@ const (
 	NoncePrefixLength = 16
 )
 
+const HelpTextShort = `Cipherforge v%s (commit: %s)`
+
 // HelpText contains the full, formatted help guide for the CLI tool.
-const HelpText = `Cipherforge v%s (commit: %s)
+const HelpText = HelpTextShort + `
 Secure File Encryption & Decryption
 Copyright (c) 2025 Peter Vils Hansen
 
