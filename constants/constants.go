@@ -111,8 +111,8 @@ ENCODED BINARY FILE FORMAT
 
   The encrypted file is a binary structure consisting of a fixed-size header
   followed immediately by the encrypted payload. All multi-byte values (lengths
-  and parameters) are written using big-endian byte order.
-
+  and parameters) are written using big-endian byte order. XChaCha20 counter is
+  represented in little-endian format, as specified in RFC 8439.
 DIAGRAM OF BINARY LAYOUT
 
   +------------------- HEADER (AAD FIELD) DETAILS (67 Bytes) ------------------+

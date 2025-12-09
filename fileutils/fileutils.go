@@ -112,7 +112,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 
 			// 3. Write segment length (8 bytes)
 			segmentLen := uint64(len(ciphertextWithTag))
-			binary.LittleEndian.PutUint64(sizeBuf, segmentLen)
+			binary.BigEndian.PutUint64(sizeBuf, segmentLen)
 
 			if _, err := outFile.Write(sizeBuf); err != nil {
 				return fmt.Errorf("error writing segment length: %w", err)
@@ -207,7 +207,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 			return fmt.Errorf("error reading input file: %w", err)
 		}
 
-		segmentLen := binary.LittleEndian.Uint64(sizeBuf)
+		segmentLen := binary.BigEndian.Uint64(sizeBuf)
 
 		// 2. Read the full ciphertext segment
 		ciphertextWithTag := make([]byte, segmentLen)
@@ -299,7 +299,8 @@ func getSegmentNonce(noncePrefix []byte, counter uint64) ([]byte, error) {
 
 	// Append counter in little-endian format, to ensure  the counter bytes
 	// are arranged in the order expected by the Go crypto library's
-	// implementation of XChaCha20-Poly1305
+	// implementation of XChaCha20-Poly1305. Little-endianness is also
+	// defined in the XChaCha20 specification, RFC 8439.
 	binary.LittleEndian.PutUint64(nonce[constants.NoncePrefixLength:], counter)
 	return nonce, nil
 }
