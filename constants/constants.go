@@ -32,8 +32,9 @@ Secure File Encryption & Decryption
 Copyright (c) 2026 Peter Vils Hansen
 
 Cipherforge is a utility for encrypting and decrypting files using strong,
-modern cryptographic standards (XChaCha20-Poly1305 and scrypt key 
-derivation).
+modern cryptographic standards (XChaCha20-Poly1305 and strong, random
+passwords). It is designed to be simple, secure, and cross-platform, with a
+focus on usability and security best practices.
 
 USAGE
 
