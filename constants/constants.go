@@ -8,25 +8,18 @@ const (
 	// cost parameter of (2^17), a minimum block size of 8 (1024 bytes),
 	// and a parallelization parameter of 1."
 	// Source: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
-	MagicMarker    = "CIPHERFORGE"
-	KeySize        = 32 // 256-bit XChaCha20 key
 	XNonceSize     = 24 // 192-bit XChaCha20 Nonce (Extended Nonce)
-	TagSize        = 16 // 128-bit Poly1305 authentication tag
 	PasswordLength = 55 // Standard length for random password. log2(32) = 5 => 55 * 5 = ~275 bits of entropy.
 	// Crockford Base32 character set (omits 0, O, I, L for better readability)
 	CharacterPool = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-	// ChunkSize defines the maximum size of a data chunk to be encrypted/decrypted.
-	ChunkSize = 1048576 // 1 MiB
+	// SegmentSize defines the maximum size of a data segment to be encrypted/decrypted.
+	SegmentSize = 1048576 // 1 MiB
 	// CounterLength is the size of the counter appended to the nonce prefix.
 	CounterLength = 8 // uint64 counter
-	// NoncePrefixLength is the fixed, random prefix of the 24-byte XChaCha nonce.
-	// 24 bytes (XNonceSize) - 8 bytes (Counter) = 16 bytes (Prefix)
-	NoncePrefixLength = 16
 )
 
 const HelpTextShort = `Cipherforge v%s (commit: %s)`
 
-// HelpText contains the full, formatted help guide for the CLI tool.
 const HelpText = HelpTextShort + `
 Secure File Encryption & Decryption
 Copyright (c) 2026 Peter Vils Hansen
@@ -42,8 +35,8 @@ USAGE
 
 COMMANDS
 
-  -e                      Encrypt the specified input file(s).
-  -d                      Decrypt the specified input file(s).
+  -e     Encrypt the specified input file(s).
+  -d     Decrypt the specified input file(s).
                           
 During encryption, a random, strong password is generated and displayed to
 ensure cryptographic strength at all times. This also removes the necessity
@@ -81,12 +74,8 @@ ENCRYPTION PROCESS
   password is then hashed using SHA-256 to produce a 32-byte key suitable
   for XChaCha20 encryption.
 
-  A 16-byte fixed nonce prefix (initialization vector) is now generated and
-  stored in the file header, followed by an 8-byte zero counter, resulting
-  in the required 24-byte nonce for XChaCha20-Poly1305. For each data segment,
-  the 8-byte counter is incremented, ensuring a unique, non-repeating 24-byte
-  nonce is used for every encrypted chunk. This entire file header is included
-  in the Additional Authenticated Data (AAD).
+  A random 24-byte nonce for XChaCha20-Poly1305 is generated for each data segment,
+  ensuring a unique nonce is used for every encrypted chunk.
 
   The data is then encrypted in segments of up to 1 MB. Each segment's
   resulting ciphertext (which includes a 16-byte Poly1305 Authentication Tag)
@@ -97,26 +86,21 @@ ENCODED BINARY FILE FORMAT
   The encrypted file is a binary structure consisting of a fixed-size header
   followed immediately by the encrypted payload. All multi-byte values (lengths
   and parameters) are written using big-endian byte order. XChaCha20 counter is
-  represented in little-endian format, as specified in RFC 8439.
+  represented in big-endian format.
 
 DIAGRAM OF BINARY LAYOUT
 
-  +------------------- HEADER (AAD FIELD) DETAILS (67 Bytes) ------------------+
-  | Field Name       | Data Type          | Length   | Value/Purpose           |
-  |------------------+--------------------+----------+-------------------------+
-  | Magic Marker     | string/byte array  | 11 bytes | "CIPHERFORGE"           |
-  | Nonce Length     | uint32             | 4 bytes  | XChaCha nonce length    |
-  | XChaCha Nonce    | byte array         | 24 bytes | 16-byte fixed prefix +  |
-  |                  |                    |          | 8-byte zero counter     |
   +---------------- ENCRYPTED PAYLOAD DETAILS (VARIABLE LENGTH) ---------------+
   | Field Name       | Data Type          | Length   | Value/Purpose           |
   |------------------+--------------------+----------+-------------------------+
+  | XChaCha Nonce    | byte array         | 24 bytes | 24-byte random nonce    |
   | Segment Length   | uint64             | 8 bytes  | Length Ciphertext + Tag |
   | Ciphertext       | byte array         | <= 1 MB  | Encrypted data block    |
   | Poly1305 tag     | byte array         | 16 bytes | Authentication tag      |
   |------------------+--------------------+----------+-------------------------+
   | All header fields are included in the XChaCha20 Additional Authenticated   |
-  | data for complete data integrity. Repeat Segment Length + Ciphertext + Tag |
-  | structure until EOF. Decrypted segments contain the plaintext data.        |
+  | data for complete data integrity. Repeat XChaCha Nonce + Segment Length +  |
+  | Ciphertext + Tag structure until EOF. Decrypted segments contain the       |
+  | original plaintext data.                                                   |
   +----------------------------------------------------------------------------+
 `

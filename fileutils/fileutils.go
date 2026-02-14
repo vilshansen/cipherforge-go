@@ -12,154 +12,15 @@ import (
 
 	"github.com/vilshansen/cipherforge-go/constants"
 	"github.com/vilshansen/cipherforge-go/cryptoutils"
-	"github.com/vilshansen/cipherforge-go/headers"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-func EncryptFile(inputFile string, outputFile string, userPassword string) error {
+func EncryptFile(inputFile, outputFile, userPassword string) error {
 	inFile, err := os.Open(inputFile)
 	if err != nil {
 		return fmt.Errorf("unable to open input file: %w", err)
 	}
 	defer inFile.Close()
-
-	outFile, err := os.Create(outputFile)
-	if err != nil {
-		return fmt.Errorf("unable to open output file: %w", err)
-	}
-	defer outFile.Close()
-
-	// The full 24-byte nonce is stored in the header, with the last 8 bytes being 0 (counter start)
-	noncePrefix, err := getNoncePrefix()
-	if err != nil {
-		return fmt.Errorf("error generating nonce prefix: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(noncePrefix)
-
-	fullNonce, err := getFullNonce(noncePrefix)
-	if err != nil {
-		return fmt.Errorf("error generating full nonce: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(fullNonce)
-
-	header := getFileHeader(fullNonce)
-	headerData := headers.GetFileHeaderBytes(*header)
-	if err := headers.WriteFileHeader(headerData, outFile); err != nil {
-		return fmt.Errorf("error writing header: %w", err)
-	}
-
-	key := sha256.Sum256([]byte(userPassword))
-	defer cryptoutils.ZeroBytes(key[:])
-
-	aead, err := chacha20poly1305.NewX(key[:])
-	if err != nil {
-		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(key[:])
-
-	file, err := os.Open(inputFile)
-	if err != nil {
-		return fmt.Errorf("unable to open input file: %w", err)
-	}
-	defer file.Close()
-
-	fileInfo, err := inFile.Stat()
-	if err != nil {
-		return fmt.Errorf("error getting file info: %w", err)
-	}
-	totalBytes := fileInfo.Size()
-
-	plaintextBuf := make([]byte, constants.ChunkSize)
-	var segmentCounter uint64 = 0
-	sizeBuf := make([]byte, constants.CounterLength) // 8-byte buffer to write segment length
-
-	progress := make(chan int)
-	go cryptoutils.RunProgressBar("Encrypting file", progress)
-	defer func() {
-		progress <- 100 // Ensure progress bar reaches 100% at the end of encryption
-		close(progress)
-	}()
-
-	// The encryption loop now reads from the pipeReader.
-	for {
-		n, readErr := io.ReadFull(file, plaintextBuf)
-		if (readErr != nil && readErr != io.EOF) && n == 0 {
-			return fmt.Errorf("error reading input file: %w", readErr)
-		}
-
-		// The segment is only the part that was successfully read
-		plaintextSegment := plaintextBuf[:n]
-
-		if n > 0 {
-			// 1. Get segment nonce (noncePrefix + counter)
-			segmentNonce, nErr := getSegmentNonce(noncePrefix, segmentCounter)
-			if nErr != nil {
-				return fmt.Errorf("error getting segment nonce: %w", nErr)
-			}
-
-			// 2. Encrypt segment
-			ciphertextWithTag := aead.Seal(nil, segmentNonce, plaintextSegment, headerData)
-
-			// 3. Write segment length (8 bytes)
-			segmentLen := uint64(len(ciphertextWithTag))
-			binary.BigEndian.PutUint64(sizeBuf, segmentLen)
-
-			if _, err := outFile.Write(sizeBuf); err != nil {
-				return fmt.Errorf("error writing segment length: %w", err)
-			}
-
-			// 4. Write ciphertext segment with tag
-			if _, err := outFile.Write(ciphertextWithTag); err != nil {
-				return fmt.Errorf("error writing encrypted data segment: %w", err)
-			}
-
-			bytesDone := segmentCounter * segmentLen
-			progress <- int((bytesDone * 100) / uint64(totalBytes))
-
-			segmentCounter++
-		}
-
-		if readErr != nil {
-			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-				break // Done reading from the input file
-			}
-		}
-	}
-
-	return nil
-}
-
-func DecryptFile(inputFile, outputFile, userPassword string) error {
-	var err error
-
-	inFile, err := os.Open(inputFile)
-	if err != nil {
-		return fmt.Errorf("unable to open input file: %w", err)
-	}
-	defer inFile.Close()
-
-	fileInfo, err := inFile.Stat()
-	if err != nil {
-		return fmt.Errorf("error getting file info: %w", err)
-	}
-	totalBytes := fileInfo.Size()
-
-	header, err := headers.ReadFileHeader(inFile)
-	if err != nil {
-		return fmt.Errorf("error reading header: %w", err)
-	}
-
-	key := sha256.Sum256([]byte(userPassword))
-	defer cryptoutils.ZeroBytes(key[:])
-
-	aead, err := chacha20poly1305.NewX(key[:])
-	if err != nil {
-		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
-	}
-
-	aad := headers.GetFileHeaderBytes(header)
-	// Use the first 16 bytes of the header nonce as the fixed prefix
-	noncePrefix := header.XChaChaNonce[:constants.NoncePrefixLength]
 
 	outFile, err := os.Create(outputFile)
 	if err != nil {
@@ -167,83 +28,168 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	}
 	defer outFile.Close()
 
-	sizeBuf := make([]byte, constants.CounterLength) // 8-byte buffer to read segment length
-	var segmentCounter uint64 = 0
+	key := sha256.Sum256([]byte(userPassword))
+	defer cryptoutils.ZeroBytes(key[:])
 
-	progress := make(chan int)
-	go cryptoutils.RunProgressBar("Decrypting file", progress)
-	defer func() {
-		progress <- 100 // Ensure progress bar reaches 100% at the end of encryption
-		close(progress)
-	}()
+	aead, err := chacha20poly1305.NewX(key[:])
+	if err != nil {
+		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
+	}
+
+	fileInfo, _ := inFile.Stat()
+	totalBytes := fileInfo.Size()
+
+	progress := make(chan int, 1)
+
+	go cryptoutils.RunProgressBar("Encrypting file", progress)
+	defer func() { progress <- 100; close(progress) }()
+
+	plaintextBuf := make([]byte, constants.SegmentSize)
+
+	var prevCiphertext []byte
+	var segmentCounter uint64
+	var bytesDone uint64
 
 	for {
-		var err error
-		// 1. Read segment length (8 bytes)
-		if _, err = io.ReadFull(inFile, sizeBuf); err != nil {
-			if err == io.EOF {
-				break // Normal EOF, all segments read
+		n, readErr := inFile.Read(plaintextBuf)
+		if n == 0 {
+			break
+		}
+		plaintextSegment := make([]byte, n)
+		copy(plaintextSegment, plaintextBuf[:n])
+
+		// CBC-style XOR with previous ciphertext
+		if prevCiphertext != nil {
+			for i := 0; i < n; i++ {
+				plaintextSegment[i] ^= prevCiphertext[i]
 			}
-			return fmt.Errorf("error reading input file: %w", err)
 		}
 
-		segmentLen := binary.BigEndian.Uint64(sizeBuf)
-
-		// 2. Read the full ciphertext segment
-		ciphertextWithTag := make([]byte, segmentLen)
-		if _, err := io.ReadFull(inFile, ciphertextWithTag); err != nil {
-			return fmt.Errorf("error reading ciphertext segment: %w", err)
+		// Generate a unique nonce per segment
+		nonce := make([]byte, constants.XNonceSize)
+		if _, err := rand.Read(nonce); err != nil {
+			return fmt.Errorf("error generating segment nonce: %w", err)
 		}
 
-		// 3. Get segment nonce
-		segmentNonce, nErr := getSegmentNonce(noncePrefix, segmentCounter)
-		if nErr != nil {
-			return fmt.Errorf("error generating segment nonce: %w", nErr)
+		// AAD includes segment counter and plaintext length
+		aad := make([]byte, 16)
+		binary.BigEndian.PutUint64(aad[:8], segmentCounter)
+		binary.BigEndian.PutUint64(aad[8:], uint64(len(plaintextSegment)))
+
+		ciphertext := aead.Seal(nil, nonce, plaintextSegment, aad)
+
+		// Write nonce + ciphertext length + ciphertext
+		if _, err := outFile.Write(nonce); err != nil {
+			return fmt.Errorf("error writing nonce: %w", err)
+		}
+		if err := binary.Write(outFile, binary.BigEndian, uint64(len(ciphertext))); err != nil {
+			return fmt.Errorf("error writing segment length: %w", err)
+		}
+		if _, err := outFile.Write(ciphertext); err != nil {
+			return fmt.Errorf("error writing ciphertext: %w", err)
 		}
 
-		// 4. Decrypt the data
-		plaintextSegment, dErr := aead.Open(nil, segmentNonce, ciphertextWithTag, aad)
-		// Zero the ciphertext memory immediately after decryption attempt
-		cryptoutils.ZeroBytes(ciphertextWithTag)
-
-		if dErr != nil {
-			return fmt.Errorf("authentication failed due to incorrect password or error in input file: %w", dErr)
-		}
-
-		// 5. Write the decrypted segment to output file
-		if _, err := outFile.Write(plaintextSegment); err != nil {
-			return fmt.Errorf("error writing decrypted segment to output file: %w", err)
-		}
-
-		// Security: Zero plaintext segment after use
-		cryptoutils.ZeroBytes(plaintextSegment)
-
-		bytesDone := segmentCounter * segmentLen
+		// Prepare for next segment
+		prevCiphertext = ciphertext
+		segmentCounter++
+		bytesDone += uint64(len(plaintextSegment)) // actual segment length
 		progress <- int((bytesDone * 100) / uint64(totalBytes))
 
-		segmentCounter++
-
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			break // Done reading from the input file
+		if readErr == io.EOF {
+			break
 		}
 	}
 
 	return nil
 }
 
-func getRandomBytes(howManyBytes int) ([]byte, error) {
-	randomBytes := make([]byte, howManyBytes)
-	if _, err := rand.Read(randomBytes); err != nil {
-		return nil, fmt.Errorf("unable to generate random bytes: %w", err)
+func DecryptFile(inputFile, outputFile, userPassword string) error {
+	inFile, err := os.Open(inputFile)
+	if err != nil {
+		return fmt.Errorf("unable to open input file: %w", err)
 	}
-	return randomBytes, nil
+	defer inFile.Close()
+
+	outFile, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("unable to create output file: %w", err)
+	}
+	defer outFile.Close()
+
+	fileInfo, _ := inFile.Stat()
+	totalBytes := fileInfo.Size()
+
+	key := sha256.Sum256([]byte(userPassword))
+	defer cryptoutils.ZeroBytes(key[:])
+
+	aead, err := chacha20poly1305.NewX(key[:])
+	if err != nil {
+		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
+	}
+
+	progress := make(chan int, 1)
+
+	go cryptoutils.RunProgressBar("Decrypting file", progress)
+	defer func() { progress <- 100; close(progress) }()
+
+	var prevCiphertext []byte
+	var segmentCounter uint64
+	var bytesDone uint64
+
+	sizeBuf := make([]byte, 8)
+	nonceBuf := make([]byte, constants.XNonceSize)
+
+	for {
+		if _, err := io.ReadFull(inFile, nonceBuf); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("error reading nonce: %w", err)
+		}
+
+		if _, err := io.ReadFull(inFile, sizeBuf); err != nil {
+			return fmt.Errorf("error reading segment length: %w", err)
+		}
+
+		segmentLen := binary.BigEndian.Uint64(sizeBuf)
+		ciphertext := make([]byte, segmentLen)
+
+		if _, err := io.ReadFull(inFile, ciphertext); err != nil {
+			return fmt.Errorf("error reading ciphertext: %w", err)
+		}
+
+		aad := make([]byte, 16)
+		binary.BigEndian.PutUint64(aad[:8], segmentCounter)
+		binary.BigEndian.PutUint64(aad[8:], uint64(len(ciphertext)-aead.Overhead()))
+
+		plaintextSegment, err := aead.Open(nil, nonceBuf, ciphertext, aad)
+		if err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
+
+		// Reverse CBC XOR
+		if prevCiphertext != nil {
+			for i := 0; i < len(plaintextSegment); i++ {
+				plaintextSegment[i] ^= prevCiphertext[i]
+			}
+		}
+
+		if _, err := outFile.Write(plaintextSegment); err != nil {
+			return fmt.Errorf("error writing plaintext: %w", err)
+		}
+
+		prevCiphertext = ciphertext
+		segmentCounter++
+		bytesDone += uint64(len(plaintextSegment)) // actual segment length
+		progress <- int((bytesDone * 100) / uint64(totalBytes))
+	}
+
+	return nil
 }
 
 // ExpandInputPath takes a path or a wildcard pattern and returns a list of matching files.
 func ExpandInputPath(inputPattern string) ([]string, error) {
-	// 1. Check if inputPattern contains a wildcard pattern
 	if !strings.ContainsAny(inputPattern, "*?[]") {
-		// If it is not a wildcard, treat it as a single file
 		_, err := os.Stat(inputPattern)
 		if err != nil {
 			return nil, fmt.Errorf("input file does not exist: %w", err)
@@ -251,57 +197,14 @@ func ExpandInputPath(inputPattern string) ([]string, error) {
 		return []string{inputPattern}, nil
 	}
 
-	// 2. Perform wildcard expansion
 	matches, err := filepath.Glob(inputPattern)
 	if err != nil {
 		return nil, fmt.Errorf("error during expansion of wildcard pattern: %w", err)
 	}
 
-	// 3. Check for matches
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no match found for pattern: %s", inputPattern)
 	}
 
 	return matches, nil
-}
-
-// getSegmentNonce constructs a unique 24-byte nonce for a data segment.
-// It uses the first 16 bytes as a fixed prefix (from the file header)
-// and appends an 8-byte counter to ensure uniqueness for every segment.
-func getSegmentNonce(noncePrefix []byte, counter uint64) ([]byte, error) {
-	if len(noncePrefix) != constants.NoncePrefixLength {
-		return nil, fmt.Errorf("nonce prefix must be %d bytes, got %d", constants.NoncePrefixLength, len(noncePrefix))
-	}
-
-	// The full XChaCha nonce is 24 bytes
-	nonce := make([]byte, constants.NoncePrefixLength+constants.CounterLength)
-	copy(nonce, noncePrefix)
-
-	// Append counter in little-endian format, to ensure  the counter bytes
-	// are arranged in the order expected by the Go crypto library's
-	// implementation of XChaCha20-Poly1305. Little-endianness is also
-	// defined in the XChaCha20 specification, RFC 8439.
-	binary.LittleEndian.PutUint64(nonce[constants.NoncePrefixLength:], counter)
-	return nonce, nil
-}
-
-func getNoncePrefix() ([]byte, error) {
-	noncePrefix, err := getRandomBytes(constants.NoncePrefixLength)
-	if err != nil {
-		return nil, fmt.Errorf("error generating random bytes: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(noncePrefix)
-	return noncePrefix, nil
-}
-
-func getFullNonce(noncePrefix []byte) ([]byte, error) {
-	fullNonce := make([]byte, constants.NoncePrefixLength+constants.CounterLength)
-	copy(fullNonce, noncePrefix)
-	return fullNonce, nil
-}
-
-func getFileHeader(fullNonce []byte) *headers.FileHeader {
-	return &headers.FileHeader{
-		MagicMarker: constants.MagicMarker, XChaChaNonce: fullNonce,
-	}
 }
