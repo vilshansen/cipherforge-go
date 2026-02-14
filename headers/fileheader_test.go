@@ -14,22 +14,13 @@ import (
 // Test helper functions
 func createTestHeader(t *testing.T) FileHeader {
 	t.Helper()
-	salt := make([]byte, constants.SaltLength)
-	N := constants.ScryptN
-	R := constants.ScryptR
-	P := constants.ScryptP
 	nonce := make([]byte, constants.XNonceSize)
 
 	// Fill with some test data
-	rand.Read(salt)
 	rand.Read(nonce)
 
 	return FileHeader{
 		MagicMarker:  constants.MagicMarker,
-		ScryptSalt:   salt,
-		ScryptN:      (uint32)(N),
-		ScryptR:      (uint32)(R),
-		ScryptP:      (uint32)(P),
 		XChaChaNonce: nonce,
 	}
 }
@@ -51,7 +42,6 @@ func TestFileHeader_GetFileHeaderBytes(t *testing.T) {
 			name: "header with empty filename",
 			header: FileHeader{
 				MagicMarker:  constants.MagicMarker,
-				ScryptSalt:   make([]byte, constants.SaltLength),
 				XChaChaNonce: make([]byte, constants.XNonceSize),
 			},
 			wantErr:  false,
@@ -61,7 +51,6 @@ func TestFileHeader_GetFileHeaderBytes(t *testing.T) {
 			name: "header with long filename",
 			header: FileHeader{
 				MagicMarker:  constants.MagicMarker,
-				ScryptSalt:   make([]byte, constants.SaltLength),
 				XChaChaNonce: make([]byte, constants.XNonceSize),
 			},
 			wantErr:  false,
@@ -71,7 +60,6 @@ func TestFileHeader_GetFileHeaderBytes(t *testing.T) {
 			name: "header with special characters in filename",
 			header: FileHeader{
 				MagicMarker:  constants.MagicMarker,
-				ScryptSalt:   make([]byte, constants.SaltLength),
 				XChaChaNonce: make([]byte, constants.XNonceSize),
 			},
 			wantErr:  false,
@@ -100,9 +88,6 @@ func TestFileHeader_GetFileHeaderBytes(t *testing.T) {
 				if parsedHeader.MagicMarker != tt.header.MagicMarker {
 					t.Errorf("MagicMarker mismatch: got %q, want %q", parsedHeader.MagicMarker, tt.header.MagicMarker)
 				}
-				if !bytes.Equal(parsedHeader.ScryptSalt, tt.header.ScryptSalt) {
-					t.Error("Argon2Salt mismatch")
-				}
 				if !bytes.Equal(parsedHeader.XChaChaNonce, tt.header.XChaChaNonce) {
 					t.Error("XChaChaNonce mismatch")
 				}
@@ -122,15 +107,6 @@ func TestWriteFileHeader(t *testing.T) {
 			name:    "successful write",
 			header:  createTestHeader(t),
 			wantErr: false,
-		},
-		{
-			name: "empty salt",
-			header: FileHeader{
-				MagicMarker:  constants.MagicMarker,
-				ScryptSalt:   []byte{},
-				XChaChaNonce: make([]byte, constants.XNonceSize),
-			},
-			wantErr: false, // Empty salt is technically valid
 		},
 	}
 
@@ -204,52 +180,10 @@ func TestReadFileHeader(t *testing.T) {
 			errContains: "magic marker",
 		},
 		{
-			name: "truncated after magic marker",
-			data: func() []byte {
-				// Only write magic marker, nothing else
-				return []byte(constants.MagicMarker)
-			}(),
-			wantErr:     true,
-			errContains: "længde på salt",
-		},
-		{
-			name: "invalid salt length",
-			data: func() []byte {
-				var buf bytes.Buffer
-				buf.Write([]byte(constants.MagicMarker))
-				// Write invalid salt length (too large)
-				buf.Write([]byte{0xFF, 0xFF, 0xFF, 0xFF}) // 4GB salt length
-				return buf.Bytes()
-			}(),
-			wantErr:     true,
-			errContains: "læsning af salt",
-		},
-		{
-			name: "truncated salt data",
-			data: func() []byte {
-				var buf bytes.Buffer
-				buf.Write([]byte(constants.MagicMarker))
-				// Write correct salt length but provide truncated data
-				binaryWrite(&buf, uint32(constants.SaltLength)) // Correct length
-				buf.Write(make([]byte, constants.SaltLength/2)) // Only half the data
-				return buf.Bytes()
-			}(),
-			wantErr:     true,
-			errContains: "læsning af salt",
-		},
-		{
 			name: "invalid nonce length",
 			data: func() []byte {
 				var buf bytes.Buffer
 				buf.Write([]byte(constants.MagicMarker))
-
-				// Write valid salt
-				binaryWrite(&buf, uint32(constants.SaltLength))
-				buf.Write(make([]byte, constants.SaltLength))
-
-				binaryWrite(&buf, uint32(constants.ScryptN))
-				binaryWrite(&buf, uint32(constants.ScryptR))
-				binaryWrite(&buf, uint32(constants.ScryptP))
 
 				// Write invalid nonce length
 				binaryWrite(&buf, uint32(100)) // Wrong nonce length
@@ -263,14 +197,6 @@ func TestReadFileHeader(t *testing.T) {
 			data: func() []byte {
 				var buf bytes.Buffer
 				buf.Write([]byte(constants.MagicMarker))
-
-				// Write valid salt
-				binaryWrite(&buf, uint32(constants.SaltLength))
-				buf.Write(make([]byte, constants.SaltLength))
-
-				binaryWrite(&buf, uint32(constants.ScryptN))
-				binaryWrite(&buf, uint32(constants.ScryptR))
-				binaryWrite(&buf, uint32(constants.ScryptP))
 
 				// Write correct nonce length but truncated data
 				binaryWrite(&buf, uint32(constants.XNonceSize))
@@ -303,22 +229,6 @@ func TestReadFileHeader(t *testing.T) {
 				if header.MagicMarker != constants.MagicMarker {
 					t.Errorf("ReadFileHeader() MagicMarker = %v, want %v", header.MagicMarker, constants.MagicMarker)
 				}
-				if len(header.ScryptSalt) != constants.SaltLength {
-					t.Errorf("ReadFileHeader() Argon2Salt length = %v, want %v",
-						len(header.ScryptSalt), constants.SaltLength)
-				}
-				if header.ScryptN != constants.ScryptN {
-					t.Errorf("ReadFileHeader() ScryptN = %v, want %v",
-						header.ScryptN, constants.ScryptN)
-				}
-				if header.ScryptR != constants.ScryptR {
-					t.Errorf("ReadFileHeader() ScryptR = %v, want %v",
-						header.ScryptR, constants.ScryptR)
-				}
-				if header.ScryptP != constants.ScryptP {
-					t.Errorf("ReadFileHeader() ScryptP = %v, want %v",
-						header.ScryptP, constants.ScryptP)
-				}
 				if len(header.XChaChaNonce) != constants.XNonceSize {
 					t.Errorf("ReadFileHeader() XChaChaNonce length = %v, want %v",
 						len(header.XChaChaNonce), constants.XNonceSize)
@@ -332,7 +242,6 @@ func TestReadFileHeader_EdgeCases(t *testing.T) {
 	t.Run("minimum valid header", func(t *testing.T) {
 		header := FileHeader{
 			MagicMarker:  constants.MagicMarker,
-			ScryptSalt:   make([]byte, constants.SaltLength),
 			XChaChaNonce: make([]byte, constants.XNonceSize),
 		}
 
@@ -347,10 +256,6 @@ func TestReadFileHeader_EdgeCases(t *testing.T) {
 		if parsedHeader.MagicMarker != header.MagicMarker {
 			t.Errorf("Minimum header corrupted MagicMarker: got %q, want %q",
 				parsedHeader.MagicMarker, header.MagicMarker)
-		}
-		if len(parsedHeader.ScryptSalt) != constants.SaltLength {
-			t.Errorf("Minimum header corrupted ScryptSalt length: got %d, want %d",
-				len(parsedHeader.ScryptSalt), constants.SaltLength)
 		}
 		if len(parsedHeader.XChaChaNonce) != constants.XNonceSize {
 			t.Errorf("Minimum header corrupted XChaChaNonce length: got %d, want %d",
@@ -375,10 +280,6 @@ func TestReadFileHeader_WithCustomReader(t *testing.T) {
 		if parsedHeader.MagicMarker != header.MagicMarker {
 			t.Errorf("Minimum header corrupted MagicMarker: got %q, want %q",
 				parsedHeader.MagicMarker, header.MagicMarker)
-		}
-		if len(parsedHeader.ScryptSalt) != constants.SaltLength {
-			t.Errorf("Minimum header corrupted ScryptSalt length: got %d, want %d",
-				len(parsedHeader.ScryptSalt), constants.SaltLength)
 		}
 		if len(parsedHeader.XChaChaNonce) != constants.XNonceSize {
 			t.Errorf("Minimum header corrupted XChaChaNonce length: got %d, want %d",

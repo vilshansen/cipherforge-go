@@ -378,7 +378,7 @@ func TestDecryptFile_ErrorCases(t *testing.T) {
 			outputFile:  "output.dec",
 			password:    "test-password",
 			wantErr:     true,
-			errContains: "læsning", // Should fail at reading some part of the header
+			errContains: "EOF", // Should fail at reading some part of the header
 		},
 	}
 
