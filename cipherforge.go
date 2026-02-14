@@ -118,7 +118,7 @@ func resolvePassword(operation string) (string, error) {
 			return "", err
 		}
 		// Display the generated password for the user to save it
-		fmt.Printf("Your auto-generated password \n%s\n", securePass)
+		fmt.Printf("Your auto-generated password:\n%s\n", securePass)
 		return string(securePass), nil
 	case "decrypt":
 		for { // Loop until a non-blank password is provided
