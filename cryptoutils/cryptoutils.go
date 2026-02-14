@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/vilshansen/cipherforge-go/constants"
@@ -34,33 +35,55 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 	return randomChars, nil
 }
 
-func runSimpleSpinner(prefix string, doneFlag *bool) {
-	//spinners := []string{"—", "\\", "|", "/"}
+func RunSimpleSpinner(prefix string, done <-chan struct{}) {
 	spinners := []string{"⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽", "⣾"}
 	i := 0
 
-	// Create a ticker to control the spin rate
 	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop() // Ensure the ticker is stopped when the function exits
+	defer ticker.Stop()
 
-	for range ticker.C {
-		// 1. Check the flag on every tick
-		if *doneFlag {
-			// Received signal to stop: clear the line and exit
-			// \r returns the cursor to the beginning of the line
-			fmt.Printf("\r%s... Done.          ", prefix)
+	for {
+		select {
+		case <-done:
+			// Stop signal received
+			fmt.Printf("\r%s... Done.          \n", prefix)
+			return
+
+		case <-ticker.C:
+			fmt.Printf("\r%s... %s", prefix, spinners[i])
+			i = (i + 1) % len(spinners)
+		}
+	}
+}
+
+func RunProgressBar(prefix string, progressChan <-chan int) {
+	const barWidth = 50
+
+	for percent := range progressChan {
+		if percent < 0 {
+			percent = 0
+		}
+		if percent > 100 {
+			percent = 100
+		}
+
+		filled := (percent * barWidth) / 100
+		bar := strings.Repeat("█", filled) + strings.Repeat("-", barWidth-filled)
+
+		fmt.Printf("\r%s... [%s] %3d%%", prefix, bar, percent)
+
+		if percent == 100 {
+			fmt.Println()
 			return
 		}
-		// 2. Print the next spinner character
-		fmt.Printf("\r%s... %s", prefix, spinners[i])
-		i = (i + 1) % len(spinners) // Cycle the index
 	}
 }
 
 func DeriveKeyScrypt(password []byte, salt []byte) ([]byte, error) {
 
-	done := false
-	go runSimpleSpinner("Deriving key using scrypt", &done)
+	done := make(chan struct{})
+	go RunSimpleSpinner("Deriving key using scrypt", done)
+	defer close(done)
 
 	if len(password) == 0 {
 		return nil, fmt.Errorf("password cannot be empty")
@@ -82,8 +105,6 @@ func DeriveKeyScrypt(password []byte, salt []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("scrypt derivation failed: %w", err)
 	}
-
-	done = true
 
 	return key, nil
 }

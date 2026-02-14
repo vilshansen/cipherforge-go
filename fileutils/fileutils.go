@@ -100,6 +100,13 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 		// The segment is only the part that was successfully read
 		plaintextSegment := plaintextBuf[:n]
 
+		progress := make(chan int)
+		go cryptoutils.RunProgressBar("Encrypting file", progress)
+		defer func() {
+			progress <- 100 // Ensure progress bar reaches 100% at the end of encryption
+			close(progress)
+		}()
+
 		if n > 0 {
 			// 1. Get segment nonce (noncePrefix + counter)
 			segmentNonce, nErr := getSegmentNonce(noncePrefix, segmentCounter)
@@ -123,14 +130,14 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 				return fmt.Errorf("error writing encrypted data segment: %w", err)
 			}
 
-			fmt.Printf("\rEncrypting... %.1f%%                                ", float64(segmentCounter*segmentLen)*100/float64(totalBytes))
+			bytesDone := segmentCounter * segmentLen
+			progress <- int((bytesDone * 100) / uint64(totalBytes))
 
 			segmentCounter++
 		}
 
 		if readErr != nil {
 			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-				fmt.Print("\r                                                        ")
 				break // Done reading from the input file
 			}
 		}
@@ -190,12 +197,15 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 	}
 	defer outFile.Close()
 
-	if err != nil {
-		return fmt.Errorf("unable to open input file: %w", err)
-	}
-
 	sizeBuf := make([]byte, constants.CounterLength) // 8-byte buffer to read segment length
 	var segmentCounter uint64 = 0
+
+	progress := make(chan int)
+	go cryptoutils.RunProgressBar("Decrypting file", progress)
+	defer func() {
+		progress <- 100 // Ensure progress bar reaches 100% at the end of encryption
+		close(progress)
+	}()
 
 	for {
 		var err error
@@ -238,12 +248,12 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		// Security: Zero plaintext segment after use
 		cryptoutils.ZeroBytes(plaintextSegment)
 
-		fmt.Printf("\rDecrypting... %.1f%%                                ", float64(segmentCounter*segmentLen)*100/float64(totalBytes))
+		bytesDone := segmentCounter * segmentLen
+		progress <- int((bytesDone * 100) / uint64(totalBytes))
 
 		segmentCounter++
 
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			fmt.Print("\r                                                        ")
 			break // Done reading from the input file
 		}
 	}
