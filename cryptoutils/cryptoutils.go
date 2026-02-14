@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/vilshansen/cipherforge-go/constants"
 )
@@ -50,30 +49,6 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 	}
 
 	return password, nil
-}
-
-func RunSimpleSpinner(prefix string, done <-chan struct{}) {
-	//spinners := []string{"⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽", "⣾"}
-	//spinners := []string{"-", "\\", "|", "/"}
-	spinners := []string{".    ", "..   ", "...  ", ".... ", "....."}
-
-	i := 0
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-done:
-			// Stop signal received
-			fmt.Printf("\r%s... Done.          \n", prefix)
-			return
-
-		case <-ticker.C:
-			fmt.Printf("\r%s%s\t", prefix, spinners[i])
-			i = (i + 1) % len(spinners)
-		}
-	}
 }
 
 func RunProgressBar(prefix string, progressChan <-chan int) {
