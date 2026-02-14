@@ -1,42 +1,22 @@
 package fileutils
 
 import (
-	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/vilshansen/cipherforge-go/constants"
 	"github.com/vilshansen/cipherforge-go/cryptoutils"
 	"github.com/vilshansen/cipherforge-go/headers"
 	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/term"
 )
 
 func EncryptFile(inputFile string, outputFile string, userPassword string) error {
-	passwordBytes, err := handlePasswordInput(userPassword)
-	if err != nil {
-		return fmt.Errorf("error handling password input: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(passwordBytes)
-
-	salt, err := getRandomBytes(constants.SaltLength)
-	if err != nil {
-		return fmt.Errorf("error generating salt: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(salt)
-
-	key, err := cryptoutils.DeriveKeyScrypt(passwordBytes, salt)
-	if err != nil {
-		return fmt.Errorf("error during key derivation: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(key)
-
 	inFile, err := os.Open(inputFile)
 	if err != nil {
 		return fmt.Errorf("unable to open input file: %w", err)
@@ -62,17 +42,20 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	}
 	defer cryptoutils.ZeroBytes(fullNonce)
 
-	header := getFileHeader(salt, fullNonce)
+	header := getFileHeader(fullNonce)
 	headerData := headers.GetFileHeaderBytes(*header)
 	if err := headers.WriteFileHeader(headerData, outFile); err != nil {
 		return fmt.Errorf("error writing header: %w", err)
 	}
 
-	aead, err := chacha20poly1305.NewX(key)
+	key := sha256.Sum256([]byte(userPassword))
+	defer cryptoutils.ZeroBytes(key[:])
+
+	aead, err := chacha20poly1305.NewX(key[:])
 	if err != nil {
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
-	defer cryptoutils.ZeroBytes(key)
+	defer cryptoutils.ZeroBytes(key[:])
 
 	file, err := os.Open(inputFile)
 	if err != nil {
@@ -90,6 +73,13 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 	var segmentCounter uint64 = 0
 	sizeBuf := make([]byte, constants.CounterLength) // 8-byte buffer to write segment length
 
+	progress := make(chan int)
+	go cryptoutils.RunProgressBar("Encrypting file", progress)
+	defer func() {
+		progress <- 100 // Ensure progress bar reaches 100% at the end of encryption
+		close(progress)
+	}()
+
 	// The encryption loop now reads from the pipeReader.
 	for {
 		n, readErr := io.ReadFull(file, plaintextBuf)
@@ -99,13 +89,6 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 
 		// The segment is only the part that was successfully read
 		plaintextSegment := plaintextBuf[:n]
-
-		progress := make(chan int)
-		go cryptoutils.RunProgressBar("Encrypting file", progress)
-		defer func() {
-			progress <- 100 // Ensure progress bar reaches 100% at the end of encryption
-			close(progress)
-		}()
 
 		if n > 0 {
 			// 1. Get segment nonce (noncePrefix + counter)
@@ -147,17 +130,7 @@ func EncryptFile(inputFile string, outputFile string, userPassword string) error
 }
 
 func DecryptFile(inputFile, outputFile, userPassword string) error {
-	passwordChars := []byte(userPassword)
 	var err error
-
-	if len(passwordChars) == 0 {
-		fmt.Println("Enter password for decryption:")
-		passwordChars, err = term.ReadPassword(int(syscall.Stdin))
-		if err != nil {
-			return fmt.Errorf("unable to read password from the terminal: %w", err)
-		}
-	}
-	defer cryptoutils.ZeroBytes(passwordChars)
 
 	inFile, err := os.Open(inputFile)
 	if err != nil {
@@ -176,13 +149,10 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		return fmt.Errorf("error reading header: %w", err)
 	}
 
-	key, err := cryptoutils.DeriveKeyScrypt(passwordChars, header.ScryptSalt)
-	if err != nil {
-		return fmt.Errorf("error during key derivation: %w", err)
-	}
-	defer cryptoutils.ZeroBytes(key)
+	key := sha256.Sum256([]byte(userPassword))
+	defer cryptoutils.ZeroBytes(key[:])
 
-	aead, err := chacha20poly1305.NewX(key)
+	aead, err := chacha20poly1305.NewX(key[:])
 	if err != nil {
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
@@ -330,48 +300,8 @@ func getFullNonce(noncePrefix []byte) ([]byte, error) {
 	return fullNonce, nil
 }
 
-func getFileHeader(salt []byte, fullNonce []byte) *headers.FileHeader {
+func getFileHeader(fullNonce []byte) *headers.FileHeader {
 	return &headers.FileHeader{
-		MagicMarker: constants.MagicMarker, ScryptSalt: salt, ScryptN: constants.ScryptN, ScryptR: constants.ScryptR, ScryptP: constants.ScryptP, XChaChaNonce: fullNonce,
+		MagicMarker: constants.MagicMarker, XChaChaNonce: fullNonce,
 	}
-}
-
-func handlePasswordInput(userPassword string) ([]byte, error) {
-	passwordBytes := []byte(userPassword)
-	if len(passwordBytes) == 0 {
-		fmt.Println("Enter password for encryption, or press enter to have one generated for you: ")
-		passwordBytes, err := readPasswordFromTerminal()
-		if err != nil {
-			return nil, err
-		}
-
-		if len(passwordBytes) > 0 {
-			fmt.Println("Confirm your password for encryption: ")
-			passwordBytesVerify, err := readPasswordFromTerminal()
-			if err != nil {
-				cryptoutils.ZeroBytes(passwordBytes)
-				return nil, err
-			}
-			if !bytes.Equal(passwordBytes, passwordBytesVerify) {
-				cryptoutils.ZeroBytes(passwordBytes)
-				cryptoutils.ZeroBytes(passwordBytesVerify)
-				return nil, fmt.Errorf("the two passwords entered do not match")
-			}
-			cryptoutils.ZeroBytes(passwordBytesVerify)
-		} else {
-			fmt.Println("No password entered. Generating secure password...")
-			if passwordBytes, err = cryptoutils.GenerateSecurePassword(constants.PasswordLength); err != nil {
-				return nil, fmt.Errorf("error generating secure password: %w", err)
-			}
-		}
-	}
-	return passwordBytes, nil
-}
-
-func readPasswordFromTerminal() ([]byte, error) {
-	passwordBytes, err := term.ReadPassword(int(syscall.Stdin))
-	if err != nil {
-		return nil, fmt.Errorf("could not read password from the terminal: %w", err)
-	}
-	return passwordBytes, nil
 }

@@ -28,20 +28,16 @@ func main() {
 		}
 	}()
 
-	operation, inputPattern, password, err := getParameters()
+	operation, inputPattern, err := getParameters()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error getting parameters: %v\n", err)
 		os.Exit(1)
 	}
 
-	// If password was not specified via -p flag, resolve it interactively
-	if password == "" {
-		resolvedPassword, err := resolvePassword(operation)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error getting password: %v\n", err)
-			os.Exit(1)
-		}
-		password = resolvedPassword
+	password, err := resolvePassword(operation)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting password: %v\n", err)
+		os.Exit(1)
 	}
 
 	inputFiles, err := fileutils.ExpandInputPath(inputPattern)
@@ -113,35 +109,18 @@ func readPasswordFromTerminal(prompt string) (string, error) {
 
 // Handles interactive password prompting and generation logic
 func resolvePassword(operation string) (string, error) {
-	if operation == "encrypt" {
-		p, err := readPasswordFromTerminal("Enter password for encryption, or press ENTER to generate a strong password: ")
+	switch operation {
+	case "encrypt":
+		// User entered blank, generate secure password
+		fmt.Println("Generating secure, random password...")
+		securePass, err := cryptoutils.GenerateSecurePassword(constants.PasswordLength)
 		if err != nil {
 			return "", err
 		}
-
-		if p == "" {
-			// User entered blank, generate secure password
-			fmt.Println("No password specified. Generating secure, random password...")
-			securePass, err := cryptoutils.GenerateSecurePassword(constants.PasswordLength)
-			if err != nil {
-				return "", err
-			}
-			// Display the generated password for the user to save it
-			fmt.Printf("Your auto-generated password is: %s\n", securePass)
-			return string(securePass), nil
-		}
-
-		// User entered a password, prompt for verification
-		pVerify, err := readPasswordFromTerminal("Confirm password: ")
-		if err != nil {
-			return "", err
-		}
-		if p != pVerify {
-			return "", fmt.Errorf("The two passwords entered do not match")
-		}
-		return p, nil
-
-	} else if operation == "decrypt" {
+		// Display the generated password for the user to save it
+		fmt.Printf("Your auto-generated password is: %s\n", securePass)
+		return string(securePass), nil
+	case "decrypt":
 		for { // Loop until a non-blank password is provided
 			p, err := readPasswordFromTerminal("Enter password for decryption: ")
 			if err != nil {
@@ -159,17 +138,16 @@ func resolvePassword(operation string) (string, error) {
 	return "", fmt.Errorf("internal error: invalid operation")
 }
 
-func getParameters() (operation string, inputPattern string, password string, err error) {
+func getParameters() (operation string, inputPattern string, err error) {
 	// Define flags
 	encryptFlag := flag.String("e", "", "Encrypt file")
 	decryptFlag := flag.String("d", "", "Decrypt file")
-	pwdFlag := flag.String("p", "", "Password (optional)")
 
 	// Parse flags
 	flag.Parse()
 
 	if *encryptFlag == *decryptFlag {
-		return "", "", "", fmt.Errorf("must specify either -e (encrypt) or -d (decrypt), but not both")
+		return "", "", fmt.Errorf("must specify either -e (encrypt) or -d (decrypt), but not both")
 	}
 
 	if *encryptFlag != "" {
@@ -179,8 +157,6 @@ func getParameters() (operation string, inputPattern string, password string, er
 		inputPattern = *decryptFlag
 		operation = "decrypt"
 	}
-
-	password = *pwdFlag
 
 	return
 }

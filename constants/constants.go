@@ -12,12 +12,9 @@ const (
 	KeySize        = 32 // 256-bit XChaCha20 key
 	XNonceSize     = 24 // 192-bit XChaCha20 Nonce (Extended Nonce)
 	TagSize        = 16 // 128-bit Poly1305 authentication tag
-	PasswordLength = 45 // Standard length for random password.
-	CharacterPool  = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-	ScryptN        = 1 << 18 // 262144, CPU/memory cost parameter
-	ScryptR        = 8       // block size
-	ScryptP        = 1       // parallelization parameter
-	SaltLength     = 16      // 128-bit salt
+	PasswordLength = 55 // Standard length for random password. log2(32) = 5 => 55 * 5 = ~275 bits of entropy.
+	// Crockford Base32 character set (omits 0, O, I, L for better readability)
+	CharacterPool = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 	// ChunkSize defines the maximum size of a data chunk to be encrypted/decrypted.
 	ChunkSize = 1048576 // 1 MiB
 	// CounterLength is the size of the counter appended to the nonce prefix.
@@ -32,7 +29,7 @@ const HelpTextShort = `Cipherforge v%s (commit: %s)`
 // HelpText contains the full, formatted help guide for the CLI tool.
 const HelpText = HelpTextShort + `
 Secure File Encryption & Decryption
-Copyright (c) 2025 Peter Vils Hansen
+Copyright (c) 2026 Peter Vils Hansen
 
 Cipherforge is a utility for encrypting and decrypting files using strong,
 modern cryptographic standards (XChaCha20-Poly1305 and scrypt key 
@@ -40,35 +37,25 @@ derivation).
 
 USAGE
 
-  cipherforge [COMMAND] <input_file> [-p <pass_phrase>]
+  cipherforge [COMMAND] <input_file>
 
 COMMANDS
 
   -e                      Encrypt the specified input file(s).
   -d                      Decrypt the specified input file(s).
-
-OPTIONS
-
-  -p <pass phrase>        Optionally, provide the password directly via
-                          command line.
                           
-If the -p flag is omitted when encrypting, a random, strong password is
-generated and displayed. If the flag is omitted when decrypting, the user is
-prompted for a passphrase.
+During encryption, a random, strong password is generated and displayed to
+ensure cryptographic strength at all times. This also removes the necessity
+of key derivation, because the generated passwords are already of sufficient
+length and complexity to be used as cryptographic keys directly.
 
 EXAMPLES
 
   # Encrypt file using an auto-generated password:
   cipherforge -e secrets.txt
   
-  # Encrypt all text files using a supplied password:
-  cipherforge -e "*.txt" -p VerySecretPassword
-  
   # Decrypt file (prompts for password):
   cipherforge -d secrets.cfo
-
-  # Decrypt all text files using a supplied password:
-  cipherforge -d "*.txt" -p VerySecretPassword
 
 SOURCE CODE
 
@@ -85,21 +72,18 @@ ENCRYPTION PROCESS
 
   The encryption process involves the following key steps:
   
-  Key Derivation: A 16-byte random salt and a 32-byte (256-bit) 
-  encryption key are derived from the user's password using the 
-  high-cost scrypt key derivation algorithm.
-  
-  The default parameters used for encryption are currently N=2^18 (CPU/Memory
-  cost), R=8 (block size parameter), P=1 (parallelization parameter). These
-  parameters provide a strong defense against brute-force attacks while
-  balancing performance for typical desktop and server environments. The salt
-  and scrypt parameters are stored in the file header to allow for future
-  adjustments without breaking compatibility.
+  Key Derivation: A 55-character random password is generated first. This
+  password is designed to have high entropy (approximately 275 bits) and is
+  created using a secure random number generator. The password is displayed
+  to the user at the time of encryption, and it is crucial that the user
+  saves this password securely, as it is required for decryption. This
+  password is then hashed using SHA-256 to produce a 32-byte key suitable
+  for XChaCha20 encryption.
 
-  A 16-byte fixed nonce prefix (initialization vector) is generated and stored
-  in the file header, followed by an 8-byte zero counter, resulting in the
-  required 24-byte nonce for XChaCha20-Poly1305. For each data segment, the
-  8-byte counter is incremented, ensuring a unique, non-repeating 24-byte
+  A 16-byte fixed nonce prefix (initialization vector) is now generated and
+  stored in the file header, followed by an 8-byte zero counter, resulting
+  in the required 24-byte nonce for XChaCha20-Poly1305. For each data segment,
+  the 8-byte counter is incremented, ensuring a unique, non-repeating 24-byte
   nonce is used for every encrypted chunk. This entire file header is included
   in the Additional Authenticated Data (AAD).
 
@@ -113,17 +97,13 @@ ENCODED BINARY FILE FORMAT
   followed immediately by the encrypted payload. All multi-byte values (lengths
   and parameters) are written using big-endian byte order. XChaCha20 counter is
   represented in little-endian format, as specified in RFC 8439.
+
 DIAGRAM OF BINARY LAYOUT
 
   +------------------- HEADER (AAD FIELD) DETAILS (67 Bytes) ------------------+
   | Field Name       | Data Type          | Length   | Value/Purpose           |
   |------------------+--------------------+----------+-------------------------+
   | Magic Marker     | string/byte array  | 11 bytes | "CIPHERFORGE"           |
-  | Salt Length      | uint32             | 4 bytes  | Scrypt salt length      |
-  | Scrypt Salt      | byte array         | 16 bytes | Random scrypt salt      |
-  | Scrypt N         | uint32             | 4 bytes  | CPU/Memory cost         |
-  | Scrypt R         | uint32             | 4 bytes  | Block size              |
-  | Scrypt P         | uint32             | 4 bytes  | Parallelization         |
   | Nonce Length     | uint32             | 4 bytes  | XChaCha nonce length    |
   | XChaCha Nonce    | byte array         | 24 bytes | 16-byte fixed prefix +  |
   |                  |                    |          | 8-byte zero counter     |
