@@ -1,11 +1,9 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -16,147 +14,134 @@ import (
 )
 
 func main() {
+	// Display help if no arguments provided
 	if len(os.Args) < 2 {
 		helpText := fmt.Sprintf(constants.HelpText, constants.Version, constants.GitCommit)
 		fmt.Print(helpText)
 		os.Exit(1)
 	}
 
+	// Global panic recovery for stability
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "Fatal error: %v\n", r)
 		}
 	}()
 
+	// Parse flags and determine operation
 	operation, inputPattern, err := getParameters()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting parameters: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Resolve password as []byte to ensure it can be wiped from RAM
 	password, err := resolvePassword(operation)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting password: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	// Securely overwrite the password in memory when main returns
+	defer cryptoutils.ZeroBytes(password)
 
+	// Identify all files matching the input pattern
 	inputFiles, err := fileutils.ExpandInputPath(inputPattern)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting file input path: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Behandl hver fil
 	for _, inputFile := range inputFiles {
+		var outputFilePath string
 
-		// Bestem outputfilnavnet baseret på inputfilnavnet og outputmappen
-		var currentOutputFile string
-
-		// Hvis flere filer, brug outputDir som mappe og konstruer filnavn
 		if operation == "encrypt" {
-			currentOutputFile = filepath.Join(filepath.Dir(inputFile), filepath.Base(inputFile)+".cfo")
-			fmt.Printf("\rEncrypting %s -> %s", inputFile, currentOutputFile)
+			outputFilePath = inputFile + constants.FileExtension
+			err = fileutils.EncryptFile(inputFile, outputFilePath, password)
 		} else {
-			currentOutputFile = filepath.Join(filepath.Dir(inputFile), strings.TrimSuffix(filepath.Base(inputFile), ".cfo"))
-			fmt.Printf("\rDecrypting %s -> %s", inputFile, currentOutputFile)
-		}
-
-		_, err := os.Stat(inputFile)
-		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(os.Stderr, " (input file not found, skipping)\n")
-			continue // Spring denne fil over og fortsæt
-		}
-
-		_, err = os.Stat(currentOutputFile)
-		// If err is nil, the file/path exists.
-		if err == nil {
-			fmt.Fprintf(os.Stderr, " (output file exists, skipping)\n")
-			continue // Spring denne fil over og fortsæt
-		}
-
-		fmt.Println()
-
-		switch operation {
-		case "encrypt":
-			if err := fileutils.EncryptFile(inputFile, currentOutputFile, password); err != nil {
-				fmt.Fprintf(os.Stderr, "Error encrypting %s: %v\n", inputFile, err)
+			// Ensure we are only attempting to decrypt files with the correct extension
+			if !strings.HasSuffix(inputFile, constants.FileExtension) {
+				fmt.Fprintf(os.Stderr, "Skipping %s: missing %s extension\n",
+					inputFile, constants.FileExtension)
+				continue
 			}
-		case "decrypt":
-			if err := fileutils.DecryptFile(inputFile, currentOutputFile, password); err != nil {
-				fmt.Fprintf(os.Stderr, "Error decrypting %s: %v\n", inputFile, err)
+
+			// Generate output filename by stripping the extension
+			outputFilePath = strings.TrimSuffix(inputFile, constants.FileExtension)
+
+			// Prevent accidental overwrite if suffix stripping fails or output is empty
+			if outputFilePath == inputFile || outputFilePath == "" {
+				outputFilePath = outputFilePath + ".decrypted"
 			}
-		default:
-			fmt.Fprintf(os.Stderr, "invalid operation. Use -e (encrypt) or -d (decrypt)")
+
+			err = fileutils.DecryptFile(inputFile, outputFilePath, password)
 		}
+
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nError processing %s: %v\n", inputFile, err)
+			continue
+		}
+		fmt.Printf("\nSuccess: %s -> %s\n", inputFile, outputFilePath)
 	}
-	fmt.Println()
 }
 
-// Helper to read password securely without echoing
-func readPasswordFromTerminal(prompt string) (string, error) {
-	fmt.Print(prompt)
-	// Get terminal file descriptor for secure reading
-	fd := int(syscall.Stdin)
-	bytePassword, err := term.ReadPassword(fd)
-	fmt.Println() // Print newline after secure input
-
-	if err != nil {
-		return "", err
-	}
-	// Use TrimSpace to clean up any potential leading/trailing whitespace
-	return strings.TrimSpace(string(bytePassword)), nil
-}
-
-// Handles interactive password prompting and generation logic
-func resolvePassword(operation string) (string, error) {
+// resolvePassword handles both automated generation and secure terminal input
+func resolvePassword(operation string) ([]byte, error) {
 	switch operation {
 	case "encrypt":
-		// User entered blank, generate secure password
 		fmt.Println("Generating secure, random password...")
 		securePass, err := cryptoutils.GenerateSecurePassword(constants.PasswordLength)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		// Display the generated password for the user to save it
+		// Print the generated password once so the user can record it
 		fmt.Printf("Your auto-generated password:\n%s\n", securePass)
-		return string(securePass), nil
+		return securePass, nil
+
 	case "decrypt":
-		for { // Loop until a non-blank password is provided
+		for {
 			p, err := readPasswordFromTerminal("Enter password for decryption: ")
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 
-			if p != "" {
+			if len(p) > 0 {
 				return p, nil
 			}
-			// If p is blank, warn the user and continue the loop
-			fmt.Fprintln(os.Stderr, "Error: The password cannot be empty during decryption. Please try again.")
+			fmt.Fprintln(os.Stderr, "Error: Password cannot be empty. Please try again.")
 		}
 	}
-	// Should be unreachable
-	return "", fmt.Errorf("internal error: invalid operation")
+	return nil, fmt.Errorf("internal error: invalid operation")
 }
 
-func getParameters() (operation string, inputPattern string, err error) {
-	// Define flags
-	encryptFlag := flag.String("e", "", "Encrypt file")
-	decryptFlag := flag.String("d", "", "Decrypt file")
+// readPasswordFromTerminal uses syscalls to read input without echoing to the screen
+func readPasswordFromTerminal(prompt string) ([]byte, error) {
+	fmt.Fprint(os.Stdout, prompt)
 
-	// Parse flags
+	// Set the terminal to raw mode for the duration of the password read
+	fd := int(syscall.Stdin)
+	bytePassword, err := term.ReadPassword(fd)
+	fmt.Println() // Move cursor to next line after hidden input
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to read password: %w", err)
+	}
+	return bytePassword, nil
+}
+
+// getParameters extracts the command line flags
+func getParameters() (operation string, inputPattern string, err error) {
+	encryptFlag := flag.String("e", "", "Encrypt file(s)")
+	decryptFlag := flag.String("d", "", "Decrypt file(s)")
+
 	flag.Parse()
 
-	if *encryptFlag == *decryptFlag {
-		return "", "", fmt.Errorf("must specify either -e (encrypt) or -d (decrypt), but not both")
+	// Ensure exactly one operation is selected
+	if (*encryptFlag != "" && *decryptFlag != "") || (*encryptFlag == "" && *decryptFlag == "") {
+		return "", "", fmt.Errorf("you must provide exactly one flag: -e (encrypt) or -d (decrypt)")
 	}
 
 	if *encryptFlag != "" {
-		inputPattern = *encryptFlag
-		operation = "encrypt"
-	} else if *decryptFlag != "" {
-		inputPattern = *decryptFlag
-		operation = "decrypt"
+		return "encrypt", *encryptFlag, nil
 	}
-
-	return
+	return "decrypt", *decryptFlag, nil
 }

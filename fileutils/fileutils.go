@@ -2,7 +2,6 @@ package fileutils
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -15,38 +14,42 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-func EncryptFile(inputFile, outputFile, userPassword string) error {
+// EncryptFile encrypts a file using XChaCha20-Poly1305 with an Argon2id derived key.
+func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	inFile, err := os.Open(inputFile)
 	if err != nil {
 		return fmt.Errorf("unable to open input file: %w", err)
 	}
 	defer inFile.Close()
 
-	outFile, err := os.Create(outputFile)
+	outFile, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("unable to create output file: %w", err)
 	}
 	defer outFile.Close()
 
-	key := sha256.Sum256([]byte(userPassword))
-	defer cryptoutils.ZeroBytes(key[:])
+	salt, err := cryptoutils.GenerateSalt()
+	if err != nil {
+		return fmt.Errorf("error generating salt: %w", err)
+	}
 
-	aead, err := chacha20poly1305.NewX(key[:])
+	if _, err := outFile.Write(salt); err != nil {
+		return fmt.Errorf("error writing salt header: %w", err)
+	}
+
+	key := cryptoutils.DeriveKey(userPassword, salt)
+	defer cryptoutils.ZeroBytes(key)
+
+	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
 
 	fileInfo, _ := inFile.Stat()
 	totalBytes := fileInfo.Size()
-
-	progress := make(chan int, 1)
-
-	go cryptoutils.RunProgressBar("Encrypting file", progress)
-	defer func() { progress <- 100; close(progress) }()
+	prefix := "Encrypting file"
 
 	plaintextBuf := make([]byte, constants.SegmentSize)
-
-	var prevCiphertext []byte
 	var segmentCounter uint64
 	var bytesDone uint64
 
@@ -55,30 +58,18 @@ func EncryptFile(inputFile, outputFile, userPassword string) error {
 		if n == 0 {
 			break
 		}
-		plaintextSegment := make([]byte, n)
-		copy(plaintextSegment, plaintextBuf[:n])
 
-		// CBC-style XOR with previous ciphertext
-		if prevCiphertext != nil {
-			for i := 0; i < n; i++ {
-				plaintextSegment[i] ^= prevCiphertext[i]
-			}
-		}
-
-		// Generate a unique nonce per segment
 		nonce := make([]byte, constants.XNonceSize)
 		if _, err := rand.Read(nonce); err != nil {
 			return fmt.Errorf("error generating segment nonce: %w", err)
 		}
 
-		// AAD includes segment counter and plaintext length
 		aad := make([]byte, 16)
 		binary.BigEndian.PutUint64(aad[:8], segmentCounter)
-		binary.BigEndian.PutUint64(aad[8:], uint64(len(plaintextSegment)))
+		binary.BigEndian.PutUint64(aad[8:], uint64(n))
 
-		ciphertext := aead.Seal(nil, nonce, plaintextSegment, aad)
+		ciphertext := aead.Seal(nil, nonce, plaintextBuf[:n], aad)
 
-		// Write nonce + ciphertext length + ciphertext
 		if _, err := outFile.Write(nonce); err != nil {
 			return fmt.Errorf("error writing nonce: %w", err)
 		}
@@ -89,52 +80,60 @@ func EncryptFile(inputFile, outputFile, userPassword string) error {
 			return fmt.Errorf("error writing ciphertext: %w", err)
 		}
 
-		// Prepare for next segment
-		prevCiphertext = ciphertext
 		segmentCounter++
-		bytesDone += uint64(len(plaintextSegment)) // actual segment length
-		progress <- int((bytesDone * 100) / uint64(totalBytes))
+		bytesDone += uint64(n)
+
+		// Direct UI Update
+		if totalBytes > 0 {
+			cryptoutils.RunProgressBar(prefix, int((bytesDone*100)/uint64(totalBytes)))
+		}
 
 		if readErr == io.EOF {
 			break
 		}
 	}
 
+	// Final 100% call and Newline
+	cryptoutils.RunProgressBar(prefix, 100)
+	fmt.Println()
+
 	return nil
 }
 
-func DecryptFile(inputFile, outputFile, userPassword string) error {
+// DecryptFile decrypts a file, verifying authenticity and integrity.
+func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 	inFile, err := os.Open(inputFile)
 	if err != nil {
 		return fmt.Errorf("unable to open input file: %w", err)
 	}
 	defer inFile.Close()
 
-	outFile, err := os.Create(outputFile)
+	outFile, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("unable to create output file: %w", err)
 	}
 	defer outFile.Close()
 
-	fileInfo, _ := inFile.Stat()
-	totalBytes := fileInfo.Size()
+	salt := make([]byte, constants.SaltSize)
+	if _, err := io.ReadFull(inFile, salt); err != nil {
+		return fmt.Errorf("error reading salt: %w", err)
+	}
 
-	key := sha256.Sum256([]byte(userPassword))
-	defer cryptoutils.ZeroBytes(key[:])
+	key := cryptoutils.DeriveKey(userPassword, salt)
+	defer cryptoutils.ZeroBytes(key)
 
-	aead, err := chacha20poly1305.NewX(key[:])
+	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
 
-	progress := make(chan int, 1)
+	fileInfo, _ := inFile.Stat()
+	totalBytes := uint64(fileInfo.Size())
+	prefix := "Decrypting file"
 
-	go cryptoutils.RunProgressBar("Decrypting file", progress)
-	defer func() { progress <- 100; close(progress) }()
-
-	var prevCiphertext []byte
 	var segmentCounter uint64
-	var bytesDone uint64
+	var bytesRead uint64 // For progress, we track read position in the encrypted file
+	bytesRead += uint64(constants.SaltSize)
 
 	sizeBuf := make([]byte, 8)
 	nonceBuf := make([]byte, constants.XNonceSize)
@@ -146,10 +145,12 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 			}
 			return fmt.Errorf("error reading nonce: %w", err)
 		}
+		bytesRead += uint64(constants.XNonceSize)
 
 		if _, err := io.ReadFull(inFile, sizeBuf); err != nil {
 			return fmt.Errorf("error reading segment length: %w", err)
 		}
+		bytesRead += 8
 
 		segmentLen := binary.BigEndian.Uint64(sizeBuf)
 		ciphertext := make([]byte, segmentLen)
@@ -157,6 +158,7 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 		if _, err := io.ReadFull(inFile, ciphertext); err != nil {
 			return fmt.Errorf("error reading ciphertext: %w", err)
 		}
+		bytesRead += segmentLen
 
 		aad := make([]byte, 16)
 		binary.BigEndian.PutUint64(aad[:8], segmentCounter)
@@ -164,30 +166,29 @@ func DecryptFile(inputFile, outputFile, userPassword string) error {
 
 		plaintextSegment, err := aead.Open(nil, nonceBuf, ciphertext, aad)
 		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-
-		// Reverse CBC XOR
-		if prevCiphertext != nil {
-			for i := 0; i < len(plaintextSegment); i++ {
-				plaintextSegment[i] ^= prevCiphertext[i]
-			}
+			return fmt.Errorf("authentication failed: possible tampering or wrong password")
 		}
 
 		if _, err := outFile.Write(plaintextSegment); err != nil {
 			return fmt.Errorf("error writing plaintext: %w", err)
 		}
 
-		prevCiphertext = ciphertext
 		segmentCounter++
-		bytesDone += uint64(len(plaintextSegment)) // actual segment length
-		progress <- int((bytesDone * 100) / uint64(totalBytes))
+
+		// Direct UI Update based on read progress of the total file
+		if totalBytes > 0 {
+			cryptoutils.RunProgressBar(prefix, int((bytesRead*100)/totalBytes))
+		}
 	}
+
+	// Final 100% call and Newline
+	cryptoutils.RunProgressBar(prefix, 100)
+	fmt.Println()
 
 	return nil
 }
 
-// ExpandInputPath takes a path or a wildcard pattern and returns a list of matching files.
+// ExpandInputPath takes a path or a wildcard pattern and returns matching files.
 func ExpandInputPath(inputPattern string) ([]string, error) {
 	if !strings.ContainsAny(inputPattern, "*?[]") {
 		_, err := os.Stat(inputPattern)
