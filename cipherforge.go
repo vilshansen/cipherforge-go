@@ -80,7 +80,6 @@ func main() {
 			fmt.Fprintf(os.Stderr, "\nError processing %s: %v\n", inputFile, err)
 			continue
 		}
-		fmt.Printf("\nSuccess: %s -> %s\n", inputFile, outputFilePath)
 	}
 }
 
@@ -88,13 +87,12 @@ func main() {
 func resolvePassword(operation string) ([]byte, error) {
 	switch operation {
 	case "encrypt":
-		fmt.Println("Generating secure, random password...")
 		securePass, err := cryptoutils.GenerateSecurePassword(constants.PasswordLength)
 		if err != nil {
 			return nil, err
 		}
 		// Print the generated password once so the user can record it
-		fmt.Printf("Your auto-generated password:\n%s\n", securePass)
+		fmt.Printf("Your secure, auto-generated password used for encryption:\n%s\n", securePass)
 		return securePass, nil
 
 	case "decrypt":

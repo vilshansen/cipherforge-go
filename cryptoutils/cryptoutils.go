@@ -74,7 +74,7 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 }
 
 func RunProgressBar(prefix string, percent int) {
-	const barWidth = 50
+	const barWidth = 30
 
 	if percent < 0 {
 		percent = 0
@@ -85,7 +85,7 @@ func RunProgressBar(prefix string, percent int) {
 
 	filled := (percent * barWidth) / 100
 	// Restored your original characters: █ and -
-	bar := strings.Repeat("█", filled) + strings.Repeat("-", barWidth-filled)
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 
 	// Restored your specific formatting: %s... [%s] %3d%%
 	fmt.Printf("\r%s... [%s] %3d%%", prefix, bar, percent)

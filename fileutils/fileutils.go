@@ -47,7 +47,7 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 	fileInfo, _ := inFile.Stat()
 	totalBytes := fileInfo.Size()
-	prefix := "Encrypting file"
+	prefix := "Encrypting file " + filepath.Base(inputFile)
 
 	plaintextBuf := make([]byte, constants.SegmentSize)
 	var segmentCounter uint64
@@ -129,7 +129,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 	fileInfo, _ := inFile.Stat()
 	totalBytes := uint64(fileInfo.Size())
-	prefix := "Decrypting file"
+	prefix := "Decrypting file " + filepath.Base(inputFile)
 
 	var segmentCounter uint64
 	var bytesRead uint64 // For progress, we track read position in the encrypted file
