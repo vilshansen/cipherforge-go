@@ -73,21 +73,33 @@ EXAMPLES
 
 ENCRYPTION PROCESS
 
-  Key Derivation: A 16-byte random salt is generated and stored at the
-  beginning of the file. The auto-generated password is processed using
-  the Argon2id key derivation function (Time: 3, Memory: 64MB,
-  Threads: 4) to produce a 32-byte cryptographic key.
+  Key Derivation: A 16-byte random salt is generated and stored at the 
+  beginning of the file. The auto-generated password is processed using 
+  the Argon2id key derivation function with hardened parameters (Time: 3,
+  Memory: 256MB, Threads: 4) to produce a 32-byte cryptographic key.
+  This ensures high resistance against GPU and ASIC-based brute-force
+  attempts.
 
-  Segmentation: To handle large files efficiently, the input is divided 
-  into segments of up to 1MB. Each segment is encrypted independently
-  using a unique 24-byte random nonce.
+  Nonce Management: A 24-byte Master Nonce is generated randomly and stored
+  in the file header. To maintain unique keystreams without per-segment
+  overhead, each 1MB segment derives its own unique nonce by XORing the
+  Master Nonce with the current 64-bit segment counter.
 
-  Authentication: Each segment is protected by a 16-byte Poly1305 
-  Authentication Tag. The Additional Authenticated Data (AAD) includes 
-  a 64-bit segment counter and the segment length to prevent reordering,
-  truncation, or deletion attacks. Each encrypted segment (the encrypted 
-  data and a 16-byte Poly1305 Authentication Tag) is prefixed with an 
-  8-byte length field before being written to the file.
+  Segmentation: To handle large files efficiently, the input is divided
+  into segments of up to 1MB (1,048,576 bytes). This streaming approach
+  allows for a constant and predictable memory footprint regardless of
+  the total file size.
+
+  Authentication & Integrity: Each segment is protected by a 16-byte
+  Poly1305 Authentication Tag. The Additional Authenticated Data (AAD)
+  cryptographically binds the segment counter and the segment length to
+  the ciphertext. This prevents attackers from reordering, truncating, or
+  deleting individual segments without detection.
+
+  OOM Safeguards: During decryption, the system validates the 8-byte
+  segment length field before memory allocation. If a length exceeds
+  the maximum allowed (1MB + overhead), the process aborts to prevent
+  memory-exhaustion attacks.
 
 ENCODED BINARY FILE FORMAT
 
