@@ -29,12 +29,13 @@ const (
 	// for Argon2id to ensure unique keys for identical passwords.
 	SaltSize = 16
 
-	// Argon2id parameters (RFC 9106 recommendations):
+	// Argon2id parameters (Hardened):
 	// Time: 3 passes for strong memory-hard processing.
-	// Memory: 64MiB of RAM to defeat GPU/ASIC brute-forcing.
+	// Memory: 256MiB of RAM to make GPU/ASIC brute-forcing
+	// significantly more expensive than the original 64MB.
 	// Threads: 4 to utilize multi-core parallelism.
 	Argon2Time    = 3
-	Argon2Memory  = 64 * 1024
+	Argon2Memory  = 256 * 1024
 	Argon2Threads = 4
 )
 
@@ -97,24 +98,35 @@ ENCODED BINARY FILE FORMAT
 
 DIAGRAM OF BINARY LAYOUT
 
-  +----------------------- FILE HEADER (ONCE) -------------------------+
-  | Field Name       | Data Type          | Length   | Value           |
-  |------------------+--------------------+----------+-----------------|
-  | Salt             | byte array         | 16 bytes | Argon2id Salt   |
-  +------------------+--------------------+----------+-----------------+
-  |                                                                    |
-  +----------- ENCRYPTED PAYLOAD DETAILS (VARIABLE LENGTH) ------------+
-  | Field Name       | Data Type          | Length   | Value/Purpose   |
-  |------------------+--------------------+----------+-----------------|
-  | XChaCha Nonce    | byte array         | 24 bytes | 24-byte nonce   |
-  | Segment Length   | uint64             | 8 bytes  | Ciphertext+Tag  |
-  | Ciphertext       | byte array         | <= 1 MB  | Encrypted data  |
-  | Poly1305 tag     | byte array         | 16 bytes | Auth tag        |
-  |------------------+--------------------+----------+-----------------|
-  | All segment-specific metadata (Counter and Segment Length) is      |
-  | included in the XChaCha20 Additional Authenticated Data (AAD).     |
-  | This cryptographically binds each segment to its position.         |
-  | Repeat Nonce + Length + Ciphertext + Tag structure until EOF.      |
-  | Decrypted segments contain the original plaintext data.            |
-  +--------------------------------------------------------------------+
++--------------------------------------------------------------------+
+|                         FILE HEADER (ONCE)                         |
++------------------+--------------------+----------+-----------------+
+| Field Name       | Data Type          | Length   | Value           |
+|------------------+--------------------+----------+-----------------|
+| Salt             | byte array         | 16 bytes | Argon2id Salt   |
+| Master Nonce     | byte array         | 24 bytes | XChaCha20 Nonce |
++------------------+--------------------+----------+-----------------+
+|            ENCRYPTED PAYLOAD DETAILS (REPEAT UNTIL EOF)            |
++------------------+--------------------+----------+-----------------+
+| Field Name       | Data Type          | Length   | Value/Purpose   |
+|------------------+--------------------+----------+-----------------|
+| Segment Length   | uint64             | 8 bytes  | Ciphertext+Tag  |
+| Ciphertext       | byte array         | <= 1 MiB | Encrypted data  |
+| Poly1305 Tag     | byte array         | 16 bytes | Auth tag        |
+|------------------+--------------------+----------+-----------------|
+|                              NOTES                                 |
+|------------------+--------------------+----------+-----------------|
+|                                                                    |
+| 1. Nonce Derivation: Every segment derives a unique nonce by       |
+|    XORing the Master Nonce with the 64-bit Segment Counter.        |
+| 2. Authenticated Integrity: Segment Counter and Segment Length are |
+|    included in the Additional Authenticated Data (AAD) to prevent  |
+|    reordering, truncation, or segment substitution attacks.        |
+| 3. Efficiency: The Master Nonce is written once in the header,     |
+|    saving 24 bytes per 1 MiB segment vs. per-segment nonce.        |
+| 4. OOM Protection: Segment Length is validated against the maximum |
+|    allowed size (1 MiB + overhead) before memory is allocated.     |
+| 5. Batch Processing: The structure repeats the [Length +           |
+|    Ciphertext + Tag] sequence until the end of the file (EOF).     |
++--------------------------------------------------------------------+
 `

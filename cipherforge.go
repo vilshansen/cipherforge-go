@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"syscall"
@@ -129,10 +132,20 @@ func readPasswordFromTerminal(prompt string) ([]byte, error) {
 		return bytePassword, err
 	}
 
-	// Fallback for automation: Read from Stdin directly (pipes/redirection)
-	var password string
-	_, err := fmt.Scanln(&password)
-	return []byte(strings.TrimSpace(password)), err
+	// Fallback for automation. Use bufio.Reader to read into a byte slice
+	// instead of fmt.Scanln (which uses strings).
+	reader := bufio.NewReader(os.Stdin)
+
+	// Read until newline
+	line, err := reader.ReadBytes('\n')
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	// Trim newline characters (\n or \r\n) from the byte slice
+	password := bytes.TrimRight(line, "\r\n")
+
+	return password, nil
 }
 
 // getParameters enforces mutually exclusive flags.
