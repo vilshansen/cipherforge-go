@@ -119,17 +119,20 @@ func resolvePassword(operation string) ([]byte, error) {
 // readPasswordFromTerminal disables terminal local-echo using ioctl/syscalls,
 // preventing the password from appearing on the screen or in shell history.
 func readPasswordFromTerminal(prompt string) ([]byte, error) {
-	fmt.Fprint(os.Stdout, prompt)
-
-	// Stdin file descriptor is required for terminal state manipulation.
 	fd := int(syscall.Stdin)
-	bytePassword, err := term.ReadPassword(fd)
-	fmt.Println()
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to read password: %w", err)
+	// Check if Stdin is actually a terminal
+	if term.IsTerminal(fd) {
+		fmt.Fprint(os.Stdout, prompt)
+		bytePassword, err := term.ReadPassword(fd)
+		fmt.Println()
+		return bytePassword, err
 	}
-	return bytePassword, nil
+
+	// Fallback for automation: Read from Stdin directly (pipes/redirection)
+	var password string
+	_, err := fmt.Scanln(&password)
+	return []byte(strings.TrimSpace(password)), err
 }
 
 // getParameters enforces mutually exclusive flags.
