@@ -1,20 +1,18 @@
 package fileutils
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/vilshansen/cipherforge-go/constants"
 	"github.com/vilshansen/cipherforge-go/cryptoutils"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-// EncryptFile encrypts a file using XChaCha20-Poly1305 with an Argon2id derived key.
+// EncryptFile reads a plaintext file and writes an encrypted version in segments.
 func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	inFile, err := os.Open(inputFile)
 	if err != nil {
@@ -22,6 +20,7 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	}
 	defer inFile.Close()
 
+	// 0600 ensures that only the current user can read/write the encrypted file.
 	outFile, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("unable to create output file: %w", err)
@@ -33,6 +32,7 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 		return fmt.Errorf("error generating salt: %w", err)
 	}
 
+	// Write salt first so the decryptor can derive the same key.
 	if _, err := outFile.Write(salt); err != nil {
 		return fmt.Errorf("error writing salt header: %w", err)
 	}
@@ -47,11 +47,11 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 	fileInfo, _ := inFile.Stat()
 	totalBytes := fileInfo.Size()
-	prefix := "Encrypting file " + filepath.Base(inputFile)
+	prefix := fmt.Sprintf("Encrypting %s", filepath.Base(inputFile))
 
 	plaintextBuf := make([]byte, constants.SegmentSize)
 	var segmentCounter uint64
-	var bytesDone uint64
+	var bytesDone int64
 
 	for {
 		n, readErr := inFile.Read(plaintextBuf)
@@ -59,17 +59,20 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 			break
 		}
 
-		nonce := make([]byte, constants.XNonceSize)
-		if _, err := rand.Read(nonce); err != nil {
+		nonce, err := cryptoutils.GenerateNonce()
+		if err != nil {
 			return fmt.Errorf("error generating segment nonce: %w", err)
 		}
 
+		// AAD (Additional Authenticated Data) binds the segment to its sequence index.
+		// This makes it impossible for an attacker to swap segment 1 with segment 5.
 		aad := make([]byte, 16)
 		binary.BigEndian.PutUint64(aad[:8], segmentCounter)
 		binary.BigEndian.PutUint64(aad[8:], uint64(n))
 
 		ciphertext := aead.Seal(nil, nonce, plaintextBuf[:n], aad)
 
+		// Record structure: [Nonce (24B)][Length (8B)][Ciphertext + Tag]
 		if _, err := outFile.Write(nonce); err != nil {
 			return fmt.Errorf("error writing nonce: %w", err)
 		}
@@ -81,11 +84,10 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 		}
 
 		segmentCounter++
-		bytesDone += uint64(n)
+		bytesDone += int64(n)
 
-		// Direct UI Update
 		if totalBytes > 0 {
-			cryptoutils.RunProgressBar(prefix, int((bytesDone*100)/uint64(totalBytes)))
+			cryptoutils.RunProgressBar(prefix, int((bytesDone*100)/totalBytes))
 		}
 
 		if readErr == io.EOF {
@@ -93,14 +95,13 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 		}
 	}
 
-	// Final 100% call and Newline
 	cryptoutils.RunProgressBar(prefix, 100)
 	fmt.Println()
 
 	return nil
 }
 
-// DecryptFile decrypts a file, verifying authenticity and integrity.
+// DecryptFile reads an encrypted file and restores the original plaintext.
 func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 	inFile, err := os.Open(inputFile)
 	if err != nil {
@@ -129,10 +130,10 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 	fileInfo, _ := inFile.Stat()
 	totalBytes := uint64(fileInfo.Size())
-	prefix := "Decrypting file " + filepath.Base(inputFile)
+	prefix := fmt.Sprintf("Decrypting %s", filepath.Base(inputFile))
 
 	var segmentCounter uint64
-	var bytesRead uint64 // For progress, we track read position in the encrypted file
+	var bytesRead uint64
 	bytesRead += uint64(constants.SaltSize)
 
 	sizeBuf := make([]byte, 8)
@@ -160,10 +161,12 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		}
 		bytesRead += segmentLen
 
+		// Reconstruct AAD exactly as it was during encryption to verify authenticity.
 		aad := make([]byte, 16)
 		binary.BigEndian.PutUint64(aad[:8], segmentCounter)
 		binary.BigEndian.PutUint64(aad[8:], uint64(len(ciphertext)-aead.Overhead()))
 
+		// Open decrypts and verifies the Poly1305 tag in one atomic step.
 		plaintextSegment, err := aead.Open(nil, nonceBuf, ciphertext, aad)
 		if err != nil {
 			return fmt.Errorf("authentication failed: possible tampering or wrong password")
@@ -175,37 +178,44 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 		segmentCounter++
 
-		// Direct UI Update based on read progress of the total file
 		if totalBytes > 0 {
 			cryptoutils.RunProgressBar(prefix, int((bytesRead*100)/totalBytes))
 		}
 	}
 
-	// Final 100% call and Newline
 	cryptoutils.RunProgressBar(prefix, 100)
 	fmt.Println()
 
 	return nil
 }
 
-// ExpandInputPath takes a path or a wildcard pattern and returns matching files.
-func ExpandInputPath(inputPattern string) ([]string, error) {
-	if !strings.ContainsAny(inputPattern, "*?[]") {
-		_, err := os.Stat(inputPattern)
-		if err != nil {
-			return nil, fmt.Errorf("input file does not exist: %w", err)
-		}
-		return []string{inputPattern}, nil
-	}
-
-	matches, err := filepath.Glob(inputPattern)
+// ExpandInputPath processes a string pattern and returns a slice of matching file paths.
+// It supports standard shell-style wildcards via filepath.Glob.
+func ExpandInputPath(pattern string) ([]string, error) {
+	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		return nil, fmt.Errorf("error during expansion of wildcard pattern: %w", err)
+		return nil, fmt.Errorf("invalid pattern: %w", err)
 	}
 
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("no match found for pattern: %s", inputPattern)
+		return nil, fmt.Errorf("no files match the pattern: %s", pattern)
 	}
 
-	return matches, nil
+	// Filter out directories, as we only process files
+	var files []string
+	for _, match := range matches {
+		info, err := os.Stat(match)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			files = append(files, match)
+		}
+	}
+
+	if len(files) == 0 {
+		return nil, fmt.Errorf("pattern matched only directories, no files found")
+	}
+
+	return files, nil
 }

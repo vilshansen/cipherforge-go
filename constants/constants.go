@@ -1,16 +1,38 @@
 package constants
 
+// Version and GitCommit are typically set during the build process
+// using -ldflags="-X '...'" to provide traceability for the binary.
 var GitCommit, Version = "unknown", "unknown"
 
 const (
-	XNonceSize     = 24
-	PasswordLength = 55
-	CharacterPool  = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-	SegmentSize    = 1048576 // 1 MiB
-	FileExtension  = ".cfo"
-	SaltSize       = 16
+	// XNonceSize is 24 bytes (192 bits). This is large enough that
+	// random nonces can be generated for every segment without
+	// risk of collision, unlike standard ChaCha20's 96-bit nonce.
+	XNonceSize = 24
 
-	// Argon2id parameters
+	// PasswordLength is set to 55. With a 32-character pool (5 bits/char),
+	// this provides ~275 bits of entropy, perfectly saturating the
+	// 256-bit XChaCha20 key even with slight overhead.
+	PasswordLength = 55
+
+	// CharacterPool uses Base32 (0-9, A-Z excluding confusing chars).
+	// This makes generated passwords human-readable and easy to type.
+	CharacterPool = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+	// SegmentSize is 1MiB. This balance ensures high performance
+	// on modern CPUs while keeping the memory footprint low.
+	SegmentSize = 1048576
+
+	FileExtension = ".cfo"
+
+	// SaltSize is 16 bytes (128 bits), the standard recommendation
+	// for Argon2id to ensure unique keys for identical passwords.
+	SaltSize = 16
+
+	// Argon2id parameters (RFC 9106 recommendations):
+	// Time: 3 passes for strong memory-hard processing.
+	// Memory: 64MiB of RAM to defeat GPU/ASIC brute-forcing.
+	// Threads: 4 to utilize multi-core parallelism.
 	Argon2Time    = 3
 	Argon2Memory  = 64 * 1024
 	Argon2Threads = 4

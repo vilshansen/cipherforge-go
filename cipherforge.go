@@ -14,37 +14,41 @@ import (
 )
 
 func main() {
-	// Display help if no arguments provided
+	// Standard entry-point check: if no flags or arguments are passed,
+	// show the full technical documentation defined in constants.
 	if len(os.Args) < 2 {
 		helpText := fmt.Sprintf(constants.HelpText, constants.Version, constants.GitCommit)
 		fmt.Print(helpText)
 		os.Exit(1)
 	}
 
-	// Global panic recovery for stability
+	// Global panic recovery to ensure the terminal state is preserved
+	// and helpful errors are shown even during catastrophic failures.
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Fprintf(os.Stderr, "Fatal error: %v\n", r)
 		}
 	}()
 
-	// Parse flags and determine operation
 	operation, inputPattern, err := getParameters()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Resolve password as []byte to ensure it can be wiped from RAM
+	// Password is held as a byte slice to prevent it from being interned
+	// in the Go string heap, allowing us to manually clear it later.
 	password, err := resolvePassword(operation)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
-	// Securely overwrite the password in memory when main returns
+
+	// CRITICAL: Ensure the password is zeroed out in RAM as soon as the
+	// program finishes processing the file queue.
 	defer cryptoutils.ZeroBytes(password)
 
-	// Identify all files matching the input pattern
+	// wildcard/glob expansion allows for batch processing (e.g., *.txt)
 	inputFiles, err := fileutils.ExpandInputPath(inputPattern)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -58,17 +62,17 @@ func main() {
 			outputFilePath = inputFile + constants.FileExtension
 			err = fileutils.EncryptFile(inputFile, outputFilePath, password)
 		} else {
-			// Ensure we are only attempting to decrypt files with the correct extension
+			// Decryption Safety: Check extension before attempting Argon2id key derivation.
 			if !strings.HasSuffix(inputFile, constants.FileExtension) {
 				fmt.Fprintf(os.Stderr, "Skipping %s: missing %s extension\n",
 					inputFile, constants.FileExtension)
 				continue
 			}
 
-			// Generate output filename by stripping the extension
 			outputFilePath = strings.TrimSuffix(inputFile, constants.FileExtension)
 
-			// Prevent accidental overwrite if suffix stripping fails or output is empty
+			// Logic guard: If for some reason the suffix trim fails,
+			// append .decrypted to avoid overwriting the source encrypted file.
 			if outputFilePath == inputFile || outputFilePath == "" {
 				outputFilePath = outputFilePath + ".decrypted"
 			}
@@ -83,7 +87,8 @@ func main() {
 	}
 }
 
-// resolvePassword handles both automated generation and secure terminal input
+// resolvePassword bifurcates the workflow: encryption generates a new, high-entropy
+// password, while decryption prompts for manual entry.
 func resolvePassword(operation string) ([]byte, error) {
 	switch operation {
 	case "encrypt":
@@ -91,7 +96,7 @@ func resolvePassword(operation string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Print the generated password once so the user can record it
+		// The only time the password is shown in plaintext.
 		fmt.Printf("Your secure, auto-generated password used for encryption:\n%s\n", securePass)
 		return securePass, nil
 
@@ -111,14 +116,15 @@ func resolvePassword(operation string) ([]byte, error) {
 	return nil, fmt.Errorf("internal error: invalid operation")
 }
 
-// readPasswordFromTerminal uses syscalls to read input without echoing to the screen
+// readPasswordFromTerminal disables terminal local-echo using ioctl/syscalls,
+// preventing the password from appearing on the screen or in shell history.
 func readPasswordFromTerminal(prompt string) ([]byte, error) {
 	fmt.Fprint(os.Stdout, prompt)
 
-	// Set the terminal to raw mode for the duration of the password read
+	// Stdin file descriptor is required for terminal state manipulation.
 	fd := int(syscall.Stdin)
 	bytePassword, err := term.ReadPassword(fd)
-	fmt.Println() // Move cursor to next line after hidden input
+	fmt.Println()
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read password: %w", err)
@@ -126,14 +132,14 @@ func readPasswordFromTerminal(prompt string) ([]byte, error) {
 	return bytePassword, nil
 }
 
-// getParameters extracts the command line flags
+// getParameters enforces mutually exclusive flags.
 func getParameters() (operation string, inputPattern string, err error) {
 	encryptFlag := flag.String("e", "", "Encrypt file(s)")
 	decryptFlag := flag.String("d", "", "Decrypt file(s)")
 
 	flag.Parse()
 
-	// Ensure exactly one operation is selected
+	// Validation: The user must intend to either encrypt OR decrypt, never both or neither.
 	if (*encryptFlag != "" && *decryptFlag != "") || (*encryptFlag == "" && *decryptFlag == "") {
 		return "", "", fmt.Errorf("you must provide exactly one flag: -e (encrypt) or -d (decrypt)")
 	}
