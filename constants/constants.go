@@ -103,42 +103,42 @@ ENCRYPTION PROCESS
 
 ENCODED BINARY FILE FORMAT
 
-  The encrypted file is a binary structure consisting of a fixed-size header
-  containing the Argon2id salt, followed immediately by the encrypted payload. 
-  All multi-byte values (lengths and parameters) are written using big-endian 
-  byte order. XChaCha20 counter is represented in big-endian format.
+  The encrypted file is a binary structure consisting of a fixed-size
+  header containing the Argon2id salt, followed immediately by the
+  encrypted payload. All multi-byte values (lengths and parameters)
+  are written using big-endian byte order. XChaCha20 counter is 
+  represented in big-endian format.
 
 DIAGRAM OF BINARY LAYOUT
 
-+--------------------------------------------------------------------+
-|                         FILE HEADER (ONCE)                         |
-+------------------+--------------------+----------+-----------------+
-| Field Name       | Data Type          | Length   | Value           |
-|------------------+--------------------+----------+-----------------|
-| Salt             | byte array         | 16 bytes | Argon2id Salt   |
-| Master Nonce     | byte array         | 24 bytes | XChaCha20 Nonce |
-+------------------+--------------------+----------+-----------------+
-|            ENCRYPTED PAYLOAD DETAILS (REPEAT UNTIL EOF)            |
-+------------------+--------------------+----------+-----------------+
-| Field Name       | Data Type          | Length   | Value/Purpose   |
-|------------------+--------------------+----------+-----------------|
-| Segment Length   | uint64             | 8 bytes  | Ciphertext+Tag  |
-| Ciphertext       | byte array         | <= 1 MiB | Encrypted data  |
-| Poly1305 Tag     | byte array         | 16 bytes | Auth tag        |
-|------------------+--------------------+----------+-----------------|
-|                              NOTES                                 |
-|------------------+--------------------+----------+-----------------|
-|                                                                    |
-| 1. Nonce Derivation: Every segment derives a unique nonce by       |
-|    XORing the Master Nonce with the 64-bit Segment Counter.        |
-| 2. Authenticated Integrity: Segment Counter and Segment Length are |
-|    included in the Additional Authenticated Data (AAD) to prevent  |
-|    reordering, truncation, or segment substitution attacks.        |
-| 3. Efficiency: The Master Nonce is written once in the header,     |
-|    saving 24 bytes per 1 MiB segment vs. per-segment nonce.        |
-| 4. OOM Protection: Segment Length is validated against the maximum |
-|    allowed size (1 MiB + overhead) before memory is allocated.     |
-| 5. Batch Processing: The structure repeats the [Length +           |
-|    Ciphertext + Tag] sequence until the end of the file (EOF).     |
-+--------------------------------------------------------------------+
++------------------------------------------------------------------------+
+|                           FILE HEADER (ONCE)                           |
++-------------------+---------------------+-----------+------------------+
+| Field Name        | Data Type           | Length    | Value            |
++-------------------+---------------------+-----------+------------------+
+| Salt              | byte array          | 16 bytes  | Argon2id Salt    |
+| Master Nonce      | byte array          | 24 bytes  | XChaCha20 Nonce  |
++-------------------+---------------------+-----------+------------------+
+|              ENCRYPTED PAYLOAD DETAILS (REPEAT UNTIL EOF)              |
++-------------------+---------------------+-----------+------------------+
+| Field Name        | Data Type           | Length    | Value/Purpose    |
++-------------------+---------------------+-----------+------------------+
+| Segment Length    | uint64              | 8 bytes   | Ciphertext+Tag   |
+| Ciphertext        | byte array          | <= 1 MiB  | Encrypted data   |
+| Poly1305 Tag      | byte array          | 16 bytes  | Auth tag         |
++-------------------+---------------------+-----------+------------------+
+|                                NOTES                                   |
++-------------------+---------------------+-----------+------------------+
+| 1. Nonce Derivation: Every segment derives a unique nonce by XORing    |
+|    the Master Nonce with the 64-bit Segment Counter.                   |
+| 2. Authenticated Integrity: Segment Counter and Segment Length are     |
+|    included in the Additional Authenticated Data (AAD) to prevent      |
+|    reordering, truncation, or segment substitution attacks.            |
+| 3. Efficiency: The Master Nonce is written once in the header, saving  |
+|    24 bytes per 1 MiB segment vs. per-segment nonce.                   |
+| 4. OOM Protection: Segment Length is validated against the maximum     |
+|    allowed size (1 MiB + overhead) before memory is allocated.         |
+| 5. Batch Processing: The structure repeats the [Length + Ciphertext +  |
+|    Tag] sequence until the end of the file (EOF).                      |
++-------------------+---------------------+-----------+------------------+
 `
