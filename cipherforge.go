@@ -39,7 +39,7 @@ func main() {
 	}
 
 	// wildcard/glob expansion allows for batch processing (e.g., *.txt)
-	inputFiles, err := fileutils.ExpandInputPaths(inputPattern)
+	inputFiles, err := fileutils.ExpandInputPaths(inputPattern, operation)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

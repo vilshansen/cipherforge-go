@@ -212,7 +212,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 // ExpandInputPaths resolves multiple input paths and glob patterns,
 // and filters out directories.
-func ExpandInputPaths(inputs []string) ([]string, error) {
+func ExpandInputPaths(inputs []string, operation string) ([]string, error) {
 	var files []string
 
 	for _, input := range inputs {
@@ -221,7 +221,7 @@ func ExpandInputPaths(inputs []string) ([]string, error) {
 		if err == nil {
 			if !info.IsDir() {
 				ext := strings.ToLower(filepath.Ext(info.Name()))
-				if ext != ".cfo" {
+				if operation == "encrypt" && ext != ".cfo" || operation == "decrypt" && ext == ".cfo" {
 					files = append(files, input)
 				}
 			}
