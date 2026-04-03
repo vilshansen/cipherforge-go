@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -39,6 +38,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// wildcard/glob expansion allows for batch processing (e.g., *.txt)
+	inputFiles, err := fileutils.ExpandInputPaths(inputPattern)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(inputFiles) == 0 {
+		fmt.Fprintf(os.Stderr, "No files found for: %v\n", inputPattern)
+		os.Exit(1)
+	}
+
 	// Password is held as a byte slice to prevent it from being interned
 	// in the Go string heap, allowing us to manually clear it later.
 	password, err := resolvePassword(operation)
@@ -50,13 +61,6 @@ func main() {
 	// CRITICAL: Ensure the password is zeroed out in RAM as soon as the
 	// program finishes processing the file queue.
 	defer cryptoutils.ZeroBytes(password)
-
-	// wildcard/glob expansion allows for batch processing (e.g., *.txt)
-	inputFiles, err := fileutils.ExpandInputPath(inputPattern)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
 
 	for _, inputFile := range inputFiles {
 		var outputFilePath string
@@ -148,20 +152,51 @@ func readPasswordFromTerminal(prompt string) ([]byte, error) {
 	return password, nil
 }
 
-// getParameters enforces mutually exclusive flags.
-func getParameters() (operation string, inputPattern string, err error) {
-	encryptFlag := flag.String("e", "", "Encrypt file(s)")
-	decryptFlag := flag.String("d", "", "Decrypt file(s)")
+// getParameters enforces mutually exclusive flags and returns input args as []string.
+func getParameters() (operation string, inputs []string, err error) {
+	args := os.Args[1:]
 
-	flag.Parse()
+	var encryptInputs []string
+	var decryptInputs []string
 
-	// Validation: The user must intend to either encrypt OR decrypt, never both or neither.
-	if (*encryptFlag != "" && *decryptFlag != "") || (*encryptFlag == "" && *decryptFlag == "") {
-		return "", "", fmt.Errorf("you must provide exactly one flag: -e (encrypt) or -d (decrypt)")
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		switch arg {
+		case "-e":
+			// collect all following non-flag args
+			i++
+			for i < len(args) && args[i][0] != '-' {
+				encryptInputs = append(encryptInputs, args[i])
+				i++
+			}
+			i--
+
+		case "-d":
+			// collect all following non-flag args
+			i++
+			for i < len(args) && args[i][0] != '-' {
+				decryptInputs = append(decryptInputs, args[i])
+				i++
+			}
+			i--
+
+		default:
+			return "", nil, fmt.Errorf("unknown argument: %s", arg)
+		}
 	}
 
-	if *encryptFlag != "" {
-		return "encrypt", *encryptFlag, nil
+	// validation: exactly one mode
+	if (len(encryptInputs) > 0 && len(decryptInputs) > 0) ||
+		(len(encryptInputs) == 0 && len(decryptInputs) == 0) {
+		return "", nil, fmt.Errorf("you must provide exactly one flag: -e (encrypt) or -d (decrypt)")
 	}
-	return "decrypt", *decryptFlag, nil
+
+	if len(encryptInputs) > 0 {
+		return "encrypt", encryptInputs, nil
+	}
+
+	return "decrypt", decryptInputs, nil
 }
+
+

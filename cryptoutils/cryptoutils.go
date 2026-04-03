@@ -91,7 +91,7 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 // RunProgressBar renders a terminal-based progress indicator.
 // It uses a carriage return (\r) to overwrite the current line in the console.
 func RunProgressBar(prefix string, percent int) {
-	const barWidth = 30
+	const barWidth = 20
 
 	if percent < 0 {
 		percent = 0
@@ -101,10 +101,11 @@ func RunProgressBar(prefix string, percent int) {
 	}
 
 	filled := (percent * barWidth) / 100
-	// █ (Full Block) and ░ (Light Shade) provide a high-contrast modern UI look.
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
 
-	// %3d used to keep the percentage label width constant (prevents "jitter").
+	// low-intensity ASCII bar: subtle but readable
+	bar := strings.Repeat("#", filled) + strings.Repeat(".", barWidth-filled)
+
+	// fixed-width percentage prevents jitter
 	fmt.Printf("\r%s... [%s] %3d%%", prefix, bar, percent)
 }
 

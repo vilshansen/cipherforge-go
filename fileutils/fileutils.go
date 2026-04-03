@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/vilshansen/cipherforge-go/constants"
 	"github.com/vilshansen/cipherforge-go/cryptoutils"
@@ -209,25 +210,49 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 	return nil
 }
 
-// ExpandInputPath resolves wildcards and filters out directories.
-func ExpandInputPath(pattern string) ([]string, error) {
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil, fmt.Errorf("invalid pattern: %w", err)
-	}
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no files match the pattern: %s", pattern)
-	}
-
+// ExpandInputPaths resolves multiple input paths and glob patterns,
+// and filters out directories.
+func ExpandInputPaths(inputs []string) ([]string, error) {
 	var files []string
-	for _, match := range matches {
-		info, err := os.Stat(match)
-		if err != nil {
+
+	for _, input := range inputs {
+		// Step 1: check if input is a literal file path
+		info, err := os.Stat(input)
+		if err == nil {
+			if !info.IsDir() {
+				ext := strings.ToLower(filepath.Ext(info.Name()))
+				if ext != ".cfo" {
+					files = append(files, input)
+				}
+			}
 			continue
 		}
-		if !info.IsDir() {
-			files = append(files, match)
+
+		// Step 2: treat as glob pattern if file doesn't exist
+		matches, err := filepath.Glob(input)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pattern %q: %w", input, err)
+		}
+
+		// If glob produced no matches, skip (or treat as error if you prefer)
+		if len(matches) == 0 {
+			continue
+		}
+
+		for _, match := range matches {
+			info, err := os.Stat(match)
+			if err != nil {
+				continue
+			}
+			if !info.IsDir() {
+				files = append(files, match)
+			}
 		}
 	}
+
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no valid input files found")
+	}
+
 	return files, nil
 }
