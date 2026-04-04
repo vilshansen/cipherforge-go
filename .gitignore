@@ -1,6 +1,7 @@
 lorem-ipsum-*.txt
 bin/*
 dist/*
+tmp/*
 test.txt.cfo
 test.txt
 test-output/lorem-ipsum-utf8-dec.txt.cfo

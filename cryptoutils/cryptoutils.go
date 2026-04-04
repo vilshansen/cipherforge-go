@@ -5,6 +5,7 @@ package cryptoutils
 import (
 	"crypto/rand"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/vilshansen/cipherforge-go/constants"
@@ -109,11 +110,15 @@ func RunProgressBar(prefix string, percent int) {
 	fmt.Printf("\r%s... [%s] %3d%%", prefix, bar, percent)
 }
 
-// ZeroBytes overwrites the given byte slice with zeros.
-// This is used to mitigate "cold boot" attacks and minimize the time
-// sensitive material (like the master key) resides in the process heap.
+// ZeroBytes overwrites the given byte slice with zeros to mitigate cold-boot
+// attacks and minimise the time sensitive material resides in the process heap.
+//
+// runtime.KeepAlive ensures the compiler cannot eliminate the zeroing loop as a
+// dead-store optimisation: it proves to the compiler that b is still "live"
+// after the loop completes, so the writes must not be removed.
 func ZeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+	runtime.KeepAlive(b)
 }

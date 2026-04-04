@@ -11,8 +11,10 @@ const (
 	XNonceSize = 24
 
 	// PasswordLength is set to 55. With a 32-character pool (5 bits/char),
-	// this provides ~275 bits of entropy, perfectly saturating the
-	// 256-bit XChaCha20 key even with slight overhead.
+	// this provides ~275 bits of raw password entropy. However, the effective
+	// security is bounded by the 256-bit Argon2id output key, so any length
+	// above ~52 characters (~260 bits) yields no additional cryptographic
+	// benefit. 55 is kept for a comfortable margin and human usability.
 	PasswordLength = 55
 
 	// CharacterPool uses Base32 (0-9, A-Z excluding confusing chars).
@@ -81,9 +83,12 @@ ENCRYPTION PROCESS
   attempts.
 
   Nonce Management: A 24-byte Master Nonce is generated randomly and stored
-  in the file header. To maintain unique keystreams without per-segment
-  overhead, each 1MB segment derives its own unique nonce by XORing the
-  Master Nonce with the current 64-bit segment counter.
+  in the file header. Each 1MB segment derives its own unique nonce via
+  HKDF-SHA256 (RFC 5869), using the Master Nonce as the IKM and the 64-bit
+  segment counter as the info field. This is cryptographically stronger than
+  XOR-based derivation: it is a one-way function with no identity-at-zero
+  property (counter=0 does not yield the raw Master Nonce) and is
+  standardised by NIST SP 800-56C for exactly this purpose.
 
   Segmentation: To handle large files efficiently, the input is divided
   into segments of up to 1MB (1,048,576 bytes). This streaming approach
@@ -92,9 +97,9 @@ ENCRYPTION PROCESS
 
   Authentication & Integrity: Each segment is protected by a 16-byte
   Poly1305 Authentication Tag. The Additional Authenticated Data (AAD)
-  cryptographically binds the segment counter and the segment length to
-  the ciphertext. This prevents attackers from reordering, truncating, or
-  deleting individual segments without detection.
+  cryptographically binds the segment counter and the plaintext segment
+  length to the ciphertext. This prevents attackers from reordering,
+  truncating, or deleting individual segments without detection.
 
   OOM Safeguards: During decryption, the system validates the 8-byte
   segment length field before memory allocation. If a length exceeds
@@ -129,11 +134,13 @@ DIAGRAM OF BINARY LAYOUT
 +-------------------+---------------------+-----------+------------------+
 |                                NOTES                                   |
 +-------------------+---------------------+-----------+------------------+
-| 1. Nonce Derivation: Every segment derives a unique nonce by XORing    |
-|    the Master Nonce with the 64-bit Segment Counter.                   |
-| 2. Authenticated Integrity: Segment Counter and Segment Length are     |
-|    included in the Additional Authenticated Data (AAD) to prevent      |
-|    reordering, truncation, or segment substitution attacks.            |
+| 1. Nonce Derivation: Every segment derives a unique nonce via          |
+|    HKDF-SHA256 (RFC 5869): IKM=Master Nonce, info=64-bit counter.      |
+|    This avoids the XOR identity property (counter=0 = raw master       |
+|    nonce) and is standardised by NIST SP 800-56C.                      |
+| 2. Authenticated Integrity: Segment Counter and plaintext Segment      |
+|    Length are included in the Additional Authenticated Data (AAD) to   |
+|    prevent reordering, truncation, or segment substitution attacks.    |
 | 3. Efficiency: The Master Nonce is written once in the header, saving  |
 |    24 bytes per 1 MiB segment vs. per-segment nonce.                   |
 | 4. OOM Protection: Segment Length is validated against the maximum     |
