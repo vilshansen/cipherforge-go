@@ -12,18 +12,34 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// DeriveKey uses Argon2id to turn a password and salt into a 32-byte key.
-// Argon2id is preferred over Argon2i or Argon2d as it provides the best
-// resistance against both side-channel attacks and GPU-based cracking.
+// DeriveKey uses Argon2id to turn a password and salt into a 32-byte
+// encryption key. It is a convenience wrapper around DeriveKeys for callers
+// that do not need the header MAC key.
 func DeriveKey(password, salt []byte) []byte {
-	return argon2.IDKey(
+	encKey, _ := DeriveKeys(password, salt)
+	return encKey
+}
+
+// DeriveKeys derives two independent 32-byte keys from a single Argon2id run:
+//
+//   - encKey  (bytes  0–31): XChaCha20-Poly1305 encryption key.
+//   - macKey  (bytes 32–63): HMAC-SHA256 key used to authenticate the file
+//     header and segment count in the trailer.
+//
+// Producing both keys from one KDF invocation avoids paying the Argon2id cost
+// twice while still keeping the two keys domain-separated: they are independent
+// 256-bit outputs of the same PRF, derived from the same password/salt pair but
+// used for entirely different cryptographic operations.
+func DeriveKeys(password, salt []byte) (encKey, macKey []byte) {
+	raw := argon2.IDKey(
 		password,
 		salt,
-		constants.Argon2Time,    // Iterations: trade-off between speed and hardware cost
-		constants.Argon2Memory,  // RAM usage: makes ASIC/FPGA attacks prohibitively expensive
-		constants.Argon2Threads, // Parallelism: bound to CPU cores
-		32,                      // XChaCha20-Poly1305 requires a 256-bit key
+		constants.Argon2Time,
+		constants.Argon2Memory,
+		constants.Argon2Threads,
+		64, // 64 bytes: two independent 256-bit keys
 	)
+	return raw[:32], raw[32:]
 }
 
 // GenerateSalt creates a random salt for the KDF.

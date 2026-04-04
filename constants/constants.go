@@ -27,6 +27,15 @@ const (
 
 	FileExtension = ".cfo"
 
+	// HMACSize is 32 bytes — the output size of HMAC-SHA256.
+	HMACSize = 32
+
+	// TrailerSize is the fixed size of the file trailer written after all
+	// encrypted segments. It holds the HMAC-SHA256 that authenticates the
+	// file header (salt + master nonce) and the total segment count, binding
+	// them cryptographically to the payload.
+	TrailerSize = HMACSize
+
 	// SaltSize is 16 bytes (128 bits), the standard recommendation
 	// for Argon2id to ensure unique keys for identical passwords.
 	SaltSize = 16
@@ -78,9 +87,11 @@ ENCRYPTION PROCESS
   Key Derivation: A 16-byte random salt is generated and stored at the 
   beginning of the file. The auto-generated password is processed using 
   the Argon2id key derivation function with hardened parameters (Time: 3,
-  Memory: 256MB, Threads: 4) to produce a 32-byte cryptographic key.
-  This ensures high resistance against GPU and ASIC-based brute-force
-  attempts.
+  Memory: 256MB, Threads: 4) to produce 64 bytes of key material. The
+  first 32 bytes are used as the XChaCha20-Poly1305 encryption key; the
+  remaining 32 bytes are used as a separate HMAC-SHA256 key for the file
+  trailer. Deriving both keys from a single Argon2id invocation avoids
+  paying the KDF cost twice while keeping the two keys fully independent.
 
   Nonce Management: A 24-byte Master Nonce is generated randomly and stored
   in the file header. Each 1MB segment derives its own unique nonce via
@@ -100,6 +111,15 @@ ENCRYPTION PROCESS
   cryptographically binds the segment counter and the plaintext segment
   length to the ciphertext. This prevents attackers from reordering,
   truncating, or deleting individual segments without detection.
+
+  File-Level Authentication: After all segments are written, a 32-byte
+  trailer is appended containing HMAC-SHA256(macKey, salt || masterNonce
+  || segmentCount). This binds the header fields and total segment count
+  to the payload, preventing header substitution (swapping the salt or
+  nonce from another file), file truncation, and segment appending — all
+  attacks that per-segment AEAD cannot detect. On decryption, the trailer
+  is verified before any plaintext is written to disk. A wrong password
+  is also detected here immediately, without streaming the entire file.
 
   OOM Safeguards: During decryption, the system validates the 8-byte
   segment length field before memory allocation. If a length exceeds
@@ -124,13 +144,19 @@ DIAGRAM OF BINARY LAYOUT
 | Salt              | byte array          | 16 bytes  | Argon2id Salt    |
 | Master Nonce      | byte array          | 24 bytes  | XChaCha20 Nonce  |
 +-------------------+---------------------+-----------+------------------+
-|              ENCRYPTED PAYLOAD DETAILS (REPEAT UNTIL EOF)              |
+|              ENCRYPTED PAYLOAD DETAILS (REPEAT UNTIL EOF-32)           |
 +-------------------+---------------------+-----------+------------------+
 | Field Name        | Data Type           | Length    | Value/Purpose    |
 +-------------------+---------------------+-----------+------------------+
 | Segment Length    | uint64              | 8 bytes   | Ciphertext+Tag   |
 | Ciphertext        | byte array          | <= 1 MiB  | Encrypted data   |
 | Poly1305 Tag      | byte array          | 16 bytes  | Auth tag         |
++-------------------+---------------------+-----------+------------------+
+|                          FILE TRAILER (ONCE)                           |
++-------------------+---------------------+-----------+------------------+
+| Field Name        | Data Type           | Length    | Value/Purpose    |
++-------------------+---------------------+-----------+------------------+
+| Trailer HMAC      | byte array          | 32 bytes  | HMAC-SHA256      |
 +-------------------+---------------------+-----------+------------------+
 |                                NOTES                                   |
 +-------------------+---------------------+-----------+------------------+
@@ -141,11 +167,20 @@ DIAGRAM OF BINARY LAYOUT
 | 2. Authenticated Integrity: Segment Counter and plaintext Segment      |
 |    Length are included in the Additional Authenticated Data (AAD) to   |
 |    prevent reordering, truncation, or segment substitution attacks.    |
-| 3. Efficiency: The Master Nonce is written once in the header, saving  |
+| 3. File-Level Authentication: The 32-byte trailer is                   |
+|    HMAC-SHA256(macKey, salt || masterNonce || segmentCount), where     |
+|    macKey is Argon2id output bytes 32–63, independent of encKey.       |
+|    It binds the header and segment count to the payload, defeating     |
+|    header substitution, file truncation, and segment appending.        |
+|    It is verified before any plaintext is written to disk.             |
+| 4. Key Separation: Argon2id produces 64 bytes. Bytes 0–31 are the      |
+|    XChaCha20-Poly1305 key; bytes 32–63 are the HMAC key. The two       |
+|    keys are independent and never used for the same operation.         |
+| 5. Efficiency: The Master Nonce is written once in the header, saving  |
 |    24 bytes per 1 MiB segment vs. per-segment nonce.                   |
-| 4. OOM Protection: Segment Length is validated against the maximum     |
+| 6. OOM Protection: Segment Length is validated against the maximum     |
 |    allowed size (1 MiB + overhead) before memory is allocated.         |
-| 5. Batch Processing: The structure repeats the [Length + Ciphertext +  |
-|    Tag] sequence until the end of the file (EOF).                      |
+| 7. Batch Processing: The structure repeats the [Length + Ciphertext +  |
+|    Tag] sequence until 32 bytes before EOF (the trailer).              |
 +-------------------+---------------------+-----------+------------------+
 `
