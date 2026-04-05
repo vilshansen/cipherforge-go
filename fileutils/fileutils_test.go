@@ -12,6 +12,17 @@ import (
 	"github.com/vilshansen/cipherforge-go/constants"
 )
 
+// TestMain sets minimal Argon2id parameters for the entire test binary.
+// The production defaults (t=4, m=1GiB) allocate 1 GiB per DeriveKeys call,
+// which causes the test suite to stall and be OOM-killed. These values still
+// exercise the full Argon2id code path; they are just not hardened.
+func TestMain(m *testing.M) {
+	constants.Argon2Time = 1
+	constants.Argon2Memory = 64 * 1024 // 64 MiB
+	constants.Argon2Threads = 1
+	os.Exit(m.Run())
+}
+
 func TestEncryptionRoundTrip(t *testing.T) {
 	testCases := []struct {
 		name      string
@@ -183,15 +194,30 @@ func TestDecryptFileErrors(t *testing.T) {
 			errContains: "authentication failed",
 		},
 		{
-			name: "corrupted file - modified byte",
+			name: "corrupted file - modified magic byte",
 			setup: func() (string, string, []byte) {
 				corrupted := filepath.Join(tempDir, "corrupted.cfo")
 				data, _ := os.ReadFile(enc)
 				if len(data) > 0 {
-					data[0] ^= 0xFF // Flip bits in first byte
+					data[0] ^= 0xFF // Flip bits in first byte (magic)
 				}
 				os.WriteFile(corrupted, data, 0644)
 				return corrupted, filepath.Join(tempDir, "output.txt"), password
+			},
+			expectError: true,
+			errContains: "not a valid .cfo file",
+		},
+		{
+			name: "corrupted file - modified payload byte",
+			setup: func() (string, string, []byte) {
+				corrupted := filepath.Join(tempDir, "corrupted_payload.cfo")
+				data, _ := os.ReadFile(enc)
+				// Flip a byte well into the payload, past the 12-byte header
+				if len(data) > 20 {
+					data[20] ^= 0xFF
+				}
+				os.WriteFile(corrupted, data, 0644)
+				return corrupted, filepath.Join(tempDir, "output2.txt"), password
 			},
 			expectError: true,
 			errContains: "authentication failed",
@@ -208,18 +234,39 @@ func TestDecryptFileErrors(t *testing.T) {
 				return truncated, filepath.Join(tempDir, "output.txt"), password
 			},
 			expectError: true,
+			// Truncation may trip the min-size check or the trailer read,
+			// depending on how much data remains after removing 50 bytes.
 			errContains: "file too small",
 		},
 		{
 			name: "file too small",
 			setup: func() (string, string, []byte) {
 				small := filepath.Join(tempDir, "small.cfo")
-				// Create a file that's smaller than the minimum required size
+				// 9 bytes: passes the 8-byte magic read but fails the magic
+				// comparison, so the error is "not a valid .cfo file".
 				os.WriteFile(small, []byte("too small"), 0644)
 				return small, filepath.Join(tempDir, "output.txt"), password
 			},
 			expectError: true,
-			errContains: "error reading salt", // The actual error when file is too small
+			errContains: "not a valid .cfo file",
+		},
+		{
+			name: "wrong version",
+			setup: func() (string, string, []byte) {
+				wrongVer := filepath.Join(tempDir, "wrongver.cfo")
+				data, _ := os.ReadFile(enc)
+				// Bytes 8–11 are the version field. Set to version 99 (0x00000063).
+				if len(data) >= 12 {
+					data[8] = 0x00
+					data[9] = 0x00
+					data[10] = 0x00
+					data[11] = 0x63
+				}
+				os.WriteFile(wrongVer, data, 0644)
+				return wrongVer, filepath.Join(tempDir, "output.txt"), password
+			},
+			expectError: true,
+			errContains: "unsupported file format version",
 		},
 	}
 

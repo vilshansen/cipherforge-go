@@ -9,122 +9,161 @@ SOURCE_FILE="cipherforge.go"
 
 PLATFORMS=(
     "linux/amd64"    # Linux Server/Desktop (Standard)
-    "linux/arm64"    # Linux ARM (Modern Servers, Raspberry Pi 64-bit)
-    "linux/386"      # Linux 32-bit (Older systems)
-    "windows/amd64"  # Windows 64-bit (Standard)
-    "windows/386"    # Windows 32-bit
-    "darwin/amd64"   # macOS Intel (Older Macs)
-    "darwin/arm64"   # macOS Apple Silicon (M-series)
-    "freebsd/amd64"  # FreeBSD
 )
 
 DIST_DIR=dist
 
-echo "Building version ${VERSION}, commit: ${GIT_COMMIT}"
+# -------------------------------------------------------
+# Helpers
+# -------------------------------------------------------
 
-# Run tests before building
-echo "======================================================"
-echo "Running unit tests..."
-echo "======================================================"
+SEP="======================================================"
+DASH="------------------------------------------------------"
 
-# Run all tests but don't fail on packages without tests
-# Use a more robust approach: run tests and check if any actual test failures occurred
+info()    { echo "[INFO]  $*"; }
+ok()      { echo "[OK]    $*"; }
+warn()    { echo "[WARN]  $*"; }
+fail()    { echo "[ERROR] $*" >&2; }
+
+section() { echo ""; echo "${SEP}"; echo "  $*"; echo "${SEP}"; }
+divider() { echo "${DASH}"; }
+
+# -------------------------------------------------------
+# Header
+# -------------------------------------------------------
+
+section "Cipherforge Build"
+info "Version  : ${VERSION}"
+info "Commit   : ${GIT_COMMIT}"
+info "Targets  : ${#PLATFORMS[@]}"
+
+# -------------------------------------------------------
+# Unit tests
+# -------------------------------------------------------
+
+section "Unit Tests"
+
 go test -race -cover -v ./... 2>&1 | tee test_output.log
 
-# Check for test failures (but ignore "no test files" messages)
 if grep -q "^--- FAIL:" test_output.log; then
-    echo "======================================================"
-    echo "ERROR: Unit tests failed! Build aborted."
-    echo "======================================================"
-    cat test_output.log
+    fail "Unit tests failed — build aborted."
     rm test_output.log
     exit 1
 fi
 
-# Also check for panic
 if grep -q "panic:" test_output.log; then
-    echo "======================================================"
-    echo "ERROR: Test panic detected! Build aborted."
-    echo "======================================================"
-    cat test_output.log
+    fail "Test panic detected — build aborted."
     rm test_output.log
     exit 1
 fi
 
-echo "======================================================"
-echo "Unit tests passed successfully!"
-echo "======================================================"
+ok "All unit tests passed."
 rm test_output.log
 
-# Run test script if it exists
+# -------------------------------------------------------
+# Integration tests
+# -------------------------------------------------------
+
+section "Integration Tests"
+
 if [ -f "test/test.sh" ]; then
     cd test
-    echo "Running integration tests from test/test.sh..."
-    echo "======================================================"
-    
     chmod +x test.sh
     ./test.sh || {
-        echo "======================================================"
-        echo "ERROR: Integration tests failed! Build aborted."
-        echo "======================================================"
+        fail "Integration tests failed — build aborted."
         exit 1
     }
-    
-    echo "======================================================"
-    echo "Integration tests passed successfully!"
-    echo "======================================================"
     cd ..
+    ok "All integration tests passed."
 else
-    echo "Warning: test/test.sh not found, skipping integration tests"
-    echo "======================================================"
+    warn "test/test.sh not found — skipping integration tests."
 fi
 
-echo "Starting cross-compilation of ${SOURCE_FILE}..."
-echo "Total targets: ${#PLATFORMS[@]}"
-echo "------------------------------------------------------"
+# -------------------------------------------------------
+# Compilation
+# -------------------------------------------------------
 
-rm -rf ${DIST_DIR}
+section "Compilation"
+
+rm -rf "${DIST_DIR}"
+
+PASS=0
+FAIL=0
 
 for PLATFORM in "${PLATFORMS[@]}"; do
-    TARGET_OS=$(echo $PLATFORM | cut -d '/' -f 1)
-    TARGET_ARCH=$(echo $PLATFORM | cut -d '/' -f 2)
+    TARGET_OS=$(echo "${PLATFORM}"   | cut -d '/' -f 1)
+    TARGET_ARCH=$(echo "${PLATFORM}" | cut -d '/' -f 2)
 
-    mkdir -p ${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}
-    
+    mkdir -p "${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}"
+
     if [ "${TARGET_OS}" = "windows" ]; then
-        DIST_OUTPUT_FILE=${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}/"cfo.exe"
+        DIST_OUTPUT_FILE="${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}/cfo.exe"
     else
-        DIST_OUTPUT_FILE=${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}/"cfo"
+        DIST_OUTPUT_FILE="${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}/cfo"
     fi
 
-    echo "Building: ${TARGET_OS}/${TARGET_ARCH} -> ${DIST_OUTPUT_FILE}"
+    LDFLAGS="-s -w \
+        -X github.com/vilshansen/cipherforge-go/constants.GitCommit=${GIT_COMMIT} \
+        -X github.com/vilshansen/cipherforge-go/constants.Version=${VERSION}"
 
-    LDFLAGS="-s -w -X github.com/vilshansen/cipherforge-go/constants.GitCommit=${GIT_COMMIT} -X github.com/vilshansen/cipherforge-go/constants.Version=${VERSION}"
-
-    GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
-        -ldflags="${LDFLAGS}" \
-        -o ${DIST_OUTPUT_FILE} \
-        ${SOURCE_FILE}
-
-    mkdir -p ${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}
-    cp ${DIST_OUTPUT_FILE} ${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}
+    if GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
+            -ldflags="${LDFLAGS}" \
+            -o "${DIST_OUTPUT_FILE}" \
+            "${SOURCE_FILE}" 2>&1; then
+        ok "Built  ${TARGET_OS}/${TARGET_ARCH} -> ${DIST_OUTPUT_FILE}"
+        mkdir -p "${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}"
+        cp "${DIST_OUTPUT_FILE}" "${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}"
+        PASS=$((PASS + 1))
+    else
+        fail "Failed ${TARGET_OS}/${TARGET_ARCH}"
+        FAIL=$((FAIL + 1))
+    fi
 done
 
-tar -czf ${DIST_DIR}/cipherforge_source.tar.gz --exclude=dist --exclude=.git .
+divider
+info "Compiled: ${PASS} succeeded, ${FAIL} failed."
 
-echo "------------------------------------------------------"
-echo "Compilation for all platforms completed!"
-echo "Starting compression of all supported files in dist/compressed/*..."
-echo "------------------------------------------------------"
+if [ "${FAIL}" -gt 0 ]; then
+    fail "One or more targets failed to compile — aborting."
+    exit 1
+fi
 
-# Ignore FreeBSD and Darwin (macOS) explicitly.
-find ${DIST_DIR}/compressed/ \
+# -------------------------------------------------------
+# Source archive
+# -------------------------------------------------------
+
+section "Source Archive"
+
+tar -czf "${DIST_DIR}/cipherforge_source.tar.gz" --exclude=dist --exclude=.git .
+ok "Source archive -> ${DIST_DIR}/cipherforge_source.tar.gz"
+
+# -------------------------------------------------------
+# Compression (UPX)
+# -------------------------------------------------------
+
+section "UPX Compression"
+
+find "${DIST_DIR}/compressed/" \
     -type f \
-    ! -path "*darwin*" \
-    ! -path "*freebsd*" \
-    -exec upx -9 "{}" \;
+    | while read -r f; do
+        if upx -9 "${f}" > /dev/null 2>&1; then
+            ok "Compressed ${f}"
+        else
+            warn "UPX skipped  ${f}"
+        fi
+    done
 
-echo "------------------------------------------------------"
-echo "Compilation and compression completed!"
-echo "Following files are ready for distribution (original, uncompressed files found in the originals folder):"
-find ${DIST_DIR} -type f
+# -------------------------------------------------------
+# Summary
+# -------------------------------------------------------
+
+section "Output Files"
+
+find "${DIST_DIR}" -type f | sort | while read -r f; do
+    SIZE=$(du -sh "${f}" 2>/dev/null | cut -f1)
+    printf "  %-55s %s\n" "${f}" "${SIZE}"
+done
+
+echo ""
+ok "Build complete — version ${VERSION} (${GIT_COMMIT})."
+echo ""

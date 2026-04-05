@@ -128,6 +128,18 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	// Flush must happen before the deferred outFile.Close().
 	defer bufOut.Flush()
 
+	// Write magic bytes and version into the file header.
+	// Magic allows fast rejection of non-.cfo files before key derivation.
+	// Version enables forward-compatible format detection.
+	if _, err := bufOut.Write([]byte(constants.Magic)); err != nil {
+		return fmt.Errorf("error writing magic header: %w", err)
+	}
+	var versionBuf [4]byte
+	binary.BigEndian.PutUint32(versionBuf[:], constants.FileVersion)
+	if _, err := bufOut.Write(versionBuf[:]); err != nil {
+		return fmt.Errorf("error writing version header: %w", err)
+	}
+
 	// Write salt and master nonce into the file header.
 	if _, err := bufOut.Write(salt); err != nil {
 		return fmt.Errorf("error writing salt header: %w", err)
@@ -263,13 +275,33 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		}
 	}()
 
-	// 1. Read Salt
+	// 1. Read and validate magic bytes.
+	// Reject non-.cfo files immediately, before any expensive key derivation.
+	magicBuf := make([]byte, constants.MagicSize)
+	if _, err := io.ReadFull(inFile, magicBuf); err != nil {
+		return fmt.Errorf("error reading magic header: %w", err)
+	}
+	if string(magicBuf) != constants.Magic {
+		return fmt.Errorf("not a valid .cfo file: magic bytes do not match")
+	}
+
+	// 2. Read and validate the format version.
+	var versionBuf [4]byte
+	if _, err := io.ReadFull(inFile, versionBuf[:]); err != nil {
+		return fmt.Errorf("error reading version header: %w", err)
+	}
+	fileVersion := binary.BigEndian.Uint32(versionBuf[:])
+	if fileVersion != constants.FileVersion {
+		return fmt.Errorf("unsupported file format version %d (expected %d)", fileVersion, constants.FileVersion)
+	}
+
+	// 3. Read Salt
 	salt := make([]byte, constants.SaltSize)
 	if _, err := io.ReadFull(inFile, salt); err != nil {
 		return fmt.Errorf("error reading salt: %w", err)
 	}
 
-	// 2. Read Master Nonce
+	// 4. Read Master Nonce
 	masterNonce := make([]byte, constants.XNonceSize)
 	if _, err := io.ReadFull(inFile, masterNonce); err != nil {
 		return fmt.Errorf("error reading master nonce: %w", err)
@@ -285,7 +317,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
 
-	// 3. Verify the file trailer BEFORE decrypting any segment.
+	// 5. Verify the file trailer BEFORE decrypting any segment.
 	//
 	// The trailer is the last TrailerSize bytes of the file. It contains
 	// segmentCount (8B) || HMAC-SHA256(macKey, salt || masterNonce ||
@@ -299,7 +331,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 	fileInfo, _ := inFile.Stat()
 	totalFileSize := fileInfo.Size()
 
-	if totalFileSize < int64(constants.SaltSize+constants.XNonceSize+constants.TrailerSize) {
+	if totalFileSize < int64(constants.MagicSize+constants.VersionSize+constants.SaltSize+constants.XNonceSize+constants.TrailerSize) {
 		return fmt.Errorf("file too small to be a valid .cfo file")
 	}
 
@@ -324,7 +356,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		return fmt.Errorf("authentication failed: file has been tampered with or wrong password")
 	}
 
-	// 4. Trailer verified. Proceed with a single sequential decryption pass.
+	// 6. Trailer verified. Proceed with a single sequential decryption pass.
 	// Wrap both files in bufio; inFile is already positioned just past the
 	// header from the ReadFull calls above.
 	bufIn := bufio.NewReaderSize(inFile, constants.SegmentSize+aead.Overhead()+8)
@@ -333,7 +365,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 	prefix := fmt.Sprintf("Decrypting %s", filepath.Base(inputFile))
 	var bytesRead uint64
-	bytesRead += uint64(constants.SaltSize + constants.XNonceSize)
+	bytesRead += uint64(constants.MagicSize + constants.VersionSize + constants.SaltSize + constants.XNonceSize)
 	totalBytes := uint64(totalFileSize)
 
 	// Reusable buffers: hoisted outside the loop to avoid per-segment allocation.
@@ -342,7 +374,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 	aad := make([]byte, 16)
 
 	for i := uint64(0); i < segmentCount; i++ {
-		// 5. Read segment length.
+		// 7. Read segment length.
 		if _, err := io.ReadFull(bufIn, sizeBuf); err != nil {
 			return fmt.Errorf("error reading segment length: %w", err)
 		}
@@ -363,13 +395,13 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		}
 		bytesRead += segmentLen
 
-		// 6. Derive unique nonce for this segment — must mirror the encryption path.
+		// 8. Derive unique nonce for this segment — must mirror the encryption path.
 		nonce, err := deriveSegmentNonce(masterNonce, i)
 		if err != nil {
 			return fmt.Errorf("error deriving segment nonce: %w", err)
 		}
 
-		// 7. Reconstruct AAD for authentication.
+		// 9. Reconstruct AAD for authentication.
 		plaintextLen := segmentLen - uint64(aead.Overhead())
 		binary.BigEndian.PutUint64(aad[:8], i)
 		binary.BigEndian.PutUint64(aad[8:], plaintextLen)

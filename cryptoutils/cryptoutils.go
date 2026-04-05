@@ -30,6 +30,9 @@ func DeriveKey(password, salt []byte) []byte {
 // twice while still keeping the two keys domain-separated: they are independent
 // 256-bit outputs of the same PRF, derived from the same password/salt pair but
 // used for entirely different cryptographic operations.
+//
+// Both derived key slices are mlocked immediately after derivation to prevent
+// the OS from paging them to disk.
 func DeriveKeys(password, salt []byte) (encKey, macKey []byte) {
 	raw := argon2.IDKey(
 		password,
@@ -39,7 +42,10 @@ func DeriveKeys(password, salt []byte) (encKey, macKey []byte) {
 		constants.Argon2Threads,
 		64, // 64 bytes: two independent 256-bit keys
 	)
-	return raw[:32], raw[32:]
+	encKey, macKey = raw[:32], raw[32:]
+	MlockBytes(encKey)
+	MlockBytes(macKey)
+	return encKey, macKey
 }
 
 // GenerateSalt creates a random salt for the KDF.
@@ -102,6 +108,7 @@ func GenerateSecurePassword(length int) ([]byte, error) {
 		i++
 	}
 
+	MlockBytes(password)
 	return password, nil
 }
 

@@ -5,6 +5,25 @@ package constants
 var GitCommit, Version = "unknown", "unknown"
 
 const (
+	// Magic is an 8-byte file signature that identifies a Cipherforge
+	// encrypted file. The value 0xC1PHRF0RGE is encoded as ASCII bytes.
+	// It allows tools and the decoder to quickly reject non-.cfo files
+	// before attempting key derivation.
+	Magic = "\xC1\x50\x48\x52\x46\x30\x52\x47" // 0xC1 P H R F 0 R G
+
+	// MagicSize is the length of the magic header in bytes.
+	MagicSize = 8
+
+	// FileVersion is a 4-byte big-endian version field written immediately
+	// after the magic bytes. Version 1 (0x00000001) is the initial format.
+	// Incrementing this value in future releases allows the decoder to
+	// detect and reject (or handle) files written by a different format
+	// revision without silently producing garbage output.
+	FileVersion = uint32(1)
+
+	// VersionSize is the length of the version field in bytes.
+	VersionSize = 4
+
 	// XNonceSize is 24 bytes (192 bits). This is large enough that
 	// random nonces can be generated for every segment without
 	// risk of collision, unlike standard ChaCha20's 96-bit nonce.
@@ -41,15 +60,21 @@ const (
 	// SaltSize is 16 bytes (128 bits), the standard recommendation
 	// for Argon2id to ensure unique keys for identical passwords.
 	SaltSize = 16
+)
 
-	// Argon2id parameters (Hardened):
-	// Time: 3 passes for strong memory-hard processing.
-	// Memory: 256MiB of RAM to make GPU/ASIC brute-forcing
-	// significantly more expensive than the original 64MB.
-	// Threads: 4 to utilize multi-core parallelism.
-	Argon2Time    = 3
-	Argon2Memory  = 256 * 1024
-	Argon2Threads = 4
+// Argon2id parameters are declared as variables rather than constants so that
+// tests can substitute minimal values (t=1, m=64KiB) to avoid allocating 1 GiB
+// per DeriveKeys call. Production binaries always start with the hardened
+// defaults below; the values are never mutated outside of test setup.
+//
+// Hardened defaults:
+//   - Time:    4 passes
+//   - Memory:  1 GiB  — makes GPU/ASIC brute-forcing very expensive
+//   - Threads: 4      — utilises multi-core parallelism
+var (
+	Argon2Time    uint32 = 4
+	Argon2Memory  uint32 = 1024 * 1024
+	Argon2Threads uint8  = 4
 )
 
 const HelpTextShort = `Cipherforge v%s (commit: %s)`
@@ -74,9 +99,9 @@ CRYPTOGRAPHIC DESIGN
 
   Key Derivation: Argon2id (RFC 9106) is used to derive all key material.
   It is a memory-hard function that makes brute-force attacks expensive by
-  requiring large amounts of RAM (256MiB) in addition to computation time.
-  Parameters are set above current OWASP minimum recommendations: time=3,
-  memory=256MiB, threads=4.
+  requiring large amounts of RAM (1GiB) in addition to computation time.
+  Parameters are set well above current OWASP minimum recommendations: time=4,
+  memory=1GiB, threads=4.
 
   Password Generation: Passwords are generated using cryptographically
   secure random bytes (crypto/rand) with rejection sampling to eliminate
@@ -137,8 +162,8 @@ ENCRYPTION PROCESS
 
   Key Derivation: A 16-byte random salt is generated and stored at the
   beginning of the file. The auto-generated password is processed using
-  the Argon2id key derivation function with hardened parameters (Time: 3,
-  Memory: 256MB, Threads: 4) to produce 64 bytes of key material. The
+  the Argon2id key derivation function with hardened parameters (Time: 4,
+  Memory: 1GiB, Threads: 4) to produce 64 bytes of key material. The
   first 32 bytes are used as the XChaCha20-Poly1305 encryption key; the
   remaining 32 bytes are used as a separate HMAC-SHA256 key for the file
   trailer. Deriving both keys from a single Argon2id invocation avoids
@@ -223,6 +248,8 @@ DIAGRAM OF BINARY LAYOUT
 +-------------------+---------------------+-----------+------------------+
 | Field Name        | Data Type           | Length    | Value            |
 +-------------------+---------------------+-----------+------------------+
+| Magic             | byte array          | 8 bytes   | 0xC1PHRF0RGE     |
+| Version           | uint32 (big-endian) | 4 bytes   | 0x00000001       |
 | Salt              | byte array          | 16 bytes  | Argon2id Salt    |
 | Master Nonce      | byte array          | 24 bytes  | XChaCha20 Nonce  |
 +-------------------+---------------------+-----------+------------------+

@@ -25,6 +25,31 @@ func TestCoreSizes(t *testing.T) {
 	}
 }
 
+func TestMagicAndVersion(t *testing.T) {
+	// Magic must be exactly 8 bytes.
+	if MagicSize != 8 {
+		t.Errorf("MagicSize must be 8, got %d", MagicSize)
+	}
+	if len(Magic) != MagicSize {
+		t.Errorf("len(Magic) must equal MagicSize (%d), got %d", MagicSize, len(Magic))
+	}
+
+	// First byte must be 0xC1 to match the 0xC1PHRF0RGE signature.
+	if Magic[0] != 0xC1 {
+		t.Errorf("Magic[0] must be 0xC1, got 0x%02X", Magic[0])
+	}
+
+	// Version field is 4 bytes.
+	if VersionSize != 4 {
+		t.Errorf("VersionSize must be 4, got %d", VersionSize)
+	}
+
+	// Initial format version must be 1.
+	if FileVersion != 1 {
+		t.Errorf("FileVersion must be 1, got %d", FileVersion)
+	}
+}
+
 func TestPasswordConfig(t *testing.T) {
 	if PasswordLength < 52 {
 		t.Errorf("PasswordLength too small for full entropy, got %d", PasswordLength)
@@ -49,11 +74,11 @@ func TestFileExtension(t *testing.T) {
 }
 
 func TestArgon2Params(t *testing.T) {
-	if Argon2Time < 3 {
+	if Argon2Time < 4 {
 		t.Errorf("Argon2Time too low, got %d", Argon2Time)
 	}
 
-	if Argon2Memory < 256*1024 {
+	if Argon2Memory < 1024*1024 {
 		t.Errorf("Argon2Memory too low, got %d", Argon2Memory)
 	}
 

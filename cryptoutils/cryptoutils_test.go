@@ -2,10 +2,22 @@ package cryptoutils
 
 import (
 	"bytes"
+	"os"
 	"testing"
 
 	"github.com/vilshansen/cipherforge-go/constants"
 )
+
+// TestMain sets minimal Argon2id parameters for the entire test binary.
+// The production defaults (t=4, m=1GiB) allocate 1 GiB per DeriveKeys call,
+// which causes the test suite to stall and be OOM-killed. These values still
+// exercise the full Argon2id code path; they are just not hardened.
+func TestMain(m *testing.M) {
+	constants.Argon2Time = 1
+	constants.Argon2Memory = 64 * 1024 // 64 MiB
+	constants.Argon2Threads = 1
+	os.Exit(m.Run())
+}
 
 func TestDeriveKey(t *testing.T) {
 	tests := []struct {
@@ -496,6 +508,56 @@ func TestZeroBytes(t *testing.T) {
 		// Verify elements outside the slice are unchanged
 		if arr[0] != 1 || arr[1] != 2 || arr[8] != 9 || arr[9] != 10 {
 			t.Error("ZeroBytes modified elements outside the slice range")
+		}
+	})
+}
+
+// TestMlockBytes verifies that MlockBytes does not panic on various inputs.
+// Whether mlock(2) actually succeeds is environment-dependent (e.g. it may
+// fail silently inside containers with a low RLIMIT_MEMLOCK), so we only
+// assert that the call is safe to make, not that the pages are guaranteed
+// to be pinned.
+func TestMlockBytes(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{
+			name: "nil slice",
+			data: nil,
+		},
+		{
+			name: "empty slice",
+			data: []byte{},
+		},
+		{
+			name: "32-byte key-sized slice",
+			data: make([]byte, 32),
+		},
+		{
+			name: "large slice",
+			data: make([]byte, 4096),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("MlockBytes panicked: %v", r)
+				}
+			}()
+			MlockBytes(tt.data)
+		})
+	}
+
+	// Verify mlock does not disturb the slice contents.
+	t.Run("contents preserved", func(t *testing.T) {
+		data := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+		MlockBytes(data)
+		expected := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+		if !bytes.Equal(data, expected) {
+			t.Errorf("MlockBytes modified slice contents: got %v, want %v", data, expected)
 		}
 	})
 }
