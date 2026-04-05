@@ -22,6 +22,63 @@ DIST_DIR=dist
 
 echo "Building version ${VERSION}, commit: ${GIT_COMMIT}"
 
+# Run tests before building
+echo "======================================================"
+echo "Running unit tests..."
+echo "======================================================"
+
+# Run all tests but don't fail on packages without tests
+# Use a more robust approach: run tests and check if any actual test failures occurred
+go test -race -cover -v ./... 2>&1 | tee test_output.log
+
+# Check for test failures (but ignore "no test files" messages)
+if grep -q "^--- FAIL:" test_output.log; then
+    echo "======================================================"
+    echo "ERROR: Unit tests failed! Build aborted."
+    echo "======================================================"
+    cat test_output.log
+    rm test_output.log
+    exit 1
+fi
+
+# Also check for panic
+if grep -q "panic:" test_output.log; then
+    echo "======================================================"
+    echo "ERROR: Test panic detected! Build aborted."
+    echo "======================================================"
+    cat test_output.log
+    rm test_output.log
+    exit 1
+fi
+
+echo "======================================================"
+echo "Unit tests passed successfully!"
+echo "======================================================"
+rm test_output.log
+
+# Run test script if it exists
+if [ -f "test/test.sh" ]; then
+    cd test
+    echo "Running integration tests from test/test.sh..."
+    echo "======================================================"
+    
+    chmod +x test.sh
+    ./test.sh || {
+        echo "======================================================"
+        echo "ERROR: Integration tests failed! Build aborted."
+        echo "======================================================"
+        exit 1
+    }
+    
+    echo "======================================================"
+    echo "Integration tests passed successfully!"
+    echo "======================================================"
+    cd ..
+else
+    echo "Warning: test/test.sh not found, skipping integration tests"
+    echo "======================================================"
+fi
+
 echo "Starting cross-compilation of ${SOURCE_FILE}..."
 echo "Total targets: ${#PLATFORMS[@]}"
 echo "------------------------------------------------------"
