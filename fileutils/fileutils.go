@@ -1,6 +1,7 @@
 package fileutils
 
 import (
+	"bufio"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -101,20 +102,10 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 		return fmt.Errorf("error generating salt: %w", err)
 	}
 
-	// Write salt first for key derivation.
-	if _, err := outFile.Write(salt); err != nil {
-		return fmt.Errorf("error writing salt header: %w", err)
-	}
-
 	// Generate a Master Nonce for this file.
 	masterNonce, err := cryptoutils.GenerateNonce()
 	if err != nil {
 		return fmt.Errorf("error generating master nonce: %w", err)
-	}
-
-	// Write the Master Nonce to the file header.
-	if _, err := outFile.Write(masterNonce); err != nil {
-		return fmt.Errorf("error writing nonce header: %w", err)
 	}
 
 	// Derive both keys from a single Argon2id invocation:
@@ -129,60 +120,92 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 		return fmt.Errorf("unable to initialise XChaCha20-Poly1305: %w", err)
 	}
 
+	// Wrap both files in bufio to reduce syscall overhead. The buffer is sized
+	// to one full segment plus framing so a typical iteration is one read and
+	// one write syscall.
+	bufIn := bufio.NewReaderSize(inFile, constants.SegmentSize)
+	bufOut := bufio.NewWriterSize(outFile, constants.SegmentSize+aead.Overhead()+8)
+	// Flush must happen before the deferred outFile.Close().
+	defer bufOut.Flush()
+
+	// Write salt and master nonce into the file header.
+	if _, err := bufOut.Write(salt); err != nil {
+		return fmt.Errorf("error writing salt header: %w", err)
+	}
+	if _, err := bufOut.Write(masterNonce); err != nil {
+		return fmt.Errorf("error writing nonce header: %w", err)
+	}
+
 	fileInfo, _ := inFile.Stat()
 	totalBytes := fileInfo.Size()
 	prefix := fmt.Sprintf("Encrypting %s", filepath.Base(inputFile))
 
+	// Reusable buffers: hoisted outside the loop to avoid per-segment allocation.
 	plaintextBuf := make([]byte, constants.SegmentSize)
-	var segmentCounter uint64
+	ciphertextBuf := make([]byte, 0, constants.SegmentSize+aead.Overhead())
+	aad := make([]byte, 16)
+	var lenBuf [8]byte
+
+	var segmentCount uint64
 	var bytesDone int64
 
 	for {
-		n, readErr := inFile.Read(plaintextBuf)
-		if n == 0 {
-			break
+		// io.ReadFull guarantees a full SegmentSize read or a clean short read
+		// on the final segment (io.ErrUnexpectedEOF). A plain Read may return
+		// fewer bytes than requested even mid-file, which would silently produce
+		// undersized segments.
+		n, err := io.ReadFull(bufIn, plaintextBuf)
+		if n > 0 {
+			// Derive a unique nonce for this segment via HKDF-SHA256(ikm=masterNonce, info=counter).
+			// This is a one-way derivation: no identity-at-zero, no linear structure.
+			nonce, nonceErr := deriveSegmentNonce(masterNonce, segmentCount)
+			if nonceErr != nil {
+				return fmt.Errorf("error deriving segment nonce: %w", nonceErr)
+			}
+
+			// AAD binds the segment index and the plaintext length to the ciphertext.
+			// Storing the plaintext length explicitly (rather than computing it from
+			// len(ciphertext)-Overhead() during decryption) makes the AAD self-contained
+			// and robust to future changes in the AEAD implementation.
+			binary.BigEndian.PutUint64(aad[:8], segmentCount)
+			binary.BigEndian.PutUint64(aad[8:], uint64(n))
+
+			ciphertextBuf = aead.Seal(ciphertextBuf[:0], nonce, plaintextBuf[:n], aad)
+
+			// Write Segment Structure: [Length (8B)][Ciphertext + Tag]
+			binary.BigEndian.PutUint64(lenBuf[:], uint64(len(ciphertextBuf)))
+			if _, err := bufOut.Write(lenBuf[:]); err != nil {
+				return fmt.Errorf("error writing segment length: %w", err)
+			}
+			if _, err := bufOut.Write(ciphertextBuf); err != nil {
+				return fmt.Errorf("error writing ciphertext: %w", err)
+			}
+
+			segmentCount++
+			bytesDone += int64(n)
+			if totalBytes > 0 {
+				cryptoutils.RunProgressBar(prefix, int((bytesDone*100)/totalBytes))
+			}
 		}
 
-		// Derive a unique nonce for this segment via HKDF-SHA256(ikm=masterNonce, info=counter).
-		// This is a one-way derivation: no identity-at-zero, no linear structure.
-		nonce, err := deriveSegmentNonce(masterNonce, segmentCounter)
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			// io.EOF: zero bytes read, clean end of file.
+			// io.ErrUnexpectedEOF: partial final segment, already processed above.
+			break
+		}
 		if err != nil {
-			return fmt.Errorf("error deriving segment nonce: %w", err)
-		}
-
-		// AAD binds the segment index and the plaintext length to the ciphertext.
-		// Storing the plaintext length explicitly (rather than computing it from
-		// len(ciphertext)-Overhead() during decryption) makes the AAD self-contained
-		// and robust to future changes in the AEAD implementation.
-		aad := make([]byte, 16)
-		binary.BigEndian.PutUint64(aad[:8], segmentCounter)
-		binary.BigEndian.PutUint64(aad[8:], uint64(n)) // plaintext segment length
-
-		ciphertext := aead.Seal(nil, nonce, plaintextBuf[:n], aad)
-
-		// Write Segment Structure: [Length (8B)][Ciphertext + Tag]
-		if err := binary.Write(outFile, binary.BigEndian, uint64(len(ciphertext))); err != nil {
-			return fmt.Errorf("error writing segment length: %w", err)
-		}
-		if _, err := outFile.Write(ciphertext); err != nil {
-			return fmt.Errorf("error writing ciphertext: %w", err)
-		}
-
-		segmentCounter++
-		bytesDone += int64(n)
-
-		if totalBytes > 0 {
-			cryptoutils.RunProgressBar(prefix, int((bytesDone*100)/totalBytes))
-		}
-
-		if readErr == io.EOF {
-			break
+			return fmt.Errorf("error reading input: %w", err)
 		}
 	}
 
-	// Write the file trailer: HMAC-SHA256(macKey, salt || masterNonce || segmentCount).
+	// Write the file trailer: segmentCount (8B) || HMAC-SHA256(macKey, salt ||
+	// masterNonce || segmentCount).
 	//
-	// This authenticates the header fields and the total number of segments,
+	// Storing segmentCount explicitly in the trailer eliminates the need for a
+	// pre-decryption scanning pass: the decoder reads the count directly,
+	// verifies the HMAC, and proceeds in a single sequential pass.
+	//
+	// The HMAC authenticates the header fields and the total number of segments,
 	// preventing three attacks that per-segment AEAD alone cannot stop:
 	//   1. Header substitution: swapping the salt or master nonce from another
 	//      file encrypted with the same password would cause silent decryption
@@ -195,11 +218,16 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	//
 	// The macKey is independent of encKey (derived from Argon2id bytes 32–63),
 	// so compromising one key does not compromise the other.
-	trailer, err := computeTrailerHMAC(macKey, salt, masterNonce, segmentCounter)
+	binary.BigEndian.PutUint64(lenBuf[:], segmentCount)
+	if _, err := bufOut.Write(lenBuf[:]); err != nil {
+		return fmt.Errorf("error writing segment count: %w", err)
+	}
+
+	trailer, err := computeTrailerHMAC(macKey, salt, masterNonce, segmentCount)
 	if err != nil {
 		return fmt.Errorf("error computing trailer HMAC: %w", err)
 	}
-	if _, err := outFile.Write(trailer); err != nil {
+	if _, err := bufOut.Write(trailer); err != nil {
 		return fmt.Errorf("error writing trailer: %w", err)
 	}
 
@@ -260,9 +288,10 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 	// 3. Verify the file trailer BEFORE decrypting any segment.
 	//
 	// The trailer is the last TrailerSize bytes of the file. It contains
-	// HMAC-SHA256(macKey, salt || masterNonce || segmentCount). Verifying it
-	// here provides file-level authentication that covers the header fields
-	// and segment count, which per-segment AEAD alone cannot protect:
+	// segmentCount (8B) || HMAC-SHA256(macKey, salt || masterNonce ||
+	// segmentCount). Verifying it here provides file-level authentication
+	// that covers the header fields and segment count, which per-segment
+	// AEAD alone cannot protect:
 	//   - A wrong password will produce a wrong macKey, failing immediately
 	//     here rather than after streaming the entire payload.
 	//   - Header substitution, file truncation, and segment appending are all
@@ -274,115 +303,91 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		return fmt.Errorf("file too small to be a valid .cfo file")
 	}
 
-	// Read the trailer from the end of the file.
+	// Read the trailer from the end of the file using ReadAt so we do not
+	// disturb the sequential read position.
 	trailerOffset := totalFileSize - int64(constants.TrailerSize)
-	storedTrailer := make([]byte, constants.TrailerSize)
-	if _, err := inFile.ReadAt(storedTrailer, trailerOffset); err != nil {
+	trailerBuf := make([]byte, constants.TrailerSize)
+	if _, err := inFile.ReadAt(trailerBuf, trailerOffset); err != nil {
 		return fmt.Errorf("error reading trailer: %w", err)
 	}
 
-	// The segment count is embedded in the last 8 bytes of the HMAC input,
-	// but we don't know it yet — we need to count segments to verify. Instead
-	// we stream the payload region once to count segments, verify the HMAC,
-	// then seek back to decrypt. This is a single extra linear pass with no
-	// additional memory beyond what we already use per segment.
-	payloadSize := trailerOffset - int64(constants.SaltSize+constants.XNonceSize)
-	var segmentCount uint64
-	var scanned int64
-	scanBuf := make([]byte, 8)
-
-	for scanned < payloadSize {
-		if _, err := io.ReadFull(inFile, scanBuf); err != nil {
-			return fmt.Errorf("error scanning segment lengths: %w", err)
-		}
-		scanned += 8
-		segLen := binary.BigEndian.Uint64(scanBuf)
-
-		maxAllowed := uint64(constants.SegmentSize + aead.Overhead())
-		if segLen > maxAllowed {
-			return fmt.Errorf("security error: segment size %d exceeds limit", segLen)
-		}
-
-		// Skip the ciphertext bytes without reading them into memory.
-		if _, err := inFile.Seek(int64(segLen), io.SeekCurrent); err != nil {
-			return fmt.Errorf("error seeking past segment: %w", err)
-		}
-		scanned += int64(segLen)
-		segmentCount++
-	}
+	// TrailerSize = 8 (segmentCount) + HMACSize (32). Parse them out.
+	segmentCount := binary.BigEndian.Uint64(trailerBuf[:8])
+	storedHMAC := trailerBuf[8:]
 
 	// Compute the expected HMAC and compare in constant time.
-	expectedTrailer, err := computeTrailerHMAC(macKey, salt, masterNonce, segmentCount)
+	expectedHMAC, err := computeTrailerHMAC(macKey, salt, masterNonce, segmentCount)
 	if err != nil {
 		return fmt.Errorf("error computing trailer HMAC: %w", err)
 	}
-	if !hmac.Equal(storedTrailer, expectedTrailer) {
+	if !hmac.Equal(storedHMAC, expectedHMAC) {
 		return fmt.Errorf("authentication failed: file has been tampered with or wrong password")
 	}
 
-	// 4. Trailer verified. Seek back to the start of the payload and decrypt.
-	payloadStart := int64(constants.SaltSize + constants.XNonceSize)
-	if _, err := inFile.Seek(payloadStart, io.SeekStart); err != nil {
-		return fmt.Errorf("error seeking to payload: %w", err)
-	}
+	// 4. Trailer verified. Proceed with a single sequential decryption pass.
+	// Wrap both files in bufio; inFile is already positioned just past the
+	// header from the ReadFull calls above.
+	bufIn := bufio.NewReaderSize(inFile, constants.SegmentSize+aead.Overhead()+8)
+	bufOut := bufio.NewWriterSize(outFile, constants.SegmentSize)
+	defer bufOut.Flush()
 
 	prefix := fmt.Sprintf("Decrypting %s", filepath.Base(inputFile))
-	var segmentCounter uint64
 	var bytesRead uint64
 	bytesRead += uint64(constants.SaltSize + constants.XNonceSize)
 	totalBytes := uint64(totalFileSize)
 
+	// Reusable buffers: hoisted outside the loop to avoid per-segment allocation.
+	ciphertextBuf := make([]byte, constants.SegmentSize+aead.Overhead())
 	sizeBuf := make([]byte, 8)
+	aad := make([]byte, 16)
 
-	for segmentCounter < segmentCount {
-		// 5. Read segment length
-		if _, err := io.ReadFull(inFile, sizeBuf); err != nil {
+	for i := uint64(0); i < segmentCount; i++ {
+		// 5. Read segment length.
+		if _, err := io.ReadFull(bufIn, sizeBuf); err != nil {
 			return fmt.Errorf("error reading segment length: %w", err)
 		}
 		bytesRead += 8
 
 		segmentLen := binary.BigEndian.Uint64(sizeBuf)
 
-		// Bounds check is repeated here even though the scan pass already
-		// validated lengths, because seek-based scan and sequential read must
-		// agree — a TOCTOU on a local file is not a realistic threat but being
-		// explicit costs nothing.
-		maxAllowed := uint64(constants.SegmentSize + aead.Overhead())
-		if segmentLen > maxAllowed {
+		// OOM guard: reject any segment length that exceeds the maximum
+		// possible ciphertext size (plaintext SegmentSize + AEAD overhead).
+		if segmentLen > uint64(constants.SegmentSize+aead.Overhead()) {
 			return fmt.Errorf("security error: segment size %d exceeds limit", segmentLen)
 		}
 
-		ciphertext := make([]byte, segmentLen)
-		if _, err := io.ReadFull(inFile, ciphertext); err != nil {
+		// Read directly into the pre-allocated buffer, avoiding a per-segment
+		// heap allocation.
+		if _, err := io.ReadFull(bufIn, ciphertextBuf[:segmentLen]); err != nil {
 			return fmt.Errorf("error reading ciphertext: %w", err)
 		}
 		bytesRead += segmentLen
 
 		// 6. Derive unique nonce for this segment — must mirror the encryption path.
-		nonce, err := deriveSegmentNonce(masterNonce, segmentCounter)
+		nonce, err := deriveSegmentNonce(masterNonce, i)
 		if err != nil {
 			return fmt.Errorf("error deriving segment nonce: %w", err)
 		}
 
 		// 7. Reconstruct AAD for authentication.
-		plaintextLen := uint64(len(ciphertext)) - uint64(aead.Overhead())
-		aad := make([]byte, 16)
-		binary.BigEndian.PutUint64(aad[:8], segmentCounter)
+		plaintextLen := segmentLen - uint64(aead.Overhead())
+		binary.BigEndian.PutUint64(aad[:8], i)
 		binary.BigEndian.PutUint64(aad[8:], plaintextLen)
 
-		plaintextSegment, err := aead.Open(nil, nonce, ciphertext, aad)
+		// Decrypt in-place: Open writes plaintext back into ciphertextBuf,
+		// which is safe because ciphertextBuf is at least SegmentSize bytes.
+		plaintextSegment, err := aead.Open(ciphertextBuf[:0], nonce, ciphertextBuf[:segmentLen], aad)
 		if err != nil {
 			// This should not be reachable given the trailer HMAC already passed,
 			// but is retained as a defence-in-depth layer.
-			return fmt.Errorf("authentication failed: segment %d rejected", segmentCounter)
+			return fmt.Errorf("authentication failed: segment %d rejected", i)
 		}
 
-		if _, err := outFile.Write(plaintextSegment); err != nil {
+		if _, err := bufOut.Write(plaintextSegment); err != nil {
 			return fmt.Errorf("error writing plaintext: %w", err)
 		}
 
-		segmentCounter++
-
+		bytesRead += uint64(len(plaintextSegment))
 		if totalBytes > 0 {
 			cryptoutils.RunProgressBar(prefix, int((bytesRead*100)/totalBytes))
 		}
