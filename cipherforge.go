@@ -111,8 +111,6 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 		}
 		if operation == "encrypt" {
 			fmt.Printf("Using supplied password for encryption.\n")
-		} else {
-    		fmt.Printf("Using supplied password for decryption.\n")
 		}
 		return userPassword, nil
 	}
@@ -159,6 +157,13 @@ func resolvePasswordInteractive(operation string) ([]byte, error) {
 			if len(p1) == 0 {
 				fmt.Fprintln(os.Stderr, "Error: Password cannot be empty. Please try again.")
 				continue
+			}
+
+			// Skip confirmation when stdin is not a terminal (e.g. piped input
+			// in scripts or tests): there is no risk of a typo and the pipe
+			// would be exhausted by the second read anyway.
+			if !term.IsTerminal(int(syscall.Stdin)) {
+				return p1, nil
 			}
 
 			p2, err := readPasswordStarred("Confirm password: ")
@@ -214,6 +219,13 @@ func readPasswordFromTerminal(prompt string) ([]byte, error) {
 	line, err := reader.ReadBytes('\n')
 	if err != nil && err != io.EOF {
 		return nil, err
+	}
+
+	// If EOF arrived with no data the pipe/stdin is exhausted; returning an
+	// empty slice would cause callers with retry loops to block forever on
+	// the next read, so we surface it as an explicit error instead.
+	if err == io.EOF && len(line) == 0 {
+		return nil, fmt.Errorf("unexpected end of input")
 	}
 
 	// Trim newline characters (\n or \r\n) from the byte slice
