@@ -146,17 +146,37 @@ OPTIONS
 
   -e <path>    Encrypt a file or a pattern of files (e.g., "data/*.txt").
   -d <path>    Decrypt a .cfo file or a pattern of .cfo files.
+  -p [value]   Supply a password instead of using the auto-generated one.
+               If a value is given on the command line (e.g., -p mypass),
+               it is used directly. If omitted, an interactive prompt is
+               shown; input is masked with '*' characters and, for
+               encryption, the password must be entered twice to confirm.
+               WARNING: passing the password on the command line may expose
+               it via shell history or process listings. Prefer the
+               interactive form for sensitive use.
 
 EXAMPLES
 
-  Encrypt a single file:
+  Encrypt a single file (auto-generated password):
     cipherforge -e document.pdf
+
+  Encrypt with an interactively entered password (starred input, confirmed):
+    cipherforge -e document.pdf -p
+
+  Encrypt with a password supplied directly on the command line:
+    cipherforge -e document.pdf -p "my-passphrase"
 
   Encrypt all jpg files in a folder:
     cipherforge -e "images/*.jpg"
 
-  Decrypt an encrypted file:
+  Decrypt an encrypted file (silent password prompt):
     cipherforge -d document.pdf.cfo
+
+  Decrypt with an interactively entered password (starred input):
+    cipherforge -d document.pdf.cfo -p
+
+  Decrypt with a password supplied directly on the command line:
+    cipherforge -d document.pdf.cfo -p "my-passphrase"
 
 ENCRYPTION PROCESS
 

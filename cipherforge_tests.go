@@ -103,7 +103,7 @@ func TestGetParameters(t *testing.T) {
 			defer func() { os.Args = originalArgs }()
 			os.Args = append([]string{"cipherforge"}, tt.args...)
 
-			op, inputs, err := getParameters()
+			op, inputs, _, err := getParameters()
 
 			if tt.expectError {
 				if err == nil {
@@ -136,63 +136,92 @@ func TestGetParameters(t *testing.T) {
 	}
 }
 
-func TestResolvePassword(t *testing.T) {
+func TestGetParametersPasswordFlag(t *testing.T) {
 	tests := []struct {
-		name        string
-		operation   string
-		setupStdin  func() (*os.File, error)
-		expectError bool
-		errContains string
-		checkLength int
+		name             string
+		args             []string
+		// stdin is only used when -p is given without an inline value; in tests
+		// stdin is always a pipe (non-terminal), so readPasswordStarred falls
+		// back to the silent readPasswordFromTerminal path automatically.
+		stdinInput       string
+		expectedOp       string
+		expectedPassword string // empty means nil expected
+		expectError      bool
+		errContains      string
 	}{
 		{
-			name:        "encrypt generates password",
-			operation:   "encrypt",
-			expectError: false,
-			checkLength: constants.PasswordLength,
+			name:             "encrypt with inline password",
+			args:             []string{"-e", "file.txt", "-p", "mypassword"},
+			expectedOp:       "encrypt",
+			expectedPassword: "mypassword",
 		},
 		{
-			name:        "decrypt with valid password from terminal",
-			operation:   "decrypt",
-			setupStdin:  func() (*os.File, error) { return createStdinPipe("test-password\n") },
-			expectError: false,
+			name:             "decrypt with inline password",
+			args:             []string{"-d", "file.cfo", "-p", "mypassword"},
+			expectedOp:       "decrypt",
+			expectedPassword: "mypassword",
 		},
 		{
-			name:        "decrypt with empty password retry",
-			operation:   "decrypt",
-			setupStdin:  func() (*os.File, error) { return createStdinPipe("\ntest-password\n") },
-			expectError: false,
+			name:             "-p before -e",
+			args:             []string{"-p", "mypassword", "-e", "file.txt"},
+			expectedOp:       "encrypt",
+			expectedPassword: "mypassword",
 		},
 		{
-			name:        "decrypt with multiple empty passwords",
-			operation:   "decrypt",
-			setupStdin:  func() (*os.File, error) { return createStdinPipe("\n\n\ntest-password\n") },
-			expectError: false,
+			name:             "-p before -d",
+			args:             []string{"-p", "mypassword", "-d", "file.cfo"},
+			expectedOp:       "decrypt",
+			expectedPassword: "mypassword",
 		},
 		{
-			name:        "invalid operation",
-			operation:   "invalid",
+			name:             "encrypt with -p no inline value uses stdin",
+			args:             []string{"-e", "file.txt", "-p"},
+			// Non-terminal stdin: resolvePasswordInteractive falls back to
+			// silent read. For encrypt it reads twice; both reads see the same
+			// pipe content so they match.
+			stdinInput:       "piped-password\npiped-password\n",
+			expectedOp:       "encrypt",
+			expectedPassword: "piped-password",
+		},
+		{
+			name:             "decrypt with -p no inline value uses stdin",
+			args:             []string{"-d", "file.cfo", "-p"},
+			stdinInput:       "piped-password\n",
+			expectedOp:       "decrypt",
+			expectedPassword: "piped-password",
+		},
+		{
+			name:        "-p specified twice",
+			args:        []string{"-e", "file.txt", "-p", "pass1", "-p", "pass2"},
 			expectError: true,
-			errContains: "internal error",
+			errContains: "-p may only be specified once",
+		},
+		{
+			name:        "no files with -p",
+			args:        []string{"-p", "mypassword"},
+			expectError: true,
+			errContains: "exactly one flag",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.setupStdin != nil {
-				stdin, err := tt.setupStdin()
+			originalArgs := os.Args
+			defer func() { os.Args = originalArgs }()
+			os.Args = append([]string{"cipherforge"}, tt.args...)
+
+			if tt.stdinInput != "" {
+				stdin, err := createStdinPipe(tt.stdinInput)
 				if err != nil {
 					t.Fatalf("Failed to setup stdin: %v", err)
 				}
 				defer stdin.Close()
-
-				// Save original stdin and restore
 				oldStdin := os.Stdin
 				defer func() { os.Stdin = oldStdin }()
 				os.Stdin = stdin
 			}
 
-			password, err := resolvePassword(tt.operation)
+			op, _, password, err := getParameters()
 
 			if tt.expectError {
 				if err == nil {
@@ -208,17 +237,137 @@ func TestResolvePassword(t *testing.T) {
 				return
 			}
 
-			if tt.operation == "encrypt" {
+			if op != tt.expectedOp {
+				t.Errorf("Operation = %q, want %q", op, tt.expectedOp)
+			}
+
+			if tt.expectedPassword == "" {
+				if password != nil {
+					t.Errorf("Expected nil password, got %q", password)
+				}
+			} else {
+				if string(password) != tt.expectedPassword {
+					t.Errorf("Password = %q, want %q", password, tt.expectedPassword)
+				}
+			}
+		})
+	}
+}
+
+func TestResolvePassword(t *testing.T) {
+	tests := []struct {
+		name         string
+		operation    string
+		userPassword []byte // nil = not supplied via -p
+		setupStdin   func() (*os.File, error)
+		expectError  bool
+		errContains  string
+		checkLength  int
+		expectedPW   string // non-empty = exact match expected
+	}{
+		{
+			name:        "encrypt generates password when none supplied",
+			operation:   "encrypt",
+			userPassword: nil,
+			expectError: false,
+			checkLength: constants.PasswordLength,
+		},
+		{
+			name:         "encrypt uses supplied password",
+			operation:    "encrypt",
+			userPassword: []byte("my-supplied-password"),
+			expectedPW:   "my-supplied-password",
+		},
+		{
+			name:         "decrypt uses supplied password",
+			operation:    "decrypt",
+			userPassword: []byte("my-supplied-password"),
+			expectedPW:   "my-supplied-password",
+		},
+		{
+			name:         "empty supplied password is rejected",
+			operation:    "encrypt",
+			userPassword: []byte(""),
+			expectError:  true,
+			errContains:  "must not be empty",
+		},
+		{
+			name:        "decrypt with valid password from terminal",
+			operation:   "decrypt",
+			userPassword: nil,
+			setupStdin:  func() (*os.File, error) { return createStdinPipe("test-password\n") },
+			expectError: false,
+		},
+		{
+			name:        "decrypt with empty password retry",
+			operation:   "decrypt",
+			userPassword: nil,
+			setupStdin:  func() (*os.File, error) { return createStdinPipe("\ntest-password\n") },
+			expectError: false,
+		},
+		{
+			name:        "decrypt with multiple empty passwords",
+			operation:   "decrypt",
+			userPassword: nil,
+			setupStdin:  func() (*os.File, error) { return createStdinPipe("\n\n\ntest-password\n") },
+			expectError: false,
+		},
+		{
+			name:        "invalid operation",
+			operation:   "invalid",
+			userPassword: nil,
+			expectError: true,
+			errContains: "internal error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.setupStdin != nil {
+				stdin, err := tt.setupStdin()
+				if err != nil {
+					t.Fatalf("Failed to setup stdin: %v", err)
+				}
+				defer stdin.Close()
+
+				oldStdin := os.Stdin
+				defer func() { os.Stdin = oldStdin }()
+				os.Stdin = stdin
+			}
+
+			password, err := resolvePassword(tt.operation, tt.userPassword)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				} else if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("Error %q should contain %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if tt.expectedPW != "" {
+				if string(password) != tt.expectedPW {
+					t.Errorf("Password = %q, want %q", password, tt.expectedPW)
+				}
+				return
+			}
+
+			if tt.operation == "encrypt" && tt.userPassword == nil {
 				if len(password) != tt.checkLength {
 					t.Errorf("Generated password length = %d, want %d", len(password), tt.checkLength)
 				}
-				// Password should contain hyphens at correct positions
 				hyphenCount := strings.Count(string(password), "-")
 				expectedHyphens := len(password) / 6 // 5 chars + 1 hyphen
 				if hyphenCount != expectedHyphens && expectedHyphens > 0 {
 					t.Errorf("Password has %d hyphens, expected around %d", hyphenCount, expectedHyphens)
 				}
-			} else if tt.operation == "decrypt" {
+			} else if tt.operation == "decrypt" && tt.userPassword == nil {
 				if len(password) == 0 {
 					t.Error("Decrypt password should not be empty")
 				}
@@ -537,8 +686,8 @@ func TestDecryptWithoutExtension(t *testing.T) {
 }
 
 func TestPasswordGeneration(t *testing.T) {
-	// We test the resolution logic in main package
-	pass, err := resolvePassword("encrypt")
+	// nil userPassword → auto-generate path
+	pass, err := resolvePassword("encrypt", nil)
 	if err != nil || len(pass) == 0 {
 		t.Errorf("Failed to generate secure password during encryption path")
 	}
@@ -577,7 +726,7 @@ func TestResolvePasswordEncryptError(t *testing.T) {
 	// Test that GenerateSecurePassword errors are propagated
 	// This is hard to mock directly, but we can test the error path
 	// by making the password length invalid (though GenerateSecurePassword validates)
-	_, err := resolvePassword("encrypt")
+	_, err := resolvePassword("encrypt", nil)
 	if err != nil {
 		// This might fail if GenerateSecurePassword has issues, but normally shouldn't
 		t.Logf("Encrypt password generation note: %v", err)
@@ -644,10 +793,155 @@ func TestMainPanicRecovery(t *testing.T) {
 	}
 }
 
+func TestResolvePasswordInteractive(t *testing.T) {
+	// All sub-tests pipe stdin, so term.IsTerminal returns false and
+	// readPasswordStarred falls back to the silent readPasswordFromTerminal path.
+	// This lets us exercise the full resolvePasswordInteractive logic without
+	// a real TTY.
+	tests := []struct {
+		name        string
+		operation   string
+		stdinInput  string
+		expectError bool
+		errContains string
+		expectedPW  string
+	}{
+		{
+			name:        "encrypt: matching passwords accepted",
+			operation:   "encrypt",
+			stdinInput:  "correct-pass\ncorrect-pass\n",
+			expectedPW:  "correct-pass",
+		},
+		{
+			name:       "encrypt: mismatched first attempt, then matching",
+			operation:  "encrypt",
+			// First pair mismatches; second pair matches.
+			stdinInput: "pass-a\npass-b\npass-c\npass-c\n",
+			expectedPW: "pass-c",
+		},
+		{
+			name:       "encrypt: empty first attempt, then valid matching",
+			operation:  "encrypt",
+			stdinInput: "\n\nvalid-pass\nvalid-pass\n",
+			expectedPW: "valid-pass",
+		},
+		{
+			name:        "decrypt: valid password accepted",
+			operation:   "decrypt",
+			stdinInput:  "decrypt-pass\n",
+			expectedPW:  "decrypt-pass",
+		},
+		{
+			name:       "decrypt: empty first attempt, then valid",
+			operation:  "decrypt",
+			stdinInput: "\ndecrypt-pass\n",
+			expectedPW: "decrypt-pass",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdin, err := createStdinPipe(tt.stdinInput)
+			if err != nil {
+				t.Fatalf("Failed to setup stdin: %v", err)
+			}
+			defer stdin.Close()
+
+			oldStdin := os.Stdin
+			defer func() { os.Stdin = oldStdin }()
+			os.Stdin = stdin
+
+			password, err := resolvePasswordInteractive(tt.operation)
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				} else if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("Error %q should contain %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if string(password) != tt.expectedPW {
+				t.Errorf("Password = %q, want %q", password, tt.expectedPW)
+			}
+		})
+	}
+}
+
+func TestReadPasswordStarred(t *testing.T) {
+	// readPasswordStarred falls back to the silent readPasswordFromTerminal
+	// path when stdin is not a terminal, so we can test it via pipes.
+	tests := []struct {
+		name        string
+		stdinInput  string
+		expectedPW  string
+		expectError bool
+	}{
+		{
+			name:       "normal password",
+			stdinInput: "secret123\n",
+			expectedPW: "secret123",
+		},
+		{
+			name:       "password with spaces",
+			stdinInput: "my secret pass\n",
+			expectedPW: "my secret pass",
+		},
+		{
+			name:       "empty password",
+			stdinInput: "\n",
+			expectedPW: "",
+		},
+		{
+			name:       "password with carriage return",
+			stdinInput: "password\r\n",
+			expectedPW: "password",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdin, err := createStdinPipe(tt.stdinInput)
+			if err != nil {
+				t.Fatalf("Failed to setup stdin: %v", err)
+			}
+			defer stdin.Close()
+
+			oldStdin := os.Stdin
+			defer func() { os.Stdin = oldStdin }()
+			os.Stdin = stdin
+
+			password, err := readPasswordStarred("Prompt: ")
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if string(password) != tt.expectedPW {
+				t.Errorf("Password = %q, want %q", password, tt.expectedPW)
+			}
+		})
+	}
+}
+
 // Benchmark tests
 func BenchmarkGetParameters(b *testing.B) {
 	args := []string{"-e", "file1.txt", "file2.txt", "file3.txt"}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		originalArgs := os.Args
@@ -659,6 +953,6 @@ func BenchmarkGetParameters(b *testing.B) {
 
 func BenchmarkResolvePasswordEncrypt(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		resolvePassword("encrypt")
+		resolvePassword("encrypt", nil)
 	}
 }
