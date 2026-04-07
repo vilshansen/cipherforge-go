@@ -129,8 +129,8 @@ func RunProgressBar(prefix string, percent int) {
 	// low-intensity ASCII bar: subtle but readable
 	bar := strings.Repeat("#", filled) + strings.Repeat(".", barWidth-filled)
 
-	// fixed-width percentage prevents jitter
-	fmt.Printf("\r%s... [%s] %3d%%", prefix, bar, percent)
+	// Fixed-width prefix column prevents the bar from jittering on long filenames.
+	fmt.Printf("\r%-40s [%s] %3d%%", prefix, bar, percent)
 }
 
 // ZeroBytes overwrites the given byte slice with zeros to mitigate cold-boot

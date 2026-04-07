@@ -46,7 +46,7 @@ func main() {
 	}
 
 	if len(inputFiles) == 0 {
-		fmt.Fprintf(os.Stderr, "No files found for: %v\n", inputPattern)
+		fmt.Fprintf(os.Stderr, "Error: no files matched: %v\n", inputPattern)
 		os.Exit(1)
 	}
 
@@ -124,7 +124,7 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 			return nil, err
 		}
 		// The only time the auto-generated password is shown in plaintext.
-		fmt.Printf("Your secure, auto-generated password used for encryption:\n%s\n", securePass)
+		fmt.Printf("Encryption password (save this — it cannot be recovered):\n%s\n", securePass)
 		return securePass, nil
 
 	case "decrypt":
@@ -268,7 +268,7 @@ func readPasswordStarred(prompt string) ([]byte, error) {
 		_, err := os.Stdin.Read(buf)
 		if err != nil {
 			cryptoutils.ZeroBytes(password)
-			return nil, fmt.Errorf("error reading input: %w", err)
+			return nil, fmt.Errorf("failed to read password input: %w", err)
 		}
 
 		b := buf[0]
@@ -284,7 +284,7 @@ func readPasswordStarred(prompt string) ([]byte, error) {
 			fmt.Print("\r\n")
 			cryptoutils.ZeroBytes(password)
 			// term.Restore is called via defer; print a newline for clarity.
-			return nil, fmt.Errorf("interrupted")
+			return nil, fmt.Errorf("cancelled by user")
 
 		case b == 127 || b == '\b':
 			// Backspace / DEL: remove the last character and erase the star.

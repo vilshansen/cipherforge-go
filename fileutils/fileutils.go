@@ -282,7 +282,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		return fmt.Errorf("error reading magic header: %w", err)
 	}
 	if string(magicBuf) != constants.Magic {
-		return fmt.Errorf("not a valid .cfo file: magic bytes do not match")
+		return fmt.Errorf("not a valid .cfo file")
 	}
 
 	// 2. Read and validate the format version.
@@ -353,7 +353,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		return fmt.Errorf("error computing trailer HMAC: %w", err)
 	}
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
-		return fmt.Errorf("authentication failed: file has been tampered with or wrong password")
+		return fmt.Errorf("authentication failed: wrong password or file is corrupt")
 	}
 
 	// 6. Trailer verified. Proceed with a single sequential decryption pass.
@@ -385,7 +385,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		// OOM guard: reject any segment length that exceeds the maximum
 		// possible ciphertext size (plaintext SegmentSize + AEAD overhead).
 		if segmentLen > uint64(constants.SegmentSize+aead.Overhead()) {
-			return fmt.Errorf("security error: segment size %d exceeds limit", segmentLen)
+			return fmt.Errorf("corrupt segment: length field exceeds maximum allowed size")
 		}
 
 		// Read directly into the pre-allocated buffer, avoiding a per-segment
@@ -412,7 +412,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 		if err != nil {
 			// This should not be reachable given the trailer HMAC already passed,
 			// but is retained as a defence-in-depth layer.
-			return fmt.Errorf("authentication failed: segment %d rejected", i)
+			return fmt.Errorf("authentication failed: wrong password or file is corrupt")
 		}
 
 		if _, err := bufOut.Write(plaintextSegment); err != nil {
@@ -452,7 +452,7 @@ func ExpandInputPaths(inputs []string, operation string) ([]string, error) {
 				} else {
 					// Warn rather than silently skip so the user knows the file
 					// was seen but excluded.
-					fmt.Fprintf(os.Stderr, "warning: skipping %q (wrong extension for %s)\n", input, operation)
+					fmt.Fprintf(os.Stderr, "warning: skipping %q — not a valid target for %s\n", input, operation)
 				}
 			}
 			continue
@@ -479,7 +479,7 @@ func ExpandInputPaths(inputs []string, operation string) ([]string, error) {
 				if (operation == "encrypt" && ext != ".cfo") || (operation == "decrypt" && ext == ".cfo") {
 					files = append(files, match)
 				} else {
-					fmt.Fprintf(os.Stderr, "warning: skipping %q (wrong extension for %s)\n", match, operation)
+					fmt.Fprintf(os.Stderr, "warning: skipping %q — not a valid target for %s\n", match, operation)
 				}
 			}
 		}
