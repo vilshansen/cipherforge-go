@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-
+	"math/big"
 	"github.com/vilshansen/cipherforge-go/constants"
 	"golang.org/x/crypto/argon2"
 )
@@ -71,41 +71,27 @@ func GenerateNonce() ([]byte, error) {
 }
 
 // GenerateSecurePassword generates a cryptographically secure, random password.
-// It uses rejection sampling to ensure every character in the pool has
-// a perfectly equal probability of being selected.
+// rand.Int uses rejection sampling internally to ensure every character in the 
+// pool has a perfectly equal probability of being selected.
 func GenerateSecurePassword(length int) ([]byte, error) {
 	if length <= 0 {
 		return nil, fmt.Errorf("length must be positive")
 	}
 
 	pool := constants.CharacterPool
-	poolLen := len(pool)
-
-	// Pre-allocate buffer to avoid repeated memory reallocations.
+	limit := big.NewInt(int64(len(pool)))
 	finalLen := length + length/5
 	password := make([]byte, 0, finalLen)
 
-	for i := 0; i < length; {
+	for i := 0; i < length; i++ {
 		if i > 0 && i%5 == 0 {
 			password = append(password, '-')
 		}
-
-		var b [1]byte
-		_, err := rand.Read(b[:])
+		n, err := rand.Int(rand.Reader, limit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read random byte: %w", err)
 		}
-
-		// Rejection Sampling to eliminate Modulo Bias:
-		// Simply using 'b[0] % poolLen' would favor characters at the start
-		// of the pool if 256 is not perfectly divisible by poolLen.
-		// We discard "leftover" values to maintain uniform distribution.
-		if int(b[0]) >= 256-(256%poolLen) {
-			continue
-		}
-
-		password = append(password, pool[b[0]%byte(poolLen)])
-		i++
+		password = append(password, pool[n.Int64()])
 	}
 
 	MlockBytes(password)

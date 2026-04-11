@@ -17,6 +17,64 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
+// writeUint64 encodes v as an 8-byte big-endian value and writes it to w.
+func writeUint64(w io.Writer, v uint64) error {
+	var buf [8]byte
+	binary.BigEndian.PutUint64(buf[:], v)
+	_, err := w.Write(buf[:])
+	return err
+}
+
+// writeUint32 encodes v as a 4-byte big-endian value and writes it to w.
+func writeUint32(w io.Writer, v uint32) error {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], v)
+	_, err := w.Write(buf[:])
+	return err
+}
+
+// readUint64 reads exactly 8 bytes from r and decodes them as a big-endian uint64.
+func readUint64(r io.Reader) (uint64, error) {
+	var buf [8]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint64(buf[:]), nil
+}
+
+// readUint32 reads exactly 4 bytes from r and decodes them as a big-endian uint32.
+func readUint32(r io.Reader) (uint32, error) {
+	var buf [4]byte
+	if _, err := io.ReadFull(r, buf[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint32(buf[:]), nil
+}
+
+// readBytes reads exactly n bytes from r into a newly allocated slice.
+// context is included in the error message to identify the failing read site.
+func readBytes(r io.Reader, n int, context string) ([]byte, error) {
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, fmt.Errorf("%s: %w", context, err)
+	}
+	return buf, nil
+}
+
+// buildAAD writes the 16-byte Additional Authenticated Data for a segment into dst.
+// AAD = segmentIndex (8B big-endian) || plaintextLen (8B big-endian).
+//
+// Binding both the segment index and the plaintext length to the ciphertext prevents
+// segment reordering, deletion, and length-manipulation attacks. Using a shared helper
+// guarantees that the encrypt and decrypt paths construct AAD identically — a subtle
+// mismatch here would cause every decryption to silently fail authentication.
+//
+// dst must be at least 16 bytes.
+func buildAAD(dst []byte, segmentIndex, plaintextLen uint64) {
+	binary.BigEndian.PutUint64(dst[:8], segmentIndex)
+	binary.BigEndian.PutUint64(dst[8:], plaintextLen)
+}
+
 // deriveSegmentNonce produces a unique 24-byte nonce for a given segment using
 // HKDF-SHA256 (RFC 5869), as recommended by NIST SP 800-56C.
 //
@@ -134,9 +192,7 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	if _, err := bufOut.Write([]byte(constants.Magic)); err != nil {
 		return fmt.Errorf("error writing magic header: %w", err)
 	}
-	var versionBuf [4]byte
-	binary.BigEndian.PutUint32(versionBuf[:], constants.FileVersion)
-	if _, err := bufOut.Write(versionBuf[:]); err != nil {
+	if err := writeUint32(bufOut, constants.FileVersion); err != nil {
 		return fmt.Errorf("error writing version header: %w", err)
 	}
 
@@ -156,7 +212,6 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	plaintextBuf := make([]byte, constants.SegmentSize)
 	ciphertextBuf := make([]byte, 0, constants.SegmentSize+aead.Overhead())
 	aad := make([]byte, 16)
-	var lenBuf [8]byte
 
 	var segmentCount uint64
 	var bytesDone int64
@@ -179,14 +234,12 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 			// Storing the plaintext length explicitly (rather than computing it from
 			// len(ciphertext)-Overhead() during decryption) makes the AAD self-contained
 			// and robust to future changes in the AEAD implementation.
-			binary.BigEndian.PutUint64(aad[:8], segmentCount)
-			binary.BigEndian.PutUint64(aad[8:], uint64(n))
+			buildAAD(aad, segmentCount, uint64(n))
 
 			ciphertextBuf = aead.Seal(ciphertextBuf[:0], nonce, plaintextBuf[:n], aad)
 
 			// Write Segment Structure: [Length (8B)][Ciphertext + Tag]
-			binary.BigEndian.PutUint64(lenBuf[:], uint64(len(ciphertextBuf)))
-			if _, err := bufOut.Write(lenBuf[:]); err != nil {
+			if err := writeUint64(bufOut, uint64(len(ciphertextBuf))); err != nil {
 				return fmt.Errorf("error writing segment length: %w", err)
 			}
 			if _, err := bufOut.Write(ciphertextBuf); err != nil {
@@ -230,8 +283,7 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	//
 	// The macKey is independent of encKey (derived from Argon2id bytes 32–63),
 	// so compromising one key does not compromise the other.
-	binary.BigEndian.PutUint64(lenBuf[:], segmentCount)
-	if _, err := bufOut.Write(lenBuf[:]); err != nil {
+	if err := writeUint64(bufOut, segmentCount); err != nil {
 		return fmt.Errorf("error writing segment count: %w", err)
 	}
 
@@ -277,34 +329,33 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 	// 1. Read and validate magic bytes.
 	// Reject non-.cfo files immediately, before any expensive key derivation.
-	magicBuf := make([]byte, constants.MagicSize)
-	if _, err := io.ReadFull(inFile, magicBuf); err != nil {
-		return fmt.Errorf("error reading magic header: %w", err)
+	magicBuf, err := readBytes(inFile, constants.MagicSize, "error reading magic header")
+	if err != nil {
+		return err
 	}
 	if string(magicBuf) != constants.Magic {
 		return fmt.Errorf("not a valid .cfo file")
 	}
 
 	// 2. Read and validate the format version.
-	var versionBuf [4]byte
-	if _, err := io.ReadFull(inFile, versionBuf[:]); err != nil {
+	fileVersion, err := readUint32(inFile)
+	if err != nil {
 		return fmt.Errorf("error reading version header: %w", err)
 	}
-	fileVersion := binary.BigEndian.Uint32(versionBuf[:])
 	if fileVersion != constants.FileVersion {
 		return fmt.Errorf("unsupported file format version %d (expected %d)", fileVersion, constants.FileVersion)
 	}
 
 	// 3. Read Salt
-	salt := make([]byte, constants.SaltSize)
-	if _, err := io.ReadFull(inFile, salt); err != nil {
-		return fmt.Errorf("error reading salt: %w", err)
+	salt, err := readBytes(inFile, constants.SaltSize, "error reading salt")
+	if err != nil {
+		return err
 	}
 
 	// 4. Read Master Nonce
-	masterNonce := make([]byte, constants.XNonceSize)
-	if _, err := io.ReadFull(inFile, masterNonce); err != nil {
-		return fmt.Errorf("error reading master nonce: %w", err)
+	masterNonce, err := readBytes(inFile, constants.XNonceSize, "error reading master nonce")
+	if err != nil {
+		return err
 	}
 
 	// Derive both keys from a single Argon2id invocation.
@@ -338,9 +389,9 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 	// Read the trailer from the end of the file using ReadAt so we do not
 	// disturb the sequential read position.
 	trailerOffset := totalFileSize - int64(constants.TrailerSize)
-	trailerBuf := make([]byte, constants.TrailerSize)
-	if _, err := inFile.ReadAt(trailerBuf, trailerOffset); err != nil {
-		return fmt.Errorf("error reading trailer: %w", err)
+	trailerBuf, err := readBytes(io.NewSectionReader(inFile, trailerOffset, int64(constants.TrailerSize)), constants.TrailerSize, "error reading trailer")
+	if err != nil {
+		return err
 	}
 
 	// TrailerSize = 8 (segmentCount) + HMACSize (32). Parse them out.
@@ -370,17 +421,15 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 	// Reusable buffers: hoisted outside the loop to avoid per-segment allocation.
 	ciphertextBuf := make([]byte, constants.SegmentSize+aead.Overhead())
-	sizeBuf := make([]byte, 8)
 	aad := make([]byte, 16)
 
 	for i := uint64(0); i < segmentCount; i++ {
 		// 7. Read segment length.
-		if _, err := io.ReadFull(bufIn, sizeBuf); err != nil {
+		segmentLen, err := readUint64(bufIn)
+		if err != nil {
 			return fmt.Errorf("error reading segment length: %w", err)
 		}
 		bytesRead += 8
-
-		segmentLen := binary.BigEndian.Uint64(sizeBuf)
 
 		// OOM guard: reject any segment length that exceeds the maximum
 		// possible ciphertext size (plaintext SegmentSize + AEAD overhead).
@@ -403,8 +452,7 @@ func DecryptFile(inputFile, outputFile string, userPassword []byte) error {
 
 		// 9. Reconstruct AAD for authentication.
 		plaintextLen := segmentLen - uint64(aead.Overhead())
-		binary.BigEndian.PutUint64(aad[:8], i)
-		binary.BigEndian.PutUint64(aad[8:], plaintextLen)
+		buildAAD(aad, i, plaintextLen)
 
 		// Decrypt in-place: Open writes plaintext back into ciphertextBuf,
 		// which is safe because ciphertextBuf is at least SegmentSize bytes.

@@ -65,7 +65,7 @@ run_encrypt() {
         >"$tmp_out" 2>&1 || true
 
     # Check if encryption succeeded
-    if ! grep -q "Your secure, auto-generated password" "$tmp_out"; then
+    if ! grep -q "Encryption password (save this" "$tmp_out"; then
         echo "ERROR|0|" > "$tmp_time"
         echo "|0|" 
         rm -f "$tmp_out" "$tmp_time"
@@ -76,7 +76,7 @@ run_encrypt() {
     time=$(cut -d'|' -f1 "$tmp_time" 2>/dev/null || echo "0:00.00")
     mem=$(cut -d'|' -f2 "$tmp_time" 2>/dev/null || echo "0")
 
-    password=$(sed -n '/Your secure, auto-generated password/,+1p' "$tmp_out" | tail -n 1 | tr -d '\n')
+    password=$(sed -n '/Encryption password (save this/,+1p' "$tmp_out" | tail -n 1 | tr -d '\n')
 
     rm -f "$tmp_out" "$tmp_time"
 
