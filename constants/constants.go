@@ -51,7 +51,7 @@ const (
 
 	// TrailerSize is the fixed size of the file trailer written after all
 	// encrypted segments. It holds the segment count (8 bytes) followed by
-	// the HMAC-SHA256 that authenticates the file header (salt + master nonce)
+	// the HMAC-SHA256 that authenticates the file header (salt + segment seed)
 	// and the total segment count, binding them cryptographically to the payload.
 	// Storing the segment count explicitly in the trailer eliminates the need
 	// for a pre-decryption scanning pass to discover it.
@@ -60,6 +60,21 @@ const (
 	// SaltSize is 16 bytes (128 bits), the standard recommendation
 	// for Argon2id to ensure unique keys for identical passwords.
 	SaltSize = 16
+
+	// SegmentNonceContext is the HKDF info prefix used when deriving
+	// per-segment nonces. Binding a version-tagged application string to
+	// the HKDF info field ensures that derived nonces from this format
+	// version are domain-separated from any other system that might use
+	// the same segment seed (e.g., a future v2 format). The 8-byte
+	// segment counter is appended after this prefix at derivation time.
+	SegmentNonceContext = "cipherforge-segment-nonce-v1"
+
+	// TrailerHMACContext is prepended to the HMAC input to domain-separate
+	// the trailer MAC from any other HMAC computed with the same macKey.
+	// This makes the construction safe to extend: a future field added to
+	// the HMAC input cannot collide with an existing valid trailer MAC
+	// because the context string anchors the purpose of the computation.
+	TrailerHMACContext = "cipherforge-trailer-hmac-v1"
 )
 
 // Argon2id parameters are declared as variables rather than constants so that
@@ -120,12 +135,15 @@ CRYPTOGRAPHIC DESIGN
   Argon2id cost only once.
 
   Nonce Derivation: Per-segment nonces are derived via HKDF-SHA256
-  (RFC 5869, NIST SP 800-56C) using the Master Nonce as input key
-  material and the 64-bit segment counter as the info field. HKDF is
-  a one-way function: given any number of derived nonces and their
-  counters, the Master Nonce remains computationally hidden. It also
-  carries no identity-at-zero property (counter=0 does not yield the
-  raw Master Nonce), unlike XOR-based derivation.
+  (RFC 5869, NIST SP 800-56C) using the Segment Seed as input key
+  material (IKM) and a version-tagged context string concatenated with
+  the 64-bit segment counter as the info field. HKDF is a one-way
+  function: given any number of derived nonces and their counters, the
+  Segment Seed remains computationally hidden. It also carries no
+  identity-at-zero property (counter=0 does not yield the raw Segment
+  Seed), unlike XOR-based derivation. The context string
+  ("cipherforge-segment-nonce-v1") provides domain separation between
+  format versions and unrelated applications.
 
   Post-Quantum Security: The symmetric primitives used (XChaCha20-Poly1305,
   HMAC-SHA256, Argon2id) are not vulnerable to quantum attacks in the same
@@ -189,15 +207,21 @@ ENCRYPTION PROCESS
   trailer. Deriving both keys from a single Argon2id invocation avoids
   paying the KDF cost twice while keeping the two keys fully independent.
 
-  Nonce Management: A 24-byte Master Nonce is generated randomly and stored
-  once in the file header. Each 1MB segment derives its own unique nonce via
-  HKDF-SHA256 (RFC 5869), using the Master Nonce as the IKM and the 64-bit
-  segment counter as the info field. This is cryptographically stronger than
-  XOR-based derivation: it is a one-way function with no identity-at-zero
-  property (counter=0 does not yield the raw Master Nonce) and is
-  standardised by NIST SP 800-56C for exactly this purpose. Storing the
-  Master Nonce once in the header rather than repeating a full nonce per
-  segment saves 24 bytes per 1MiB of ciphertext.
+  Nonce Management: A 24-byte Segment Seed is generated randomly and stored
+  once in the file header. It serves as the HKDF Input Keying Material (IKM)
+  for per-segment nonce derivation and must remain secret; it is not a nonce
+  in the traditional sense (nonces are typically non-secret). Each 1MB segment
+  derives its own unique nonce via HKDF-SHA256 (RFC 5869), using the Segment
+  Seed as the IKM and a version-tagged context string concatenated with the
+  64-bit segment counter as the info field. The context string
+  ("cipherforge-segment-nonce-v1") domain-separates this format version from
+  any future version or unrelated application that might use the same seed.
+  HKDF is cryptographically stronger than XOR-based derivation: it is a
+  one-way function with no identity-at-zero property (counter=0 does not
+  yield the raw Segment Seed) and is standardised by NIST SP 800-56C for
+  exactly this purpose. Storing the Segment Seed once in the header rather
+  than repeating a full nonce per segment saves 24 bytes per 1MiB of
+  ciphertext.
 
   Segmentation: To handle large files efficiently, the input is divided
   into segments of up to 1MB (1,048,576 bytes). The payload region of the
@@ -214,9 +238,11 @@ ENCRYPTION PROCESS
 
   File-Level Authentication: After all segments are written, a 40-byte
   trailer is appended containing the segment count (8 bytes) followed by
-  HMAC-SHA256(macKey, salt || masterNonce || segmentCount). This binds the
+  HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v1" || salt || segmentSeed
+  || segmentCount). The version-tagged context prefix domain-separates this
+  MAC from any other HMAC computed with the same macKey. This binds the
   header fields and total segment count to the payload, preventing header
-  substitution (swapping the salt or nonce from another file), file
+  substitution (swapping the salt or segment seed from another file), file
   truncation, and segment appending — all attacks that per-segment AEAD
   cannot detect. On decryption, the trailer is read and verified before any
   plaintext is written to disk. A wrong password is also detected here
@@ -271,7 +297,7 @@ DIAGRAM OF BINARY LAYOUT
 | Magic             | byte array          | 8 bytes   | 0xC1PHRF0RGE     |
 | Version           | uint32 (big-endian) | 4 bytes   | 0x00000001       |
 | Salt              | byte array          | 16 bytes  | Argon2id Salt    |
-| Master Nonce      | byte array          | 24 bytes  | XChaCha20 Nonce  |
+| Segment Seed      | byte array          | 24 bytes  | HKDF IKM/Seed    |
 +-------------------+---------------------+-----------+------------------+
 |              ENCRYPTED PAYLOAD DETAILS (REPEAT UNTIL EOF-32)           |
 +-------------------+---------------------+-----------+------------------+
