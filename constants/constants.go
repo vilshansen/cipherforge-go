@@ -27,6 +27,9 @@ const (
 	// XNonceSize is 24 bytes (192 bits). This is large enough that
 	// random nonces can be generated for every segment without
 	// risk of collision, unlike standard ChaCha20's 96-bit nonce.
+	// XNonceSize also doubles as the size of the Segment Seed stored
+	// in the file header: the Seed is 24 random bytes used as HKDF IKM,
+	// and the same length constant serves both roles.
 	XNonceSize = 24
 
 	// PasswordLength is set to 55. With a 32-character pool (5 bits/char),
@@ -134,16 +137,26 @@ CRYPTOGRAPHIC DESIGN
   cryptographic operation, providing domain separation while paying the
   Argon2id cost only once.
 
-  Nonce Derivation: Per-segment nonces are derived via HKDF-SHA256
-  (RFC 5869, NIST SP 800-56C) using the Segment Seed as input key
-  material (IKM) and a version-tagged context string concatenated with
-  the 64-bit segment counter as the info field. HKDF is a one-way
-  function: given any number of derived nonces and their counters, the
-  Segment Seed remains computationally hidden. It also carries no
-  identity-at-zero property (counter=0 does not yield the raw Segment
-  Seed), unlike XOR-based derivation. The context string
-  ("cipherforge-segment-nonce-v1") provides domain separation between
-  format versions and unrelated applications.
+  Nonce Derivation: A 24-byte Segment Seed is generated per file and stored
+  in the header in plaintext. Confidentiality of the Seed is not required:
+  without the encryption key, knowing all per-segment nonces is useless to
+  an attacker. The Seed's integrity — that it has not been substituted — is
+  enforced by the trailer HMAC. Per-segment nonces are derived via HKDF-SHA256
+  (RFC 5869, NIST SP 800-56C) using the Segment Seed as IKM and a
+  version-tagged context string concatenated with the 64-bit segment counter
+  as the info field. HKDF is a one-way function, so the Seed cannot be
+  recovered from observed nonces. It carries no identity-at-zero property
+  (counter=0 does not yield the raw Seed), unlike XOR-based derivation. The
+  context string ("cipherforge-segment-nonce-v1") domain-separates this
+  format version from future versions or unrelated applications that might
+  use the same Seed as IKM.
+
+  Segment Authentication: Each segment's AEAD tag covers both the ciphertext
+  and 16 bytes of Additional Authenticated Data (AAD) computed as:
+  segmentIndex (8B big-endian) || plaintextLength (8B big-endian). Binding
+  the segment index prevents reordering; binding the plaintext length prevents
+  length-manipulation. The AAD is never stored — it is reconstructed
+  identically by both the encryptor and the decryptor.
 
   Post-Quantum Security: The symmetric primitives used (XChaCha20-Poly1305,
   HMAC-SHA256, Argon2id) are not vulnerable to quantum attacks in the same
@@ -208,14 +221,17 @@ ENCRYPTION PROCESS
   paying the KDF cost twice while keeping the two keys fully independent.
 
   Nonce Management: A 24-byte Segment Seed is generated randomly and stored
-  once in the file header. It serves as the HKDF Input Keying Material (IKM)
-  for per-segment nonce derivation and must remain secret; it is not a nonce
-  in the traditional sense (nonces are typically non-secret). Each 1MB segment
-  derives its own unique nonce via HKDF-SHA256 (RFC 5869), using the Segment
-  Seed as the IKM and a version-tagged context string concatenated with the
-  64-bit segment counter as the info field. The context string
-  ("cipherforge-segment-nonce-v1") domain-separates this format version from
-  any future version or unrelated application that might use the same seed.
+  once in the file header in plaintext. It is the HKDF Input Keying Material
+  (IKM) used to derive per-segment nonces. Confidentiality of the Segment
+  Seed is not a security requirement: it is useless to an attacker without the
+  encryption key, since knowing all per-segment nonces still leaves the
+  ciphertext unbreakable without the key. The Seed's integrity — not its
+  secrecy — is what matters, and that is protected by the trailer HMAC.
+  Each 1MB segment derives its own unique nonce via HKDF-SHA256 (RFC 5869),
+  using the Segment Seed as the IKM and a version-tagged context string
+  concatenated with the 64-bit segment counter as the info field. The context
+  string ("cipherforge-segment-nonce-v1") domain-separates this format version
+  from any future version or unrelated application that might use the same seed.
   HKDF is cryptographically stronger than XOR-based derivation: it is a
   one-way function with no identity-at-zero property (counter=0 does not
   yield the raw Segment Seed) and is standardised by NIST SP 800-56C for
@@ -281,11 +297,14 @@ LONG-TERM ARCHIVAL CONSIDERATIONS
 
 ENCODED BINARY FILE FORMAT
 
-  The encrypted file is a binary structure consisting of a fixed-size
-  header containing the Argon2id salt, followed immediately by the
-  encrypted payload. All multi-byte values (lengths and parameters)
-  are written using big-endian byte order. XChaCha20 counter is
-  represented in big-endian format.
+  The encrypted file consists of three regions: a fixed 52-byte header
+  containing the magic signature, format version, Argon2id salt, and
+  Segment Seed; a variable-length payload of encrypted segments; and a
+  fixed 40-byte trailer containing the segment count and trailer HMAC.
+  All multi-byte integer fields use big-endian byte order. The minimum
+  valid file size is 92 bytes (52-byte header + 40-byte trailer, no
+  payload segments). See FILEFORMAT.md for the complete field-by-field
+  specification including security rationale for each field.
 
 DIAGRAM OF BINARY LAYOUT
 
@@ -299,7 +318,7 @@ DIAGRAM OF BINARY LAYOUT
 | Salt              | byte array          | 16 bytes  | Argon2id Salt    |
 | Segment Seed      | byte array          | 24 bytes  | HKDF IKM/Seed    |
 +-------------------+---------------------+-----------+------------------+
-|              ENCRYPTED PAYLOAD DETAILS (REPEAT UNTIL EOF-32)           |
+|              ENCRYPTED PAYLOAD DETAILS (REPEAT UNTIL EOF-40)           |
 +-------------------+---------------------+-----------+------------------+
 | Field Name        | Data Type           | Length    | Value/Purpose    |
 +-------------------+---------------------+-----------+------------------+

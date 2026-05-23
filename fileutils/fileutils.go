@@ -64,10 +64,20 @@ func readBytes(r io.Reader, n int, context string) ([]byte, error) {
 // buildAAD writes the 16-byte Additional Authenticated Data for a segment into dst.
 // AAD = segmentIndex (8B big-endian) || plaintextLen (8B big-endian).
 //
-// Binding both the segment index and the plaintext length to the ciphertext prevents
-// segment reordering, deletion, and length-manipulation attacks. Using a shared helper
-// guarantees that the encrypt and decrypt paths construct AAD identically — a subtle
-// mismatch here would cause every decryption to silently fail authentication.
+// The AAD is never written to disk. It is reconstructed identically by both
+// the encryptor and the decryptor from information they already have (the loop
+// counter and the measured plaintext length). The AEAD tag covers both the
+// ciphertext and the AAD, so any mismatch between the AAD used at encryption
+// time and the AAD reconstructed at decryption time causes authentication to fail.
+//
+// Binding segmentIndex prevents segment reordering: a segment moved from
+// position 3 to position 1 fails authentication because index 1 ≠ index 3.
+// Binding plaintextLen prevents length-manipulation: an attacker cannot falsely
+// claim a shorter plaintext length to strip trailing bytes from a segment.
+//
+// Using a shared helper guarantees that the encrypt and decrypt paths construct
+// AAD identically — a subtle mismatch here would cause every decryption to
+// silently fail authentication.
 //
 // dst must be at least 16 bytes.
 func buildAAD(dst []byte, segmentIndex, plaintextLen uint64) {
@@ -77,6 +87,12 @@ func buildAAD(dst []byte, segmentIndex, plaintextLen uint64) {
 
 // deriveSegmentNonce produces a unique 24-byte nonce for a given segment using
 // HKDF-SHA256 (RFC 5869), as recommended by NIST SP 800-56C.
+//
+// The Segment Seed is stored in plaintext in the file header. Its
+// confidentiality is not a security requirement: without the encryption key,
+// knowing all per-segment nonces does not help an attacker break the
+// ciphertext. The Seed's integrity — that it has not been swapped for a
+// different value — is protected by the trailer HMAC.
 //
 // Why not XOR?
 // XOR-based derivation has two weaknesses:
@@ -176,8 +192,11 @@ func EncryptFile(inputFile, outputFile string, userPassword []byte) error {
 	}
 
 	// Generate a Segment Seed for this file. This is the HKDF IKM used to
-	// derive per-segment nonces; it is not a nonce itself (nonces are
-	// typically non-secret) and must remain confidential.
+	// derive per-segment nonces. It is stored in plaintext in the file header;
+	// its confidentiality is not a security requirement because without the
+	// encryption key, knowing the Seed and all derived nonces still leaves the
+	// ciphertext unbreakable. Its integrity — that it has not been substituted —
+	// is protected by the trailer HMAC.
 	segmentSeed, err := cryptoutils.GenerateNonce()
 	if err != nil {
 		return fmt.Errorf("error generating segment seed: %w", err)
