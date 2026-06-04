@@ -65,7 +65,7 @@ if grep -q "panic:" test_output.log; then
 fi
 
 ok "All unit tests passed."
-rm test_output.log
+ rm test_output.log
 
 # -------------------------------------------------------
 # Integration tests
