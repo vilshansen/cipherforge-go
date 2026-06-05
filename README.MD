@@ -125,7 +125,8 @@ of prompting. This is useful for scripted or automated workflows.
 
 Encryption appends `.cfo` to the input filename: `photo.jpg` becomes
 `photo.jpg.cfo`. Decryption strips the `.cfo` suffix to recover the original
-name. If for any reason stripping the suffix would produce the an existing filename, Cipherforge overwrites the output file without warning.
+name. If for any reason stripping the suffix would produce the an existing 
+filename, Cipherforge overwrites the output file without warning.
 
 The original filename and extension remain visible in the `.cfo` filename.
 If that is a concern (e.g. storing archives in a shared or cloud location),
@@ -136,7 +137,8 @@ mv sensitive-contracts.pdf archive.pdf
 cfo -e archive.pdf
 ```
 
-The same goes for compression which must be done prior to encryption with Cipherforge:
+The same goes for compression which must be done prior to encryption with 
+Cipherforge:
 
 ```bash
 tar czf sensitive-data.tar.gz data.pdf
@@ -157,17 +159,22 @@ Instead, a 55-character password is generated from a 32-character Base32 pool
 random number generator.
 
 **Why 55 characters?** Each character carries approximately 5 bits of entropy
-(log₂ 32 = 5). At 55 characters that's ~275 bits of raw entropy, above the 256-bit key it protects. In practice, security is bounded by the
-256-bit Argon2id output, so the extra margin is due to the password being formatted in groups of five characters; trimming the password to 50 characters would result in a password with ~225 bits of entropy, which is weaker than the 256-bit key it protects.
+(log₂ 32 = 5). At 55 characters that's ~275 bits of raw entropy, above the 
+256-bit key it protects. In practice, security is bounded by the 256-bit 
+Argon2id output, so the extra margin is due to the password being formatted in
+groups of five characters; trimming the password to 50 characters would result
+in a password with ~225 bits of entropy, which is weaker than the 256-bit key
+it protects.
 
 **Rejection sampling** is used during generation to eliminate modulo bias. A
 naive approach — taking a random byte and computing `byte % 32` — would slightly
-favour characters at the start of the pool. Any byte value that would introduce this bias is discarded, and a new
-random byte is drawn. The result is a perfectly uniform distribution across all
-32 characters.
+favour characters at the start of the pool. Any byte value that would introduce
+this bias is discarded, and a new random byte is drawn. The result is a perfectly
+uniform distribution across all 32 characters.
 
 Passwords are formatted in groups of five separated by hyphens for readability
 and ease of manual transcription:
+
 ```
 3K7NV-M2QWX-H9RBP-T4ZSF-A6JDY-82VCG-K1NMQ-WX3H5-P7RBT-4ZSF8-V2
 ```
@@ -254,12 +261,13 @@ in advance.
 
 ### Nonce Management
 
-A 24-byte **Master Nonce** is generated randomly and stored once in the file
-header. Individual per-segment nonces are derived from the Master Nonce using
+A 24-byte **Segment Seed** is generated randomly and stored once in the file
+header. Individual per-segment nonces are derived from the Segment Seed using
 **HKDF-SHA256** (RFC 5869, NIST SP 800-56C):
 
 ```
-segment_nonce[i] = HKDF-SHA256(ikm=MasterNonce, salt=nil, info=uint64_big_endian(i))
+segment_nonce[i] = HKDF-SHA256(ikm=segmentSeed, salt=nil, 
+info="cipherforge-segment-nonce-v1" || uint64_big_endian(i))
 ```
 
 Where `i` is the 64-bit segment counter encoded as an 8-byte big-endian value.
@@ -269,20 +277,20 @@ This is preferable to simpler approaches for two reasons:
 **Why not store a full nonce per segment?** A 24-byte nonce stored with every
 1 MiB segment adds 24 bytes of overhead per MiB (~0.002%). It's not a
 meaningful cost, but the HKDF approach has better properties: it stores only
-the 24-byte Master Nonce once in the header regardless of how many segments the
+the 24-byte Segment Seed once in the header regardless of how many segments the
 file has.
 
-**Why not XOR the counter into the Master Nonce?** XOR-based derivation
-(`nonce[i] = masterNonce XOR i`) has two weaknesses:
+**Why not XOR the counter into the Segment Seed?** XOR-based derivation
+(`nonce[i] = segmentSeed XOR i`) has two weaknesses:
 
-1. **Identity at zero** — when `i == 0`, XOR is a no-op, so the Master Nonce
+1. **Identity at zero** — when `i == 0`, XOR is a no-op, so the Segment Seed
    itself becomes a live encryption nonce. This is a subtle but real exposure.
 2. **Linear structure** — knowing any two `(counter, nonce)` pairs immediately
-   reveals the Master Nonce via XOR, leaking the root secret.
+   reveals the Segment Seed via XOR, leaking the root secret.
 
 HKDF is a one-way pseudorandom function. Given any number of derived nonces and
-their counters, the Master Nonce remains computationally hidden. It also has no
-identity-at-zero property: `counter=0` does not yield the raw Master Nonce.
+their counters, the Segment Seed remains computationally hidden. It also has no
+identity-at-zero property: `counter=0` does not yield the raw Segment Seed.
 HKDF is standardised by NIST SP 800-56C for exactly this purpose (deriving
 independent, domain-separated values from a shared secret).
 
@@ -313,13 +321,14 @@ the file at a segment boundary, or appending extra segments.
 written, a 40-byte trailer is appended:
 
 ```
-[Segment Count: 8 bytes] [HMAC-SHA256(macKey, salt || masterNonce || segmentCount): 32 bytes]
+[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v1" 
+|| salt || segmentSeed || segmentCount): 32 bytes]
 ```
 
-The HMAC commits to the salt, the Master Nonce, and the total segment count
+The HMAC commits to the salt, the Segment Seed, and the total segment count
 in a single tag. This closes the gap left by per-segment AEAD:
 
-- **Header substitution** — swapping the salt or Master Nonce from another
+- **Header substitution** — swapping the salt or Segment Seed from another
   file (even one encrypted with the same password) invalidates the HMAC
 - **File truncation** — removing segments changes the segment count, invalidating
   the HMAC
@@ -402,7 +411,7 @@ All multi-byte integer values are stored in **big-endian** byte order.
 | Magic             | byte array          | 8 bytes   | 0xC1PHRF0RGE     |
 | Version           | uint32 (big-endian) | 4 bytes   | 0x00000001       |
 | Salt              | byte array          | 16 bytes  | Argon2id Salt    |
-| Master Nonce      | byte array          | 24 bytes  | XChaCha20 Nonce  |
+| Segment Seed      | byte array          | 24 bytes  | HKDF IKM         |
 +-------------------+---------------------+-----------+------------------+
 |              ENCRYPTED PAYLOAD (REPEAT UNTIL TRAILER)                  |
 +-------------------+---------------------+-----------+------------------+
@@ -427,7 +436,7 @@ All multi-byte integer values are stored in **big-endian** byte order.
 - `Version` (4 bytes): format version, currently `0x00000001` — allows future
   format changes to be detected cleanly
 - `Salt` (16 bytes): random Argon2id salt, unique per file
-- `Master Nonce` (24 bytes): random XChaCha20 master nonce, unique per file
+- `Segment Seed` (24 bytes): random HKDF IKM, unique per file
 
 **Payload** (repeating):
 Each segment is prefixed with an 8-byte big-endian length, followed by the
@@ -437,7 +446,8 @@ size is 1,048,576 + 16 bytes (plaintext + AEAD overhead).
 
 **Trailer** (40 bytes fixed):
 - `Segment Count` (8 bytes): total number of segments written
-- `Trailer HMAC` (32 bytes): `HMAC-SHA256(macKey, salt || masterNonce || segmentCount)`
+- `Trailer HMAC` (32 bytes): `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v1"
+  || salt || segmentSeed || segmentCount)`
 
 The trailer is always at `EOF - 40`. The decoder seeks to this offset first,
 verifies the HMAC, then performs a single sequential read of the payload.

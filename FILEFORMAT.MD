@@ -212,7 +212,8 @@ negligible for any realistic use case.
 trailer HMAC input:
 
 ```
-HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v1" || salt || segmentSeed || segmentCount)
+HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v1" || salt || segmentSeed 
+|| segmentCount)
 ```
 
 This means the HMAC binds the salt to the payload. An attacker who swaps the
