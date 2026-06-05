@@ -1,27 +1,31 @@
 # Changelog
 
+## v1.0.1 (2026-06-05)
+
+### Added
+
+- `-h` / `--help` flag for inline help
+- `-v` / `--version` flag for version information
+- `-o <file>` flag for custom output filenames (single file only)
+- `--platforms` flag on build script for selective cross-compilation
+- SHA256 checksums generated for all release binaries
+- MIT LICENSE file
+
+### Changed
+
+- Password format: 44-character flat string from a 58-character mixed-case clean pool (~258 bits entropy), replacing the 65-character hyphenated format from a 32-character pool
+- Build script unified into a single `build-all.sh` with platform selection (`build-linux.sh` removed)
+
+### Fixed
+
+- Decrypt progress bar now computes an accurate plaintext size estimate from the trailer segment count, reaching 100% instead of capping at ~79%
+- Potential panic on empty `-p` command-line argument
+- Dead error return removed from `computeTrailerHMAC`
+- Stale build command in integration test fallback (`cipherforge.go` → `../cmd/cfo/`)
+- `go.mod` indirect dependency markings corrected (`go mod tidy`)
+- README typo and stale Go version requirement (1.21 → 1.25)
+- README updated with `-o`, `-h`, `-v` usage documentation
+
 ## v1.0.0 (2026-06-05)
 
 First stable release.
-
-### Features
-
-- Encrypt and decrypt files using XChaCha20-Poly1305 AEAD
-- Argon2id key derivation with hardened parameters (1 GiB memory, 4 passes)
-- Streaming 1 MiB segments for constant memory usage on files of any size
-- Two-layer authentication: per-segment AEAD tags + file-level HMAC-SHA256 trailer
-- Automatic password generation: 44-character mixed-case clean pool (~258 bits entropy)
-- Explicit password support via `-p` flag for scripting or user preference
-- Custom output filename via `-o` flag
-- Memory locking (`mlock`) and explicit key zeroing for sensitive material
-- Big-endian, fully-specified binary file format with magic header
-- Cross-platform: Linux, macOS, Windows, FreeBSD
-
-### Security Properties
-
-- Confidentiality: XChaCha20 stream cipher (256-bit key)
-- Integrity: Poly1305 per-segment authentication + HMAC-SHA256 file trailer
-- Wrong password / corrupt file detected before any plaintext is written to disk
-- Non-`.cfo` files rejected before expensive key derivation
-- Constant-time HMAC comparison
-- All symmetric primitives — post-quantum security at ~128 bits (Grover)
