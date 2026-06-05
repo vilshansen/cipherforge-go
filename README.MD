@@ -83,9 +83,12 @@ cfo [options]
 Options:
   -e <path>    Encrypt a file or glob pattern
   -d <path>    Decrypt a .cfo file or glob pattern
+  -o <file>    Output filename (requires a single input file)
   -p [pwd]     Supply a password (optional argument — prompts if omitted).
                Without -p, encryption auto-generates a password and
                decryption prompts interactively.
+  -h, --help     Show help text
+  -v, --version  Show version information
 ```
 
 Only one of `-e` or `-d` may be used at a time. `-p` can be combined with either.
@@ -141,8 +144,14 @@ Enter password for encryption:
 
 Encryption appends `.cfo` to the input filename: `photo.jpg` becomes
 `photo.jpg.cfo`. Decryption strips the `.cfo` suffix to recover the original
-name. If for any reason stripping the suffix would produce the an existing 
+name. If for any reason stripping the suffix would produce an existing
 filename, Cipherforge overwrites the output file without warning.
+
+To control the output filename directly, use the `-o` flag (single file only):
+```bash
+cfo -e backup.tar -o archive.cfo
+cfo -d archive.cfo -o restored.tar
+```
 
 The original filename and extension remain visible in the `.cfo` filename.
 If that is a concern (e.g. storing archives in a shared or cloud location),
@@ -543,7 +552,7 @@ even if they cannot read the contents.
 
 ## Building from Source
 
-Requires Go 1.21 or later.
+Requires Go 1.25 or later.
 
 ```bash
 git clone https://github.com/vilshansen/cipherforge-go
