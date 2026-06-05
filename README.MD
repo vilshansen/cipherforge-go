@@ -556,14 +556,15 @@ To build for all supported platforms:
 ./build-all.sh
 ```
 
-To build for Linux only (faster for development):
+To build for selected platforms only:
 ```bash
-./build-linux.sh
+./build-all.sh --platforms linux/amd64,darwin/arm64
 ```
 
-Both scripts run the full test suite before compiling and abort on any failure.
-Compiled binaries are written to `dist/originals/`. UPX-compressed versions
-(where supported) are written to `dist/compressed/`.
+The build script runs the full test suite before compiling and aborts on any failure.
+Compiled binaries are written to `dist/originals/` with SHA256 checksums in
+`dist/checksums.txt`. UPX-compressed versions (where supported) are written to
+`dist/compressed/`.
 
 To run the tests manually:
 ```bash
