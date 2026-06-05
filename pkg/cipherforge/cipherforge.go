@@ -103,10 +103,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	trailer, err := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount)
-	if err != nil {
-		return err
-	}
+	trailer := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount)
 	if _, err := bufOut.Write(trailer); err != nil {
 		return err
 	}
@@ -177,10 +174,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	segmentCount := binary.BigEndian.Uint64(trailerBuf[:8])
 	storedHMAC := trailerBuf[8:]
 
-	expectedHMAC, err := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount)
-	if err != nil {
-		return err
-	}
+	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
 		return fmt.Errorf("authentication failed")
 	}
@@ -261,7 +255,7 @@ func deriveSegmentNonce(segmentSeed []byte, segmentCounter uint64) ([]byte, erro
 	return nonce, nil
 }
 
-func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64) ([]byte, error) {
+func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64) []byte {
 	h := hmac.New(sha256.New, macKey)
 	h.Write([]byte(format.TrailerHMACContext))
 	h.Write(salt)
@@ -269,5 +263,5 @@ func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64) (
 	var countBuf [8]byte
 	binary.BigEndian.PutUint64(countBuf[:], segmentCount)
 	h.Write(countBuf[:])
-	return h.Sum(nil), nil
+	return h.Sum(nil)
 }
