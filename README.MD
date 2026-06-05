@@ -11,9 +11,10 @@ stays constant regardless of whether you're encrypting a 10 KB text file or a
 any byte — header, payload, or trailer — is detected before any plaintext is
 written to disk.
 
-Passwords are generated automatically using a cryptographically secure random
-source. You never choose a password; Cipherforge chooses one for you and prints
-it once. Store it somewhere safe.
+By default, passwords are generated automatically from a cryptographically
+secure random source. Cipherforge prints the password once — store it somewhere
+safe. Explicit passwords can also be supplied via the `-p` flag for scripting or
+personal preference.
 
 ---
 
@@ -62,8 +63,8 @@ Cipherforge prints a generated password and writes `document.pdf.cfo` alongside
 the original. The original file is not modified or removed.
 
 ```
-Your secure, auto-generated password used for encryption:
-92KXC-4CGB2-TCEJD-QBTAF-ZBWV2-63E47-2A2AF-7HZ15-ZNER1-BGYX5-NBWDH
+Encryption password (save this — it cannot be recovered):
+8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3
 ```
 
 **Decrypt a file:**
@@ -82,9 +83,12 @@ cfo [options]
 Options:
   -e <path>    Encrypt a file or glob pattern
   -d <path>    Decrypt a .cfo file or glob pattern
+  -p [pwd]     Supply a password (optional argument — prompts if omitted).
+               Without -p, encryption auto-generates a password and
+               decryption prompts interactively.
 ```
 
-Only one flag may be used at a time. `-e` and `-d` are mutually exclusive.
+Only one of `-e` or `-d` may be used at a time. `-p` can be combined with either.
 
 ### Examples
 
@@ -116,10 +120,22 @@ cfo -d "archives/*.cfo"
 
 Decrypt non-interactively (piping password from a file or secret manager):
 ```bash
-echo "3K7NV-M2QWX-..." | cfo -d archive.cfo
+echo "8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3" | cfo -d archive.cfo
 ```
 When stdin is not a terminal, Cipherforge reads the password from stdin instead
 of prompting. This is useful for scripted or automated workflows.
+
+Encrypt and decrypt with an explicit password:
+```bash
+cfo -e report.pdf -p mysecret
+cfo -d report.pdf.cfo -p mysecret
+```
+
+Use interactive password entry (useful when the shell history is a concern):
+```bash
+cfo -e report.pdf -p
+Enter password for encryption:
+```
 
 ### Notes on output filenames
 
@@ -149,34 +165,31 @@ cfo -e sensitive-data.tar.gz
 
 ### Password Generation
 
-Cipherforge never asks you to choose a password. Human-chosen passwords are
-the leading cause of cryptographic failure in practice — people reuse them,
-write them down insecurely, or choose ones that are guessable.
+By default, Cipherforge generates passwords automatically — human-chosen
+passwords are the leading cause of cryptographic failure in practice. Explicit
+passwords can be supplied with `-p` when scripting or when a user-managed
+password is preferred.
 
-Instead, a 55-character password is generated from a 32-character Base32 pool
-(`0–9`, `A–Z` excluding visually ambiguous characters `I`, `L`, `O`) using
-`crypto/rand`, Go's interface to the operating system's cryptographically secure
-random number generator.
+Auto-generated passwords are 44 characters drawn from a 58-character clean pool
+(`1–9`, `A–Z` excluding `I` and `O`, `a–z` excluding `l`) using `crypto/rand`,
+Go's interface to the operating system's cryptographically secure random number
+generator. The pool excludes the four glyphs most commonly confused with each
+other (`0`/`O`, `1`/`I`/`l`), making passwords unambiguous to read aloud or
+transcribe from paper.
 
-**Why 55 characters?** Each character carries approximately 5 bits of entropy
-(log₂ 32 = 5). At 55 characters that's ~275 bits of raw entropy, above the 
-256-bit key it protects. In practice, security is bounded by the 256-bit 
-Argon2id output, so the extra margin is due to the password being formatted in
-groups of five characters; trimming the password to 50 characters would result
-in a password with ~225 bits of entropy, which is weaker than the 256-bit key
-it protects.
+**Why 44 characters?** Each character carries approximately 5.86 bits of entropy
+(log₂ 58 ≈ 5.86). At 44 characters that's ~258 bits of raw entropy, matching
+the full 256-bit strength of the encryption key. The password is a flat string
+with no separators — every character contributes entropy.
 
-**Rejection sampling** is used during generation to eliminate modulo bias. A
-naive approach — taking a random byte and computing `byte % 32` — would slightly
-favour characters at the start of the pool. Any byte value that would introduce
-this bias is discarded, and a new random byte is drawn. The result is a perfectly
-uniform distribution across all 32 characters.
-
-Passwords are formatted in groups of five separated by hyphens for readability
-and ease of manual transcription:
+**Rejection sampling** is used during generation to eliminate modulo bias.
+`crypto/rand.Int` draws an unbiased random integer in [0, poolSize), avoiding
+the favouritism toward early pool characters that a naive `byte % 58` would
+introduce. The result is a perfectly uniform distribution across all 58
+characters.
 
 ```
-3K7NV-M2QWX-H9RBP-T4ZSF-A6JDY-82VCG-K1NMQ-WX3H5-P7RBT-4ZSF8-V2
+8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3
 ```
 
 The password is shown exactly once, at the time of encryption. **There is no
@@ -535,7 +548,7 @@ Requires Go 1.21 or later.
 ```bash
 git clone https://github.com/vilshansen/cipherforge-go
 cd cipherforge-go
-go build -o cfo cipherforge.go
+go build -o cfo ./cmd/cfo/
 ```
 
 To build for all supported platforms:
