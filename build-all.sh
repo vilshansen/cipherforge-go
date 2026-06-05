@@ -3,11 +3,11 @@
 set -e
 
 GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="1.00"
+VERSION="${VERSION:-1.0.0}"
 
 SOURCE_FILE="cmd/cfo/main.go"
 
-PLATFORMS=(
+ALL_PLATFORMS=(
     "linux/amd64"    # Linux Server/Desktop (Standard)
     "linux/arm64"    # Linux ARM (Modern Servers, Raspberry Pi 64-bit)
     "linux/386"      # Linux 32-bit (Older systems)
@@ -34,6 +34,56 @@ fail()    { echo "[ERROR] $*" >&2; }
 
 section() { echo ""; echo "${SEP}"; echo "  $*"; echo "${SEP}"; }
 divider() { echo "${DASH}"; }
+
+usage() {
+    echo "Usage: $0 [--platforms os/arch,...]"
+    echo ""
+    echo "  --platforms  Comma-separated list of targets (default: all)."
+    echo "               Example: --platforms linux/amd64,darwin/arm64"
+    echo ""
+    echo "  VERSION env var overrides the version string (default: ${VERSION})."
+    exit 0
+}
+
+# -------------------------------------------------------
+# Platform selection
+# -------------------------------------------------------
+
+PLATFORMS=("${ALL_PLATFORMS[@]}")
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --platforms)
+            if [[ -z "$2" || "$2" == -* ]]; then
+                fail "--platforms requires a comma-separated list"
+                exit 1
+            fi
+            IFS=',' read -ra PLATFORMS <<< "$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            fail "Unknown argument: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Validate platform list against known platforms
+for p in "${PLATFORMS[@]}"; do
+    found=false
+    for ap in "${ALL_PLATFORMS[@]}"; do
+        [[ "$p" == "$ap" ]] && found=true && break
+    done
+    if ! $found; then
+        fail "Unknown platform: $p"
+        info "Known: ${ALL_PLATFORMS[*]}"
+        exit 1
+    fi
+done
 
 # -------------------------------------------------------
 # Header
@@ -65,7 +115,7 @@ if grep -q "panic:" test_output.log; then
 fi
 
 ok "All unit tests passed."
- rm test_output.log
+rm test_output.log
 
 # -------------------------------------------------------
 # Integration tests
@@ -109,9 +159,7 @@ for PLATFORM in "${PLATFORMS[@]}"; do
         DIST_OUTPUT_FILE="${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}/cfo"
     fi
 
-    LDFLAGS="-s -w \
-        -X main.GitCommit=${GIT_COMMIT} \
-        -X main.Version=${VERSION}"
+    LDFLAGS="-s -w -X main.GitCommit=${GIT_COMMIT} -X main.Version=${VERSION}"
 
     if GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
             -ldflags="${LDFLAGS}" \
@@ -134,6 +182,24 @@ if [ "${FAIL}" -gt 0 ]; then
     fail "One or more targets failed to compile — aborting."
     exit 1
 fi
+
+# -------------------------------------------------------
+# Checksums
+# -------------------------------------------------------
+
+section "Checksums"
+
+cd "${DIST_DIR}/originals"
+find . -type f | sort | while read -r f; do
+    sha256sum "${f}" >> ../checksums.txt
+done
+cd - > /dev/null
+
+while read -r hash path; do
+    ok "${path}"
+done < "${DIST_DIR}/checksums.txt"
+
+info "SHA256 checksums written to ${DIST_DIR}/checksums.txt"
 
 # -------------------------------------------------------
 # Source archive
