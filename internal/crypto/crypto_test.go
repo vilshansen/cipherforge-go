@@ -196,9 +196,8 @@ func TestGenerateSecurePassword(t *testing.T) {
 		wantErr     bool
 		errContains string
 	}{
+		{name: "valid length 44", length: 44, wantErr: false},
 		{name: "valid length 10", length: 10, wantErr: false},
-		{name: "valid length 20", length: 20, wantErr: false},
-		{name: "valid length 32", length: 32, wantErr: false},
 		{name: "valid length 1", length: 1, wantErr: false},
 		{name: "zero length", length: 0, wantErr: true, errContains: "length must be positive"},
 	}
@@ -214,16 +213,15 @@ func TestGenerateSecurePassword(t *testing.T) {
 				return
 			}
 
-			expectedGroups := (tt.length + 4) / 5
-			expectedHyphens := expectedGroups - 1
-			hyphenCount := 0
+			if len(got) != tt.length {
+				t.Errorf("GenerateSecurePassword() length = %d, want %d", len(got), tt.length)
+			}
+
+			// All output bytes must come from the pool — no hyphens.
 			for _, c := range got {
 				if c == '-' {
-					hyphenCount++
+					t.Errorf("password contains hyphen: %q", got)
 				}
-			}
-			if hyphenCount != expectedHyphens {
-				t.Errorf("Expected %d hyphens, got %d", expectedHyphens, hyphenCount)
 			}
 		})
 	}

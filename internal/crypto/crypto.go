@@ -76,13 +76,9 @@ func GenerateSecurePassword(length int, pool string) ([]byte, error) {
 	}
 
 	limit := big.NewInt(int64(len(pool)))
-	finalLen := length + length/5
-	password := make([]byte, 0, finalLen)
+	password := make([]byte, 0, length)
 
 	for i := 0; i < length; i++ {
-		if i > 0 && i%5 == 0 {
-			password = append(password, '-')
-		}
 		n, err := rand.Int(rand.Reader, limit)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read random byte: %w", err)

@@ -17,8 +17,10 @@ import (
 var Version = "dev"
 var GitCommit = "none"
 
-const characterPool = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-const passwordLength = 55
+// Clean pool: digits 1-9, uppercase A-Z minus I,O, lowercase a-z minus l.
+// 58 unambiguous characters.  44 chars = log₂(58⁴⁴) ≈ 257.7 bits ≥ 256.
+const characterPool = "123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+const passwordLength = 44
 
 func main() {
 	if len(os.Args) < 2 {
@@ -291,6 +293,33 @@ func expandInputPaths(inputs []string, op string) ([]string, error) {
 }
 
 func showHelp() {
-	fmt.Printf("Cipherforge v%s (commit: %s)\n", Version, GitCommit)
-	fmt.Println("Usage: cfo -e <file> | -d <file> [-p password]")
+	fmt.Printf("Cipherforge v%s (commit: %s)\n\n", Version, GitCommit)
+	fmt.Print("Encrypt and decrypt files using XChaCha20-Poly1305 and Argon2id key derivation.\n\n")
+	fmt.Println("Usage:")
+	fmt.Println("  cfo -e <file...>           Encrypt one or more files")
+	fmt.Println("  cfo -d <file...>           Decrypt one or more .cfo files")
+	fmt.Println("  cfo -e <file...> -p <pwd>  Encrypt with an explicit password")
+	fmt.Println("  cfo -e <file...> -p        Encrypt with an interactive password prompt")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  -e    Encrypt. Each input file produces <name>.cfo")
+	fmt.Println("  -d    Decrypt. Each .cfo file produces its original name")
+	fmt.Println("  -p    Supply a password. Without -p, encryption auto-generates one;")
+	fmt.Println("        decryption prompts interactively.")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  cfo -e document.pdf            Encrypt document.pdf → document.pdf.cfo")
+	fmt.Println("                                 (random password, printed once)")
+	fmt.Println("  cfo -e *.txt -p mysecret       Encrypt all .txt files with \"mysecret\"")
+	fmt.Println("  cfo -d document.pdf.cfo        Decrypt (prompts for password)")
+	fmt.Println("  cfo -d *.cfo -p mysecret       Decrypt all .cfo files with \"mysecret\"")
+	fmt.Println()
+	fmt.Println("Notes:")
+	fmt.Println("  • The auto-generated password is 44 characters long and is shown")
+	fmt.Println("    only once. Save it — it cannot be recovered.")
+	fmt.Println("  • Argon2id KDF uses 1 GiB of memory per operation; encryption and")
+	fmt.Println("    decryption each take several seconds.")
+	fmt.Println("  • The .cfo file reveals the original filename and approximate plaintext")
+	fmt.Println("    size. It does not hide the existence of encrypted data.")
+	fmt.Println("  • File format details: see FILEFORMAT.MD")
 }
