@@ -5,7 +5,7 @@ set -e
 GIT_COMMIT=$(git rev-parse --short HEAD)
 VERSION="1.00"
 
-SOURCE_FILE="cipherforge.go"
+SOURCE_FILE="cmd/cfo/main.go"
 
 PLATFORMS=(
     "linux/amd64"    # Linux Server/Desktop (Standard)
@@ -50,7 +50,7 @@ info "Targets  : ${#PLATFORMS[@]}"
 
 section "Unit Tests"
 
-go test -race -cover -v ./... 2>&1 | tee test_output.log
+go test -race -v ./... 2>&1 | tee test_output.log
 
 if grep -q "^--- FAIL:" test_output.log; then
     fail "Unit tests failed — build aborted."
@@ -110,8 +110,8 @@ for PLATFORM in "${PLATFORMS[@]}"; do
     fi
 
     LDFLAGS="-s -w \
-        -X github.com/vilshansen/cipherforge-go/constants.GitCommit=${GIT_COMMIT} \
-        -X github.com/vilshansen/cipherforge-go/constants.Version=${VERSION}"
+        -X main.GitCommit=${GIT_COMMIT} \
+        -X main.Version=${VERSION}"
 
     if GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
             -ldflags="${LDFLAGS}" \

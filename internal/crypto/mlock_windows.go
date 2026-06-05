@@ -1,6 +1,6 @@
 //go:build windows
 
-package cryptoutils
+package crypto
 
 import (
 	"unsafe"

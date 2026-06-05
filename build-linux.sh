@@ -5,7 +5,7 @@ set -e
 GIT_COMMIT=$(git rev-parse --short HEAD)
 VERSION="1.00"
 
-SOURCE_FILE="cipherforge.go"
+SOURCE_FILE="cmd/cfo/main.go"
 
 PLATFORMS=(
     "linux/amd64"    # Linux Server/Desktop (Standard)
@@ -22,7 +22,7 @@ echo "======================================================"
 
 # Run all tests but don't fail on packages without tests
 # Use a more robust approach: run tests and check if any actual test failures occurred
-go test -race -cover -v ./... 2>&1 | tee test_output.log
+go test -race -v ./... 2>&1 | tee test_output.log
 
 # Check for test failures (but ignore "no test files" messages)
 if grep -q "^--- FAIL:" test_output.log; then
@@ -92,7 +92,7 @@ for PLATFORM in "${PLATFORMS[@]}"; do
 
     echo "Building: ${TARGET_OS}/${TARGET_ARCH} -> ${DIST_OUTPUT_FILE}"
 
-    LDFLAGS="-s -w -X github.com/vilshansen/cipherforge-go/constants.GitCommit=${GIT_COMMIT} -X github.com/vilshansen/cipherforge-go/constants.Version=${VERSION}"
+    LDFLAGS="-s -w -X main.GitCommit=${GIT_COMMIT} -X main.Version=${VERSION}"
 
     GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
         -ldflags="${LDFLAGS}" \
