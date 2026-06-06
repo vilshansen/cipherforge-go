@@ -4,14 +4,20 @@ import (
 	"bytes"
 	"os"
 	"testing"
+
+	"github.com/vilshansen/cipherforge-go/internal/format"
 )
 
 const characterPool = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
+// fastParams are lightweight Argon2id parameters for tests.
+var fastParams = format.Argon2Params{
+	Time:    1,
+	Memory:  64 * 1024, // 64 MiB
+	Threads: 1,
+}
+
 func TestMain(m *testing.M) {
-	Argon2Time = 1
-	Argon2Memory = 64 * 1024 // 64 MiB
-	Argon2Threads = 1
 	os.Exit(m.Run())
 }
 
@@ -62,7 +68,7 @@ func TestDeriveKey(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := DeriveKey(tt.password, tt.salt)
+			got := DeriveKey(tt.password, tt.salt, fastParams)
 			if len(got) != tt.wantLen {
 				t.Errorf("DeriveKey() length = %d, want %d", len(got), tt.wantLen)
 			}
@@ -105,7 +111,7 @@ func TestDeriveKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			encKey, macKey := DeriveKeys(tt.password, tt.salt)
+			encKey, macKey := DeriveKeys(tt.password, tt.salt, fastParams)
 
 			if len(encKey) != 32 {
 				t.Errorf("encKey length = %d, want 32", len(encKey))
@@ -118,7 +124,7 @@ func TestDeriveKeys(t *testing.T) {
 				t.Error("encKey and macKey should be different")
 			}
 
-			encKey2, macKey2 := DeriveKeys(tt.password, tt.salt)
+			encKey2, macKey2 := DeriveKeys(tt.password, tt.salt, fastParams)
 			if !bytes.Equal(encKey, encKey2) {
 				t.Error("DeriveKeys not deterministic for encKey")
 			}
@@ -133,8 +139,8 @@ func TestDeriveKeys(t *testing.T) {
 		salt1 := []byte("salt-12345678")
 		salt2 := []byte("salt-87654321")
 
-		encKey1, macKey1 := DeriveKeys(password, salt1)
-		encKey2, macKey2 := DeriveKeys(password, salt2)
+		encKey1, macKey1 := DeriveKeys(password, salt1, fastParams)
+		encKey2, macKey2 := DeriveKeys(password, salt2, fastParams)
 
 		if bytes.Equal(encKey1, encKey2) {
 			t.Error("Different salts should produce different encKeys")
@@ -149,14 +155,29 @@ func TestDeriveKeys(t *testing.T) {
 		pass1 := []byte("password1")
 		pass2 := []byte("password2")
 
-		encKey1, macKey1 := DeriveKeys(pass1, salt)
-		encKey2, macKey2 := DeriveKeys(pass2, salt)
+		encKey1, macKey1 := DeriveKeys(pass1, salt, fastParams)
+		encKey2, macKey2 := DeriveKeys(pass2, salt, fastParams)
 
 		if bytes.Equal(encKey1, encKey2) {
 			t.Error("Different passwords should produce different encKeys")
 		}
 		if bytes.Equal(macKey1, macKey2) {
 			t.Error("Different passwords should produce different macKeys")
+		}
+	})
+
+	t.Run("different params produce different keys", func(t *testing.T) {
+		password := []byte("test-password")
+		salt := []byte("test-salt-12345678")
+
+		params1 := format.Argon2Params{Time: 1, Memory: 64 * 1024, Threads: 1}
+		params2 := format.Argon2Params{Time: 2, Memory: 64 * 1024, Threads: 1}
+
+		encKey1, _ := DeriveKeys(password, salt, params1)
+		encKey2, _ := DeriveKeys(password, salt, params2)
+
+		if bytes.Equal(encKey1, encKey2) {
+			t.Error("Different Argon2 params should produce different keys")
 		}
 	})
 }
@@ -217,7 +238,6 @@ func TestGenerateSecurePassword(t *testing.T) {
 				t.Errorf("GenerateSecurePassword() length = %d, want %d", len(got), tt.length)
 			}
 
-			// All output bytes must come from the pool — no hyphens.
 			for _, c := range got {
 				if c == '-' {
 					t.Errorf("password contains hyphen: %q", got)

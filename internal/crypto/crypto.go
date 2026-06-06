@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"runtime"
 
+	"github.com/vilshansen/cipherforge-go/internal/format"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -15,13 +16,6 @@ func RandReader() io.Reader {
 	return rand.Reader
 }
 
-// Argon2id parameters. These are variables so tests can override them.
-var (
-	Argon2Time    uint32 = 4
-	Argon2Memory  uint32 = 1024 * 1024 // 1 GiB
-	Argon2Threads uint8  = 4
-)
-
 const (
 	SaltSize   = 16
 	XNonceSize = 24
@@ -29,20 +23,19 @@ const (
 
 // DeriveKey is a convenience wrapper around DeriveKeys for callers that only
 // need the encryption key.
-func DeriveKey(password, salt []byte) []byte {
-	encKey, _ := DeriveKeys(password, salt)
+func DeriveKey(password, salt []byte, params format.Argon2Params) []byte {
+	encKey, _ := DeriveKeys(password, salt, params)
 	return encKey
 }
 
 // DeriveKeys derives two independent 32-byte keys from a single Argon2id run.
-// This implementation must perfectly match the original to ensure compatibility.
-func DeriveKeys(password, salt []byte) (encKey, macKey []byte) {
+func DeriveKeys(password, salt []byte, params format.Argon2Params) (encKey, macKey []byte) {
 	raw := argon2.IDKey(
 		password,
 		salt,
-		Argon2Time,
-		Argon2Memory,
-		Argon2Threads,
+		params.Time,
+		params.Memory,
+		params.Threads,
 		64,
 	)
 	encKey, macKey = raw[:32], raw[32:]

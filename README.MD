@@ -431,9 +431,13 @@ All multi-byte integer values are stored in **big-endian** byte order.
 | Field Name        | Data Type           | Length    | Value            |
 +-------------------+---------------------+-----------+------------------+
 | Magic             | byte array          | 8 bytes   | 0xC1PHRF0RGE     |
-| Version           | uint32 (big-endian) | 4 bytes   | 0x00000001       |
+| Version           | uint32 (big-endian) | 4 bytes   | 0x00000002       |
 | Salt              | byte array          | 16 bytes  | Argon2id Salt    |
 | Segment Seed      | byte array          | 24 bytes  | HKDF IKM         |
+| Argon2 Time       | uint32 (big-endian) | 4 bytes   | KDF passes       |
+| Argon2 Memory     | uint32 (big-endian) | 4 bytes   | KDF memory (KiB) |
+| Argon2 Threads    | uint8               | 1 byte    | KDF parallelism  |
+| Reserved          | byte array          | 3 bytes   | 0x000000         |
 +-------------------+---------------------+-----------+------------------+
 |              ENCRYPTED PAYLOAD (REPEAT UNTIL TRAILER)                  |
 +-------------------+---------------------+-----------+------------------+
@@ -452,13 +456,17 @@ All multi-byte integer values are stored in **big-endian** byte order.
 +-------------------+---------------------+-----------+------------------+
 ```
 
-**Header** (52 bytes fixed):
+**Header** (64 bytes fixed):
 - `Magic` (8 bytes): `0xC1 0x50 0x48 0x52 0x46 0x30 0x52 0x47` — allows fast
   rejection of non-`.cfo` files before any key derivation is attempted
-- `Version` (4 bytes): format version, currently `0x00000001` — allows future
-  format changes to be detected cleanly
+- `Version` (4 bytes): format version, currently `0x00000002`. v1 files use
+  `0x00000001` and omit the Argon2 parameter fields (52-byte header).
 - `Salt` (16 bytes): random Argon2id salt, unique per file
 - `Segment Seed` (24 bytes): random HKDF IKM, unique per file
+- `Argon2 Time` (4 bytes): number of passes over memory
+- `Argon2 Memory` (4 bytes): KiB of RAM for the KDF (1,048,576 = 1 GiB)
+- `Argon2 Threads` (1 byte): degree of parallelism
+- `Reserved` (3 bytes): must be zero, reserved for future use
 
 **Payload** (repeating):
 Each segment is prefixed with an 8-byte big-endian length, followed by the
@@ -468,16 +476,17 @@ size is 1,048,576 + 16 bytes (plaintext + AEAD overhead).
 
 **Trailer** (40 bytes fixed):
 - `Segment Count` (8 bytes): total number of segments written
-- `Trailer HMAC` (32 bytes): `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v1"
-  || salt || segmentSeed || segmentCount)`
+- `Trailer HMAC` (32 bytes): version-dependent construction:
+  - v1: `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v1" || salt || segmentSeed || segmentCount)`
+  - v2: `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v2" || salt || segmentSeed || argon2Time || argon2Memory || argon2Threads || zero[3] || segmentCount)`
 
 The trailer is always at `EOF - 40`. The decoder seeks to this offset first,
 verifies the HMAC, then performs a single sequential read of the payload.
 
-**Header size**: 8 + 4 + 16 + 24 = **52 bytes**  
-**Minimum valid file size**: 52 (header) + 40 (trailer) = **92 bytes**  
+**Header size**: 8 + 4 + 16 + 24 + 12 = **64 bytes** (v2), 52 bytes (v1)  
+**Minimum valid file size**: 64 (header) + 40 (trailer) = **104 bytes** (v2), 92 bytes (v1)  
 **Overhead per segment**: 8 (length) + 16 (tag) = **24 bytes**  
-**File overhead**: 92 bytes + 24 bytes per segment
+**File overhead**: 104 bytes + 24 bytes per segment (v2)
 
 ---
 

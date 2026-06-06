@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.0.2 (2026-06-06)
+
+### Changed
+
+- **File format v2**: Argon2id parameters (time, memory, threads) are now stored
+  in the file header (12 bytes). Each encrypted file is self-describing — future
+  parameter changes won't break decryption of existing archives.
+- v2 decoders read v1 files transparently, falling back to production defaults.
+- KDF parameters are authenticated by the trailer HMAC (v2 context string),
+  preventing downgrade attacks.
+- Header size increased from 52 to 64 bytes. Minimum file size from 92 to 104 bytes.
+
+### Removed
+
+- Package-level Argon2id globals removed. `DeriveKeys` now accepts a `format.Argon2Params`
+  struct, making it a pure function.
+
 ## v1.0.1 (2026-06-05)
 
 ### Added

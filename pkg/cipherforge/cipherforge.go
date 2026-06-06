@@ -17,10 +17,21 @@ import (
 // Encrypter handles the encryption of a stream in segments.
 type Encrypter struct {
 	password []byte
+	params   format.Argon2Params
 }
 
+// NewEncrypter creates an Encrypter with the given password and production-hardened
+// Argon2id parameters.
 func NewEncrypter(password []byte) *Encrypter {
-	return &Encrypter{password: password}
+	return &Encrypter{
+		password: password,
+		params:   format.DefaultArgon2Params(),
+	}
+}
+
+// NewEncrypterWithParams creates an Encrypter with custom Argon2id parameters.
+func NewEncrypterWithParams(password []byte, params format.Argon2Params) *Encrypter {
+	return &Encrypter{password: password, params: params}
 }
 
 func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) error {
@@ -34,7 +45,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	encKey, macKey := crypto.DeriveKeys(e.password, salt)
+	encKey, macKey := crypto.DeriveKeys(e.password, salt, e.params)
 	defer crypto.ZeroBytes(encKey)
 	defer crypto.ZeroBytes(macKey)
 
@@ -47,6 +58,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	bufOut := bufio.NewWriterSize(w, format.SegmentSize+aead.Overhead()+8)
 	defer bufOut.Flush()
 
+	// Header (v2 layout: 64 bytes).
 	if _, err := bufOut.Write([]byte(format.Magic)); err != nil {
 		return err
 	}
@@ -57,6 +69,9 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 	if _, err := bufOut.Write(segmentSeed); err != nil {
+		return err
+	}
+	if err := format.WriteArgon2Params(bufOut, e.params); err != nil {
 		return err
 	}
 
@@ -103,7 +118,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	trailer := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount)
+	trailer := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params, format.FileVersion)
 	if _, err := bufOut.Write(trailer); err != nil {
 		return err
 	}
@@ -133,7 +148,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	if err != nil {
 		return err
 	}
-	if version != format.FileVersion {
+	if version != 1 && version != format.FileVersion {
 		return fmt.Errorf("unsupported version")
 	}
 
@@ -147,7 +162,17 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	encKey, macKey := crypto.DeriveKeys(d.password, salt)
+	// Read Argon2id parameters: v2 files carry them in the header; v1 uses
+	// production defaults.
+	params := format.DefaultArgon2Params()
+	if version >= 2 {
+		params, err = format.ReadArgon2Params(r)
+		if err != nil {
+			return err
+		}
+	}
+
+	encKey, macKey := crypto.DeriveKeys(d.password, salt, params)
 	defer crypto.ZeroBytes(encKey)
 	defer crypto.ZeroBytes(macKey)
 
@@ -174,12 +199,13 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	segmentCount := binary.BigEndian.Uint64(trailerBuf[:8])
 	storedHMAC := trailerBuf[8:]
 
-	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount)
+	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params, version)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
 		return fmt.Errorf("authentication failed")
 	}
 
-	if _, err := r.Seek(int64(format.MagicSize+format.VersionSize+format.SaltSize+format.XNonceSize), io.SeekStart); err != nil {
+	payloadOffset := format.PayloadOffset(version)
+	if _, err := r.Seek(payloadOffset, io.SeekStart); err != nil {
 		return err
 	}
 
@@ -234,7 +260,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	return nil
 }
 
-// Internal helpers ported exactly from fileutils.go
+// Internal helpers.
 
 func buildAAD(dst []byte, segmentIndex, plaintextLen uint64) {
 	binary.BigEndian.PutUint64(dst[:8], segmentIndex)
@@ -255,11 +281,26 @@ func deriveSegmentNonce(segmentSeed []byte, segmentCounter uint64) ([]byte, erro
 	return nonce, nil
 }
 
-func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64) []byte {
+func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params, version uint32) []byte {
 	h := hmac.New(sha256.New, macKey)
-	h.Write([]byte(format.TrailerHMACContext))
-	h.Write(salt)
-	h.Write(segmentSeed)
+
+	if version <= 1 {
+		// v1: context || salt || segmentSeed || segmentCount
+		h.Write([]byte(format.TrailerHMACContext))
+		h.Write(salt)
+		h.Write(segmentSeed)
+	} else {
+		// v2+: context-v2 || salt || segmentSeed || time || memory || threads || reserved || segmentCount
+		h.Write([]byte(format.TrailerHMACContextV2))
+		h.Write(salt)
+		h.Write(segmentSeed)
+		var buf [8]byte
+		binary.BigEndian.PutUint32(buf[0:4], params.Time)
+		binary.BigEndian.PutUint32(buf[4:8], params.Memory)
+		h.Write(buf[:])
+		h.Write([]byte{params.Threads, 0, 0, 0})
+	}
+
 	var countBuf [8]byte
 	binary.BigEndian.PutUint64(countBuf[:], segmentCount)
 	h.Write(countBuf[:])

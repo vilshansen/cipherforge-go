@@ -47,13 +47,22 @@ A `.cfo` file consists of three contiguous regions:
 
 ```
 ╔══════════════════════════════╗
-║         HEADER (52 B)        ║  Fixed size. Written first.
+║    HEADER (64 B in v2)       ║  Fixed size. Written first.
+║    HEADER (52 B in v1)       ║  Legacy v1 header (no KDF params).
 ╠══════════════════════════════╣
 ║       PAYLOAD (variable)     ║  One or more encrypted segments.
 ╠══════════════════════════════╣
 ║         TRAILER (40 B)       ║  Fixed size. Written last.
 ╚══════════════════════════════╝
 ```
+
+Format version 1 (v1) uses a 52-byte header and stores no Argon2id
+parameters — decoders must use production defaults (time=4, memory=1 GiB,
+threads=4).  Format version 2 (v2) extends the header to 64 bytes with 12
+bytes of explicit KDF parameters immediately after the Segment Seed.  This
+document describes v2; the v1 layout is identical except the 12 Argon2
+parameter bytes are absent and everything after the Segment Seed shifts up by
+12 bytes (payload starts at offset 52 instead of 64).
 
 **The header** contains everything needed to derive the decryption keys and
 reconstruct per-segment nonces. All header fields are stored in plaintext.
@@ -79,8 +88,9 @@ done. The cost is that decryption requires a seekable input (to jump to the
 end and read the trailer). This is acceptable for file encryption, where
 inputs are always regular files.
 
-The minimum valid file size is 92 bytes: 52 bytes of header plus 40 bytes of
-trailer with no payload segments (the result of encrypting an empty file).
+The minimum valid file size is 92 bytes for v1 and 104 bytes for v2:
+header plus trailer with no payload segments (the result of encrypting an
+empty file).
 
 ---
 
@@ -95,7 +105,8 @@ Byte offset   Length    Field
 8             4         Format version (uint32)
 12            16        Argon2id salt
 28            24        Segment Seed (HKDF IKM)
-52            …         Payload (variable; see below)
+52            12        Argon2id parameters (v2 only; absent in v1)
+64            …         Payload (variable; see below)
 EOF−40        8         Segment count (uint64)
 EOF−32        32        Trailer HMAC-SHA256
 ```
@@ -305,6 +316,56 @@ chosen for simplicity.
 
 ---
 
+## Argon2id Parameters (v2 only; bytes 52–63)
+
+**Value:** 12 bytes encoding three KDF parameters:
+
+| Offset | Length | Field | Encoding |
+|--------|--------|-------|----------|
+| 52     | 4      | Time  | uint32 big-endian — number of passes |
+| 56     | 4      | Memory | uint32 big-endian — KiB of RAM |
+| 60     | 1      | Threads | uint8 — degree of parallelism |
+| 61     | 3      | Reserved | Must be zero |
+
+**Confidentiality required:** No.
+
+**Integrity required:** Yes. The parameters are included in the trailer HMAC.
+An attacker who downgrades them (e.g., swapping `time=4` → `time=1`) makes
+brute-force attacks dramatically cheaper. The HMAC catches this before key
+derivation.
+
+**Why store parameters in the file:** Without embedded parameters, changing
+the KDF defaults — even for good reasons, such as responding to new hardware
+or updated OWASP recommendations — would break decryption of every existing
+archive. Embedding the parameters makes each file self-describing: the
+decoder reads them from the header and uses them regardless of what a future
+binary considers the default. A v2 decoder can decrypt a file encrypted with
+`time=8` five years from now without any configuration or heuristics.
+
+**Why KiB for memory:** Storing bytes directly would require uint64 and push
+the parameter block past 12 bytes. KiB in uint32 handles up to 4 TiB, which
+covers any realistic Argon2id configuration for the foreseeable future.
+
+**V1 fallback:** v1 files carry no parameters. A v2 decoder encountering a
+v1 file uses the original production defaults (time=4, memory=1,048,576 KiB,
+threads=4). This ensures backward compatibility without special-casing the
+decryption logic.
+
+**Relationship to the HMAC:** In v2, the parameters are included in the
+trailer HMAC after the Segment Seed and before the segment count:
+
+```
+HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v2" || salt || segmentSeed
+          || uint32_be(time) || uint32_be(memory) || uint8(threads)
+          || zero[3] || uint64_be(segmentCount))
+```
+
+The v2 context string (`cipherforge-trailer-hmac-v2`) provides domain
+separation from v1, ensuring a v2 HMAC can never validate against a v1
+decoder.
+
+---
+
 ## Payload
 
 The payload is a sequence of encrypted segments, written contiguously without
@@ -484,12 +545,28 @@ different expected HMAC, which does not match the stored HMAC.
 
 **Value:** 32 bytes. HMAC-SHA256 computed as:
 
+v1 (format version 1):
 ```
 HMAC-SHA256(
     key   = macKey,
     input = "cipherforge-trailer-hmac-v1"
           || salt                          (16 bytes)
           || segmentSeed                   (24 bytes)
+          || uint64_big_endian(segmentCount) (8 bytes)
+)
+```
+
+v2 (format version ≥ 2):
+```
+HMAC-SHA256(
+    key   = macKey,
+    input = "cipherforge-trailer-hmac-v2"
+          || salt                          (16 bytes)
+          || segmentSeed                   (24 bytes)
+          || uint32_be(argon2Time)         (4 bytes)
+          || uint32_be(argon2Memory)       (4 bytes, KiB)
+          || uint8(argon2Threads)          (1 byte)
+          || zero[3]                       (3 reserved bytes)
           || uint64_big_endian(segmentCount) (8 bytes)
 )
 ```
@@ -536,9 +613,10 @@ input. The context string makes this impossible by design.
 
 | Element | Why included |
 |---|---|
-| Context string | Domain separation across versions and applications |
+| Context string | Domain separation across versions |
 | `salt` | Detects salt substitution from another file |
 | `segmentSeed` | Detects Segment Seed substitution from another file |
+| `argon2Time`, `argon2Memory`, `argon2Threads` (v2) | Detects KDF parameter downgrade attacks |
 | `segmentCount` | Detects file truncation and segment appending |
 
 The magic and version bytes are not included. If either is tampered with,
@@ -558,16 +636,19 @@ that is central to the design.
 2. Read and validate version (4 bytes).
 3. Read salt (16 bytes).
 4. Read Segment Seed (24 bytes).
-5. Derive `encKey` and `macKey` from password + salt via Argon2id.
-6. Seek to `EOF − 40`. Read segment count and stored HMAC.
-7. Compute expected HMAC. Compare with `hmac.Equal`.
-8. If HMAC fails: return error immediately, delete output file (empty at this
+5. If version ≥ 2: read Argon2id parameters (12 bytes). If version = 1: use
+   production defaults (time=4, memory=1,048,576 KiB, threads=4).
+6. Derive `encKey` and `macKey` from password + salt + parameters via Argon2id.
+7. Seek to `EOF − 40`. Read segment count and stored HMAC.
+8. Compute expected HMAC (using the version-appropriate construction).
+   Compare with `hmac.Equal`.
+9. If HMAC fails: return error immediately, delete output file (empty at this
    point), done.
-9. Seek back to byte 52 (start of payload). Decrypt segments.
+10. Seek to payload start (byte 52 for v1, byte 64 for v2). Decrypt segments.
 
-Step 7 catches wrong passwords, corrupt files, truncated files, appended
+Step 8 catches wrong passwords, corrupt files, truncated files, appended
 files, and header substitution — all before a single byte of plaintext is
-written to disk. Steps 1–4 happen before step 5 (key derivation) because
+written to disk. Steps 1–5 happen before step 6 (key derivation) because
 magic and version validation are cheap; there is no point spending several
 seconds on Argon2id if the file is obviously not a `.cfo` file.
 
@@ -578,15 +659,16 @@ seconds on Argon2id if the file is obviously not a `.cfo` file.
 ### From Password to Keys
 
 The user's password is never stored. On both encryption and decryption, it is
-fed into Argon2id along with the salt read from the file header:
+fed into Argon2id along with the salt and parameters from the file header
+(or production defaults for v1 files):
 
 ```
 raw = Argon2id(
     password = <user-supplied password>,
     salt     = <16-byte salt from header>,
-    time     = 4,
-    memory   = 1,048,576 KiB   (1 GiB),
-    threads  = 4,
+    time     = <argon2Time from header, or 4 for v1>,
+    memory   = <argon2Memory from header, or 1,048,576 for v1>,
+    threads  = <argon2Threads from header, or 4 for v1>,
     keyLen   = 64
 )
 
@@ -611,11 +693,6 @@ decryption session, but an attacker must pay it for every password guess. At
 1 GiB per attempt, a machine with 64 GiB of RAM can parallelise at most 64
 simultaneous guesses — a far cry from the millions per second achievable
 against unsalted or weakly-iterated hashes.
-
-The parameters are declared as mutable Go `var` rather than `const` so that
-tests can substitute minimal values (time=1, memory=64 MiB) without spending
-real time and memory. Production binaries start with the hardened defaults;
-these values are never modified outside of test setup.
 
 **Why derive both keys from one invocation:** Calling Argon2id twice — once
 for `encKey` and once for `macKey` — would double the time and memory cost on
@@ -699,35 +776,57 @@ function DecryptCFO(file, password) -> plaintext | error:
      On failure: return "not a valid .cfo file"
 
   2. Read 4 bytes at offset 8 as uint32 big-endian → version.
-     Assert version == 1
+     Assert version == 1 or version == 2
      On failure: return "unsupported format version"
 
   3. Read 16 bytes at offset 12 → salt.
 
   4. Read 24 bytes at offset 28 → segmentSeed.
 
-  5. Derive keys:
-       raw = Argon2id(password, salt, time=4, memory=1GiB, threads=4, keyLen=64)
+  5. If version >= 2:
+       Read 4 bytes at offset 52 as uint32 big-endian → argon2Time
+       Read 4 bytes at offset 56 as uint32 big-endian → argon2Memory  (KiB)
+       Read 1 byte  at offset 60 as uint8             → argon2Threads
+       Skip 3 bytes at offset 61 (reserved)
+     Else (version == 1):
+       Set argon2Time = 4, argon2Memory = 1048576, argon2Threads = 4
+
+  6. Derive keys:
+       raw = Argon2id(password, salt,
+                      time=argon2Time, memory=argon2Memory,
+                      threads=argon2Threads, keyLen=64)
        encKey = raw[0:32]
        macKey = raw[32:64]
 
-  6. Read 8 bytes at file_size - 40 as uint64 big-endian → segmentCount.
+  7. Read 8 bytes at file_size - 40 as uint64 big-endian → segmentCount.
      Read 32 bytes at file_size - 32 → storedHMAC.
 
-  7. Compute:
-       expectedHMAC = HMAC-SHA256(
-           key   = macKey,
-           input = "cipherforge-trailer-hmac-v1"
-                || salt
-                || segmentSeed
-                || uint64_big_endian(segmentCount)
-       )
+  8. Compute:
+       if version == 1:
+         expectedHMAC = HMAC-SHA256(
+             key   = macKey,
+             input = "cipherforge-trailer-hmac-v1"
+                  || salt
+                  || segmentSeed
+                  || uint64_big_endian(segmentCount)
+         )
+       else:
+         expectedHMAC = HMAC-SHA256(
+             key   = macKey,
+             input = "cipherforge-trailer-hmac-v2"
+                  || salt
+                  || segmentSeed
+                  || uint32_big_endian(argon2Time)
+                  || uint32_big_endian(argon2Memory)
+                  || uint8(argon2Threads) || zero[3]
+                  || uint64_big_endian(segmentCount)
+         )
      Assert hmac_equal(storedHMAC, expectedHMAC)  ← constant-time comparison
      On failure: return "authentication failed: wrong password or corrupt file"
 
-  8. Seek to offset 52 (start of payload).
+  9. Seek to payload start (byte 52 for v1, byte 64 for v2).
 
-  9. For i in 0 .. segmentCount - 1:
+  10. For i in 0 .. segmentCount - 1:
 
        a. Read 8 bytes as uint64 big-endian → segmentLen.
 
@@ -760,10 +859,11 @@ function DecryptCFO(file, password) -> plaintext | error:
 
        h. Append plaintext_segment to output.
 
-  10. Return output.
+  11. Return output.
 ```
 
 Byte order is big-endian throughout. The HKDF info field is the exact byte
 concatenation of the ASCII string and the 8-byte counter with no separator.
 The HMAC input is the exact byte concatenation of the context string, salt,
-Segment Seed, and 8-byte segment count with no separators or length prefixes.
+Segment Seed, Argon2 parameters (v2 only), and 8-byte segment count with no
+separators or length prefixes.
