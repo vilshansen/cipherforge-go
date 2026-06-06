@@ -3,7 +3,7 @@
 set -e
 
 GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="${VERSION:-2.0.0}"
+VERSION="${VERSION:-2.0.1}"
 
 SOURCE_FILE="cmd/cfo/main.go"
 
