@@ -199,7 +199,7 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 	}
 
 	for {
-		p, err := ui.ReadPasswordFromTerminal("Enter password for decryption: ")
+		p, err := ui.ReadPasswordStarred("Enter password for decryption: ")
 		if err != nil {
 			return nil, err
 		}
