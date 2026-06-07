@@ -11,7 +11,7 @@ elif [ -f "../dist/originals/linux/amd64/cfo" ]; then
 else
     echo "Binary not found, building test binary..."
     cd ..
-    go build -o test/test_bin ../cmd/cfo/
+    go build -o test/test_bin ./cmd/cfo/
     cd test
     CFO_BIN="./test_bin"
 fi
