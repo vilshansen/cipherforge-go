@@ -183,9 +183,7 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 		if len(userPassword) == 0 {
 			return nil, fmt.Errorf("password must not be empty")
 		}
-		if operation == "encrypt" {
-			fmt.Printf("Using supplied password for encryption.\n")
-		}
+		fmt.Printf("  Supplied password: %s\n\n", userPassword)
 		return userPassword, nil
 	}
 
@@ -194,7 +192,14 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("Encryption password (save this — it cannot be recovered):\n%s\n", p)
+		fmt.Println()
+		fmt.Println("  ┌────────────────────────────────────────────────┐")
+		fmt.Println("  │              ENCRYPTION PASSWORD               │")
+		fmt.Println("  │      Save this -- it cannot be recovered.      │")
+		fmt.Println("  ├────────────────────────────────────────────────┤")
+		fmt.Printf("  │  %s  │\n", p)
+		fmt.Println("  └────────────────────────────────────────────────┘")
+		fmt.Println()
 		return p, nil
 	}
 

@@ -23,7 +23,7 @@ func RunProgressBar(prefix string, percent int) {
 	}
 	filled := (percent * barWidth) / 100
 	bar := strings.Repeat("#", filled) + strings.Repeat(".", barWidth-filled)
-	fmt.Printf("\r%-40s [%s] %3d%%", prefix, bar, percent)
+	fmt.Printf("\r%-50s [%s] %3d%%", prefix, bar, percent)
 }
 
 func ReadPasswordFromTerminal(prompt string) ([]byte, error) {
