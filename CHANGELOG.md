@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.1.0 (2026-06-07)
+
+### Added
+
+- `-q` / `--quiet` flag to suppress progress bar and summary output
+- `-f` / `--force` flag to overwrite existing output files (safe by default)
+- Encryption summary line showing input → output and file size
+- File size displayed in progress bar prefix
+- Short-password warning for `-p` passwords under 12 characters
+
+### Changed
+
+- `.cfo` files are now skipped when encrypting with wildcard patterns
+- Password display unified with consistent box formatting
+- Progress bar prefix widened from 40 to 50 characters
+
+### Fixed
+
+- Progress bar estimate now uses correct v2 header size (64 bytes)
+- `macKey` zeroed immediately after last use instead of at function exit
+- KDF parameter validation rejects `time=0`, `memory=0`, or `threads=0`
+- Clean error message for files smaller than 40 bytes
+- Glob errors properly propagated instead of silently ignored
+
 ## v2.0.1 (2026-06-06)
 
 ### Changed
