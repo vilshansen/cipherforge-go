@@ -184,6 +184,9 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	if err != nil {
 		return err
 	}
+	if fileSize < int64(format.TrailerSize) {
+		return fmt.Errorf("file too small to be a .cfo file")
+	}
 
 	trailerOffset := fileSize - int64(format.TrailerSize)
 	if _, err := r.Seek(trailerOffset, io.SeekStart); err != nil {

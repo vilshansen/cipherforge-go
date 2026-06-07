@@ -146,15 +146,26 @@ func decryptFile(inputFile, outputFile string, password []byte) error {
 	prefix := fmt.Sprintf("Decrypting %s", filepath.Base(inputFile))
 
 	// Estimate plaintext size for accurate progress bar.
-	// Read segment count from the trailer (last 40 bytes of the file).
+	// Read segment count from the trailer (last 40 bytes of the file)
+	// and the version from the header to get the correct header size.
 	estimatedTotal := fileSize
+	headerSize := int64(52) // v1 default
 	if fileSize >= 40 {
+		// Read version from offset 8 to determine header size.
+		if _, err := in.Seek(8, io.SeekStart); err == nil {
+			var versionBuf [4]byte
+			if _, err := io.ReadFull(in, versionBuf[:]); err == nil {
+				if binary.BigEndian.Uint32(versionBuf[:]) >= 2 {
+					headerSize = 64
+				}
+			}
+		}
+		// Read segment count from trailer.
 		if _, err := in.Seek(-40, io.SeekEnd); err == nil {
 			var trailerHead [8]byte
 			if _, err := io.ReadFull(in, trailerHead[:]); err == nil {
 				segCount := int64(binary.BigEndian.Uint64(trailerHead[:]))
-				// plaintext = ciphertext − header(52) − trailer(40) − segs×24(length+tag)
-				estimatedTotal = fileSize - 52 - 40 - segCount*24
+				estimatedTotal = fileSize - headerSize - 40 - segCount*24
 			}
 		}
 		in.Seek(0, io.SeekStart)
@@ -334,7 +345,10 @@ func resolvePasswordInteractive(op string) ([]byte, error) {
 func expandInputPaths(inputs []string, op string) ([]string, error) {
 	var files []string
 	for _, input := range inputs {
-		matches, _ := filepath.Glob(input)
+		matches, err := filepath.Glob(input)
+		if err != nil {
+			return nil, fmt.Errorf("glob pattern %q: %w", input, err)
+		}
 		for _, match := range matches {
 			info, err := os.Stat(match)
 			if err == nil && !info.IsDir() {
