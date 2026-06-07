@@ -51,7 +51,7 @@ do_encrypt() {
 
 do_decrypt() {
     local target="$1"
-    "$CFO_BIN" -d "$target" -p "$TEST_PASSWORD" >/dev/null 2>&1
+    "$CFO_BIN" -d "$target" -p "$TEST_PASSWORD" -f >/dev/null 2>&1
 }
 
 # =============================================================================
