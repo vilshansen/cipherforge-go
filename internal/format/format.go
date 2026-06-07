@@ -90,6 +90,10 @@ func ReadArgon2Params(r io.Reader) (Argon2Params, error) {
 	p.Time = time
 	p.Memory = mem
 	p.Threads = tail[0]
+	if p.Time == 0 || p.Memory == 0 || p.Threads == 0 {
+		return p, fmt.Errorf("argon2 params must be non-zero: time=%d memory=%d threads=%d",
+			p.Time, p.Memory, p.Threads)
+	}
 	return p, nil
 }
 

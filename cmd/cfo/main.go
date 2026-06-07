@@ -183,7 +183,7 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 		if len(userPassword) == 0 {
 			return nil, fmt.Errorf("password must not be empty")
 		}
-		fmt.Printf("  Supplied password: %s\n\n", userPassword)
+		fmt.Printf("  Supplied password accepted.\n\n")
 		return userPassword, nil
 	}
 

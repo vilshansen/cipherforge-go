@@ -47,7 +47,6 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 
 	encKey, macKey := crypto.DeriveKeys(e.password, salt, e.params)
 	defer crypto.ZeroBytes(encKey)
-	defer crypto.ZeroBytes(macKey)
 
 	aead, err := chacha20poly1305.NewX(encKey)
 	if err != nil {
@@ -119,6 +118,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	}
 
 	trailer := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params, format.FileVersion)
+	crypto.ZeroBytes(macKey)
 	if _, err := bufOut.Write(trailer); err != nil {
 		return err
 	}
@@ -174,7 +174,6 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 
 	encKey, macKey := crypto.DeriveKeys(d.password, salt, params)
 	defer crypto.ZeroBytes(encKey)
-	defer crypto.ZeroBytes(macKey)
 
 	aead, err := chacha20poly1305.NewX(encKey)
 	if err != nil {
@@ -201,8 +200,10 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 
 	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params, version)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
+		crypto.ZeroBytes(macKey)
 		return fmt.Errorf("authentication failed")
 	}
+	crypto.ZeroBytes(macKey)
 
 	payloadOffset := format.PayloadOffset(version)
 	if _, err := r.Seek(payloadOffset, io.SeekStart); err != nil {
