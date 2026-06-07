@@ -30,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	operation, inputPattern, userPassword, outputOverride, err := getParameters()
+	operation, inputPattern, userPassword, outputOverride, quiet, force, err := getParameters()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -59,7 +59,7 @@ func main() {
 		if outputFile == "" {
 			outputFile = deriveOutputPath(operation, inputFile)
 		}
-		if err := processFile(operation, inputFile, outputFile, password); err != nil {
+		if err := processFile(operation, inputFile, outputFile, password, quiet, force); err != nil {
 			fmt.Fprintf(os.Stderr, "\nError processing %s: %v\n", inputFile, err)
 		}
 	}
@@ -72,17 +72,35 @@ func deriveOutputPath(operation, inputFile string) string {
 	return strings.TrimSuffix(inputFile, ".cfo")
 }
 
-func processFile(operation, inputFile, outputFile string, password []byte) error {
+func formatSize(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for nn := n / unit; nn >= unit && exp < 3; nn /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
+}
+
+func processFile(operation, inputFile, outputFile string, password []byte, quiet, force bool) error {
 	if operation == "decrypt" && !strings.HasSuffix(inputFile, ".cfo") {
 		return fmt.Errorf("missing .cfo extension")
 	}
-	if operation == "encrypt" {
-		return encryptFile(inputFile, outputFile, password)
+	if !force {
+		if _, err := os.Stat(outputFile); err == nil {
+			return fmt.Errorf("output file %q already exists (use -f to overwrite)", outputFile)
+		}
 	}
-	return decryptFile(inputFile, outputFile, password)
+	if operation == "encrypt" {
+		return encryptFile(inputFile, outputFile, password, quiet)
+	}
+	return decryptFile(inputFile, outputFile, password, quiet)
 }
 
-func encryptFile(inputFile, outputFile string, password []byte) error {
+func encryptFile(inputFile, outputFile string, password []byte, quiet bool) error {
 	in, err := os.Open(inputFile)
 	if err != nil {
 		return err
@@ -104,24 +122,31 @@ func encryptFile(inputFile, outputFile string, password []byte) error {
 
 	info, _ := in.Stat()
 	total := info.Size()
-	prefix := fmt.Sprintf("Encrypting %s", filepath.Base(inputFile))
+	prefix := fmt.Sprintf("Encrypting %s (%s)", filepath.Base(inputFile), formatSize(total))
 
 	enc := cipherforge.NewEncrypter(password)
 	err = enc.Encrypt(in, out, func(done int64) {
-		if total > 0 {
+		if !quiet && total > 0 {
 			ui.RunProgressBar(prefix, int((done*100)/total))
 		}
 	})
 
 	if err == nil {
-		ui.RunProgressBar(prefix, 100)
-		fmt.Println()
+		if !quiet {
+			ui.RunProgressBar(prefix, 100)
+			fmt.Println()
+		}
 		succeeded = true
+		if !quiet {
+			outInfo, _ := os.Stat(outputFile)
+			fmt.Printf("  %s  →  %s  (%s)\n", filepath.Base(inputFile),
+				filepath.Base(outputFile), formatSize(outInfo.Size()))
+		}
 	}
 	return err
 }
 
-func decryptFile(inputFile, outputFile string, password []byte) error {
+func decryptFile(inputFile, outputFile string, password []byte, quiet bool) error {
 	in, err := os.Open(inputFile)
 	if err != nil {
 		return err
@@ -143,15 +168,12 @@ func decryptFile(inputFile, outputFile string, password []byte) error {
 
 	info, _ := in.Stat()
 	fileSize := info.Size()
-	prefix := fmt.Sprintf("Decrypting %s", filepath.Base(inputFile))
+	prefix := fmt.Sprintf("Decrypting %s (%s)", filepath.Base(inputFile), formatSize(fileSize))
 
 	// Estimate plaintext size for accurate progress bar.
-	// Read segment count from the trailer (last 40 bytes of the file)
-	// and the version from the header to get the correct header size.
 	estimatedTotal := fileSize
 	headerSize := int64(52) // v1 default
 	if fileSize >= 40 {
-		// Read version from offset 8 to determine header size.
 		if _, err := in.Seek(8, io.SeekStart); err == nil {
 			var versionBuf [4]byte
 			if _, err := io.ReadFull(in, versionBuf[:]); err == nil {
@@ -160,7 +182,6 @@ func decryptFile(inputFile, outputFile string, password []byte) error {
 				}
 			}
 		}
-		// Read segment count from trailer.
 		if _, err := in.Seek(-40, io.SeekEnd); err == nil {
 			var trailerHead [8]byte
 			if _, err := io.ReadFull(in, trailerHead[:]); err == nil {
@@ -171,19 +192,21 @@ func decryptFile(inputFile, outputFile string, password []byte) error {
 		in.Seek(0, io.SeekStart)
 	}
 	if estimatedTotal <= 0 {
-		estimatedTotal = 1 // avoid division by zero for empty files
+		estimatedTotal = 1
 	}
 
 	dec := cipherforge.NewDecrypter(password)
 	err = dec.Decrypt(in, out, func(done int64) {
-		if estimatedTotal > 0 {
+		if !quiet && estimatedTotal > 0 {
 			ui.RunProgressBar(prefix, int((done*100)/estimatedTotal))
 		}
 	})
 
 	if err == nil {
-		ui.RunProgressBar(prefix, 100)
-		fmt.Println()
+		if !quiet {
+			ui.RunProgressBar(prefix, 100)
+			fmt.Println()
+		}
 		succeeded = true
 	}
 	return err
@@ -193,6 +216,10 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 	if userPassword != nil {
 		if len(userPassword) == 0 {
 			return nil, fmt.Errorf("password must not be empty")
+		}
+		if len(userPassword) < 12 {
+			fmt.Fprintf(os.Stderr, "Warning: short password (%d chars).  Consider a longer one.\n\n",
+				len(userPassword))
 		}
 		fmt.Printf("  Supplied password accepted.\n\n")
 		return userPassword, nil
@@ -226,12 +253,13 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 	}
 }
 
-func getParameters() (string, []string, []byte, string, error) {
+func getParameters() (string, []string, []byte, string, bool, bool, error) {
 	args := os.Args[1:]
 	var encryptInputs []string
 	var decryptInputs []string
 	var explicitPassword []byte
 	var outputFile string
+	var quiet, force bool
 	passwordSeen := false
 	outputSeen := false
 
@@ -243,6 +271,10 @@ func getParameters() (string, []string, []byte, string, error) {
 		case "-v", "--version":
 			fmt.Printf("Cipherforge v%s (commit: %s)\n", Version, GitCommit)
 			os.Exit(0)
+		case "-q", "--quiet":
+			quiet = true
+		case "-f", "--force":
+			force = true
 		case "-e":
 			i++
 			for i < len(args) && args[i][0] != '-' {
@@ -259,18 +291,18 @@ func getParameters() (string, []string, []byte, string, error) {
 			i--
 		case "-o":
 			if outputSeen {
-				return "", nil, nil, "", fmt.Errorf("-o may only be specified once")
+				return "", nil, nil, "", false, false, fmt.Errorf("-o may only be specified once")
 			}
 			outputSeen = true
 			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
 				i++
 				outputFile = args[i]
 			} else {
-				return "", nil, nil, "", fmt.Errorf("-o requires an output filename")
+				return "", nil, nil, "", false, false, fmt.Errorf("-o requires an output filename")
 			}
 		case "-p":
 			if passwordSeen {
-				return "", nil, nil, "", fmt.Errorf("-p may only be specified once")
+				return "", nil, nil, "", false, false, fmt.Errorf("-p may only be specified once")
 			}
 			passwordSeen = true
 			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
@@ -278,12 +310,12 @@ func getParameters() (string, []string, []byte, string, error) {
 				explicitPassword = []byte(args[i])
 			}
 		default:
-			return "", nil, nil, "", fmt.Errorf("unknown argument: %s", args[i])
+			return "", nil, nil, "", false, false, fmt.Errorf("unknown argument: %s", args[i])
 		}
 	}
 
 	if (len(encryptInputs) > 0 && len(decryptInputs) > 0) || (len(encryptInputs) == 0 && len(decryptInputs) == 0) {
-		return "", nil, nil, "", fmt.Errorf("provide exactly one flag: -e or -d")
+		return "", nil, nil, "", false, false, fmt.Errorf("provide exactly one flag: -e or -d")
 	}
 
 	op := "encrypt"
@@ -296,12 +328,12 @@ func getParameters() (string, []string, []byte, string, error) {
 	if passwordSeen && explicitPassword == nil {
 		p, err := resolvePasswordInteractive(op)
 		if err != nil {
-			return "", nil, nil, "", err
+			return "", nil, nil, "", false, false, err
 		}
 		explicitPassword = p
 	}
 
-	return op, inputs, explicitPassword, outputFile, nil
+	return op, inputs, explicitPassword, outputFile, quiet, force, nil
 }
 
 func resolvePasswordInteractive(op string) ([]byte, error) {
@@ -350,6 +382,9 @@ func expandInputPaths(inputs []string, op string) ([]string, error) {
 			return nil, fmt.Errorf("glob pattern %q: %w", input, err)
 		}
 		for _, match := range matches {
+			if op == "encrypt" && strings.HasSuffix(match, ".cfo") {
+				continue
+			}
 			info, err := os.Stat(match)
 			if err == nil && !info.IsDir() {
 				files = append(files, match)
@@ -378,15 +413,17 @@ func showHelp() {
 	fmt.Println("  -o <file>  Output filename (requires a single input file)")
 	fmt.Println("  -p [pwd]   Supply a password. Without -p, encryption auto-generates one;")
 	fmt.Println("             decryption prompts interactively.")
+	fmt.Println("  -q, --quiet    Suppress progress bar and summary output")
+	fmt.Println("  -f, --force    Overwrite output file if it already exists")
 	fmt.Println("  -h, --help     Show this help text")
 	fmt.Println("  -v, --version  Show version information")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  cfo -e document.pdf                 Encrypt document.pdf → document.pdf.cfo")
 	fmt.Println("                                      (random password, printed once)")
-	fmt.Println("  cfo -e *.txt -p mysecret            Encrypt all .txt files with \"mysecret\"")
+	fmt.Println("  cfo -e *.txt -p mysecret            Encrypt all .txt files (skips .cfo files)")
 	fmt.Println("  cfo -d document.pdf.cfo             Decrypt (prompts for password)")
-	fmt.Println("  cfo -d *.cfo -p mysecret            Decrypt all .cfo files with \"mysecret\"")
+	fmt.Println("  cfo -d *.cfo -p mysecret            Decrypt all .cfo files")
 	fmt.Println("  cfo -e backup.tar -o archive.cfo    Encrypt to a custom output name")
 	fmt.Println()
 	fmt.Println("Notes:")
