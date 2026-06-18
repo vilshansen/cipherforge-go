@@ -1,5 +1,22 @@
 # Changelog
 
+## v2.2.0 (2026-06-18)
+
+### Changed
+
+- **Key derivation optimization (internal only)**: Added fast-path functions for potential future use:
+  - `DeriveMasterKey()`: Derives master key once from password using Argon2id
+  - `DeriveKeysFromMaster()`: Derives file-specific keys using fast HKDF
+  - Currently used only for reference; v2 format files continue using original Argon2id KDF
+  - Allows future migration to optimized batch encryption without breaking existing files
+
+### Backward Compatibility
+
+- **✓ Fully backward compatible**: v2 file format unchanged
+- All existing v2 files (v2.0.1, v2.1.0) decrypt without modification
+- New v2.2.0 files use identical key derivation as v2.1.0
+- No user-facing changes
+
 ## v2.1.0 (2026-06-07)
 
 ### Added

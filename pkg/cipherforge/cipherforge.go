@@ -172,6 +172,8 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		}
 	}
 
+	// Use legacy key derivation to maintain compatibility with v2 files encrypted
+	// before v2.2.0. The optimized master key approach is only used for batch encryption.
 	encKey, macKey := crypto.DeriveKeys(d.password, salt, params)
 	defer crypto.ZeroBytes(encKey)
 
