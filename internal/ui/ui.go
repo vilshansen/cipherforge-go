@@ -8,11 +8,32 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"golang.org/x/term"
 )
 
+// ANSI color codes (matches dnf style)
+const (
+	ColorReset   = "\033[0m"
+	ColorBold    = "\033[1m"
+	ColorGreen   = "\033[32m"
+	ColorYellow  = "\033[33m"
+	ColorCyan    = "\033[36m"
+	ColorRed     = "\033[31m"
+	ColorGray    = "\033[90m"
+)
+
+// Progress represents progress state for dnf-style output
+type Progress struct {
+	startTime time.Time
+	lastUpdate time.Time
+	total     int64
+	done      int64
+}
+
+// RunProgressBar displays a dnf-style progress bar with percentage
 func RunProgressBar(prefix string, percent int) {
 	const barWidth = 20
 	if percent < 0 {
@@ -22,10 +43,46 @@ func RunProgressBar(prefix string, percent int) {
 		percent = 100
 	}
 	filled := (percent * barWidth) / 100
-	bar := strings.Repeat("#", filled) + strings.Repeat(".", barWidth-filled)
-	fmt.Printf("\r%-50s [%s] %3d%%", prefix, bar, percent)
+	bar := strings.Repeat("=", filled) + strings.Repeat(" ", barWidth-filled)
+	
+	// dnf style: use color and cleaner formatting
+	fmt.Printf("\r%s%-45s %s[%-20s]%s %3d%%", 
+		ColorCyan, prefix, ColorGreen, bar, ColorReset, percent)
 }
 
+// ProgressComplete finishes the progress bar and prints a summary
+func ProgressComplete(prefix string, totalSize string) {
+	fmt.Printf("\r%s%-45s %s[%-20s]%s 100%%\n", 
+		ColorCyan, prefix, ColorGreen, strings.Repeat("=", 20), ColorReset)
+	fmt.Printf("%s%s✓%s %s\n", ColorGreen, ColorBold, ColorReset, totalSize)
+}
+
+// PrintSuccess prints a green success message (dnf style)
+func PrintSuccess(msg string) {
+	fmt.Printf("%s✓%s %s\n", ColorGreen, ColorReset, msg)
+}
+
+// PrintWarning prints a yellow warning message (dnf style)
+func PrintWarning(msg string) {
+	fmt.Printf("%s⚠%s %s\n", ColorYellow, ColorReset, msg)
+}
+
+// PrintError prints a red error message (dnf style)
+func PrintError(msg string) {
+	fmt.Printf("%s✗%s %s\n", ColorRed, ColorReset, msg)
+}
+
+// PrintHeader prints a section header (dnf style)
+func PrintHeader(title string) {
+	fmt.Printf("\n%s%s==%s %s %s==%s\n", ColorBold, ColorCyan, ColorReset, title, ColorCyan, ColorReset)
+}
+
+// PrintInfo prints an informational line with padding
+func PrintInfo(key string, value string) {
+	fmt.Printf("  %s%-20s%s %s\n", ColorGray, key, ColorReset, value)
+}
+
+// ReadPasswordFromTerminal reads a password from terminal (hidden on input)
 func ReadPasswordFromTerminal(prompt string) ([]byte, error) {
 	fd := int(syscall.Stdin)
 	if term.IsTerminal(fd) {
@@ -45,6 +102,7 @@ func ReadPasswordFromTerminal(prompt string) ([]byte, error) {
 	return bytes.TrimRight(line, "\r\n"), nil
 }
 
+// ReadPasswordStarred reads a password with star masking (dnf style)
 func ReadPasswordStarred(prompt string) ([]byte, error) {
 	fd := int(syscall.Stdin)
 	if !term.IsTerminal(fd) {
