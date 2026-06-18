@@ -102,8 +102,8 @@ func TestConstants(t *testing.T) {
 	if MagicSize != 8 {
 		t.Errorf("unexpected MagicSize: %d", MagicSize)
 	}
-	if FileVersion != 2 {
-		t.Errorf("FileVersion = %d, want 2", FileVersion)
+	if FileVersion != 3 {
+		t.Errorf("FileVersion = %d, want 3", FileVersion)
 	}
 	if Argon2ParamSize != 12 {
 		t.Errorf("Argon2ParamSize = %d, want 12", Argon2ParamSize)

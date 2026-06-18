@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"math/big"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/vilshansen/cipherforge-go/internal/format"
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/hkdf"
 )
 
 // RandReader returns the source of cryptographically secure random bytes.
@@ -21,6 +23,36 @@ const (
 	XNonceSize = 24
 )
 
+// DeriveMasterKey derives a master key from password using Argon2id.
+// This is called once per password, then file-specific keys are derived from
+// the master key using DeriveKeysFromMaster for better performance in batch encryption.
+func DeriveMasterKey(password []byte, params format.Argon2Params) []byte {
+	masterKey := argon2.IDKey(
+		password,
+		[]byte(format.MasterKeySalt),
+		params.Time,
+		params.Memory,
+		params.Threads,
+		32,
+	)
+	MlockBytes(masterKey)
+	return masterKey
+}
+
+// DeriveKeysFromMaster derives two independent 32-byte keys from a master key
+// and file-specific salt using HKDF. This is fast and should be called per file.
+func DeriveKeysFromMaster(masterKey, fileSalt []byte) (encKey, macKey []byte) {
+	r := hkdf.New(sha256.New, masterKey, fileSalt, []byte(format.FileKeyContext))
+	raw := make([]byte, 64)
+	if _, err := io.ReadFull(r, raw); err != nil {
+		return nil, nil
+	}
+	encKey, macKey = raw[:32], raw[32:]
+	MlockBytes(encKey)
+	MlockBytes(macKey)
+	return encKey, macKey
+}
+
 // DeriveKey is a convenience wrapper around DeriveKeys for callers that only
 // need the encryption key.
 func DeriveKey(password, salt []byte, params format.Argon2Params) []byte {
@@ -29,6 +61,7 @@ func DeriveKey(password, salt []byte, params format.Argon2Params) []byte {
 }
 
 // DeriveKeys derives two independent 32-byte keys from a single Argon2id run.
+// This is the legacy v2 approach; v3+ uses DeriveMasterKey + DeriveKeysFromMaster.
 func DeriveKeys(password, salt []byte, params format.Argon2Params) (encKey, macKey []byte) {
 	raw := argon2.IDKey(
 		password,

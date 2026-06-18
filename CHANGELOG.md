@@ -1,21 +1,34 @@
 # Changelog
 
-## v2.2.0 (2026-06-18)
+## v3.0.0 (2026-06-18) — BREAKING CHANGE
+
+### ⚠️ Breaking Changes
+
+**v3 files are not compatible with v2 or earlier.** This is a mandatory upgrade for new files; use v2.1.0 to decrypt v1/v2 files.
 
 ### Changed
 
-- **Key derivation optimization (internal only)**: Added fast-path functions for potential future use:
-  - `DeriveMasterKey()`: Derives master key once from password using Argon2id
-  - `DeriveKeysFromMaster()`: Derives file-specific keys using fast HKDF
-  - Currently used only for reference; v2 format files continue using original Argon2id KDF
-  - Allows future migration to optimized batch encryption without breaking existing files
+- **File format v3**: Optimized key derivation using master key + HKDF
+  - Master key derived once from password using Argon2id
+  - File-specific keys derived per-file using HKDF with file salt
+  - No backward compatibility with v1/v2 files
+  - v3 decoder rejects v1/v2 files with clear error message
+- **Version field enforcement**: v3 requires Argon2id parameters in header (non-negotiable)
+- **Trailer HMAC context**: New "cipherforge-trailer-hmac-v3" prevents downgrade attacks
 
-### Backward Compatibility
+### Why This Change
 
-- **✓ Fully backward compatible**: v2 file format unchanged
-- All existing v2 files (v2.0.1, v2.1.0) decrypt without modification
-- New v2.2.0 files use identical key derivation as v2.1.0
-- No user-facing changes
+- **Performance**: Batch encryption of N files now requires 1 expensive Argon2id + N fast HKDFs instead of N expensive Argon2ids
+  - Example: encrypting 10 files is ~10× faster for KDF (1 slow + 10 fast vs. 10 slow)
+- **Security unchanged**: Password strength remains the only bottleneck; each file still gets unique key
+- **Future-proof**: Separating master key derivation from file-specific key derivation enables future parallelization and key rotation strategies
+- **Clean break**: Rather than support v2 forever, v3 is a deliberate, documented breaking change with clear upgrade path
+
+### Migration
+
+- **New files**: Use v3.0.0 (faster batch encryption, all new features)
+- **Existing v1/v2 files**: Continue using v2.1.0 to decrypt; re-encrypt with v3.0.0 if desired
+- **No in-place upgrade**: Files must be re-encrypted with v3.0.0 binary (v2.1.0 cannot read v3 files, v3.0.0 cannot read v1/v2 files)
 
 ## v2.1.0 (2026-06-07)
 

@@ -9,7 +9,7 @@ import (
 const (
 	Magic       = "\xC1\x50\x48\x52\x46\x30\x52\x47"
 	MagicSize   = 8
-	FileVersion = uint32(2)
+	FileVersion = uint32(3)
 	VersionSize = 4
 	XNonceSize  = 24
 	SaltSize    = 16
@@ -22,15 +22,18 @@ const (
 	TrailerSize = 8 + HMACSize
 	SegmentSize = 1048576
 
-	// HeaderSize is the full v2 header size: magic + version + salt + seed + params.
+	// HeaderSize is the full v3 header size: magic + version + salt + seed + params.
 	HeaderSize = MagicSize + VersionSize + SaltSize + XNonceSize + Argon2ParamSize // 64
 
 	// V1HeaderSize is the legacy v1 header size for backward-compatible reads.
 	V1HeaderSize = MagicSize + VersionSize + SaltSize + XNonceSize // 52
 
-	SegmentNonceContext  = "cipherforge-segment-nonce-v1"
-	TrailerHMACContext   = "cipherforge-trailer-hmac-v1"
-	TrailerHMACContextV2 = "cipherforge-trailer-hmac-v2"
+	SegmentNonceContext   = "cipherforge-segment-nonce-v1"
+	TrailerHMACContext    = "cipherforge-trailer-hmac-v1"
+	TrailerHMACContextV2  = "cipherforge-trailer-hmac-v2"
+	TrailerHMACContextV3  = "cipherforge-trailer-hmac-v3"
+	MasterKeySalt         = "cipherforge-master-key-v1"
+	FileKeyContext        = "cipherforge-file-key-v1"
 )
 
 // Argon2Params holds the tunable parameters for the Argon2id KDF.

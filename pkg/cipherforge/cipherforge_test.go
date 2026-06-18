@@ -142,19 +142,13 @@ func TestTamperDetection(t *testing.T) {
 	}
 }
 
-func TestV1BackwardCompatibility(t *testing.T) {
-	// Build a minimal v1-format encrypted buffer manually to verify the
-	// decrypt path falls back to default params and the v1 HMAC.
-	// This validates that a v2 binary can still read v1 archives.
+func TestV3RoundTrip(t *testing.T) {
+	// Test v3 format round-trip: encrypt and decrypt a file.
+	// v3 no longer supports v1/v2 files (breaking change).
+	// To decrypt v1/v2 files, use v2.1.0.
 
 	password := []byte("test-password")
 	plaintext := []byte("hello")
-
-	// Encrypt with v2; the v1-compat test just confirms the decrypt path
-	// handles the fallback logic. A true v1 file would have version=1 and
-	// no Argon2 params in the header, but we'd need to hand-craft that.
-	// This test exists so the V1 path is exercised; a full v1 round-trip
-	// requires a pre-existing v1 encrypted file or a hand-crafted binary.
 
 	in := bytes.NewReader(plaintext)
 	out := &bytes.Buffer{}
@@ -173,6 +167,6 @@ func TestV1BackwardCompatibility(t *testing.T) {
 	}
 
 	if !bytes.Equal(decOut.Bytes(), plaintext) {
-		t.Errorf("v2 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
+		t.Errorf("v3 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
 	}
 }

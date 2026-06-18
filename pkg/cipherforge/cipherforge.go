@@ -45,7 +45,11 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	encKey, macKey := crypto.DeriveKeys(e.password, salt, e.params)
+	// v3: Use optimized key derivation (master key + HKDF)
+	masterKey := crypto.DeriveMasterKey(e.password, e.params)
+	defer crypto.ZeroBytes(masterKey)
+
+	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
 	defer crypto.ZeroBytes(encKey)
 
 	aead, err := chacha20poly1305.NewX(encKey)
@@ -57,7 +61,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	bufOut := bufio.NewWriterSize(w, format.SegmentSize+aead.Overhead()+8)
 	defer bufOut.Flush()
 
-	// Header (v2 layout: 64 bytes).
+	// Header (v3 layout: 64 bytes).
 	if _, err := bufOut.Write([]byte(format.Magic)); err != nil {
 		return err
 	}
@@ -148,8 +152,13 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	if err != nil {
 		return err
 	}
-	if version != 1 && version != format.FileVersion {
-		return fmt.Errorf("unsupported version")
+
+	// v3 is the minimum supported version (v1 and v2 are no longer supported)
+	if version < 3 {
+		return fmt.Errorf("unsupported file version %d (v3+ required, use v2.1.0 to decrypt v1/v2 files)", version)
+	}
+	if version > format.FileVersion {
+		return fmt.Errorf("file version %d is newer than this binary (v%d)", version, format.FileVersion)
 	}
 
 	salt := make([]byte, format.SaltSize)
@@ -162,19 +171,17 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	// Read Argon2id parameters: v2 files carry them in the header; v1 uses
-	// production defaults.
-	params := format.DefaultArgon2Params()
-	if version >= 2 {
-		params, err = format.ReadArgon2Params(r)
-		if err != nil {
-			return err
-		}
+	// v3 requires Argon2id parameters in the header
+	params, err := format.ReadArgon2Params(r)
+	if err != nil {
+		return err
 	}
 
-	// Use legacy key derivation to maintain compatibility with v2 files encrypted
-	// before v2.2.0. The optimized master key approach is only used for batch encryption.
-	encKey, macKey := crypto.DeriveKeys(d.password, salt, params)
+	// v3: Use optimized key derivation (master key + HKDF)
+	masterKey := crypto.DeriveMasterKey(d.password, params)
+	defer crypto.ZeroBytes(masterKey)
+
+	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
 	defer crypto.ZeroBytes(encKey)
 
 	aead, err := chacha20poly1305.NewX(encKey)
@@ -210,8 +217,8 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	}
 	crypto.ZeroBytes(macKey)
 
-	payloadOffset := format.PayloadOffset(version)
-	if _, err := r.Seek(payloadOffset, io.SeekStart); err != nil {
+	payloadOffset := format.HeaderSize
+	if _, err := r.Seek(int64(payloadOffset), io.SeekStart); err != nil {
 		return err
 	}
 
@@ -295,9 +302,19 @@ func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, p
 		h.Write([]byte(format.TrailerHMACContext))
 		h.Write(salt)
 		h.Write(segmentSeed)
-	} else {
-		// v2+: context-v2 || salt || segmentSeed || time || memory || threads || reserved || segmentCount
+	} else if version == 2 {
+		// v2: context-v2 || salt || segmentSeed || time || memory || threads || reserved || segmentCount
 		h.Write([]byte(format.TrailerHMACContextV2))
+		h.Write(salt)
+		h.Write(segmentSeed)
+		var buf [8]byte
+		binary.BigEndian.PutUint32(buf[0:4], params.Time)
+		binary.BigEndian.PutUint32(buf[4:8], params.Memory)
+		h.Write(buf[:])
+		h.Write([]byte{params.Threads, 0, 0, 0})
+	} else {
+		// v3+: context-v3 || salt || segmentSeed || time || memory || threads || reserved || segmentCount
+		h.Write([]byte(format.TrailerHMACContextV3))
 		h.Write(salt)
 		h.Write(segmentSeed)
 		var buf [8]byte
