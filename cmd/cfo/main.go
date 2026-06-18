@@ -135,8 +135,7 @@ func encryptFile(inputFile, outputFile string, password []byte, quiet bool) erro
 		if !quiet {
 			ui.RunProgressBar(prefix, 100)
 			outInfo, _ := os.Stat(outputFile)
-			ui.ProgressComplete("Encrypted", fmt.Sprintf("%s  %s  (%s)", 
-				filepath.Base(inputFile), filepath.Base(outputFile), formatSize(outInfo.Size())))
+			ui.ProgressComplete("Encrypted", filepath.Base(inputFile), formatSize(outInfo.Size()))
 		}
 		succeeded = true
 	}
@@ -203,8 +202,7 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet bool) erro
 		if !quiet {
 			ui.RunProgressBar(prefix, 100)
 			outInfo, _ := os.Stat(outputFile)
-			ui.ProgressComplete("Decrypted", fmt.Sprintf("%s  %s  (%s)",
-				filepath.Base(inputFile), filepath.Base(outputFile), formatSize(outInfo.Size())))
+			ui.ProgressComplete("Decrypted", filepath.Base(inputFile), formatSize(outInfo.Size()))
 		}
 		succeeded = true
 	}
