@@ -52,7 +52,7 @@ func RunProgressBar(prefix string, percent int) {
 
 // ProgressComplete finishes the progress bar and prints a summary on one line
 func ProgressComplete(operation string, filename string, size string) {
-	fmt.Printf("\r%s%s    %s%s✓%s %s   (%s)  %s[%s]%s 100%%\n", 
+	fmt.Printf("\r%s%s    %s%s✓%s %s   (%s)  %s[%s]%s 100%%\033[K\n", 
 		ColorCyan, operation, ColorGreen, ColorBold, ColorReset, filename, size, ColorGreen, strings.Repeat("=", 19), ColorReset)
 }
 
