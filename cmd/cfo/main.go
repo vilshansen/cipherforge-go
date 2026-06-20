@@ -240,9 +240,8 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 			return nil, err
 		}
 		ui.PrintHeader("Auto-Generated Password")
-		fmt.Println()
-		fmt.Printf("%s\n\n", p)
-		fmt.Printf("Save this — it cannot be recovered.\n\n")
+		fmt.Printf("%s\n", p)
+		fmt.Printf("Save this — it cannot be recovered.\n")
 		return p, nil
 	}
 
