@@ -148,7 +148,7 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 		if !quiet {
 			ui.RunProgressBar(prefix, 100)
 			outInfo, _ := os.Stat(outputFile)
-			ui.ProgressComplete("Encrypted", filepath.Base(inputFile), formatSize(outInfo.Size()))
+			ui.ProgressComplete("Encrypt", filepath.Base(inputFile), formatSize(outInfo.Size()))
 		}
 		succeeded = true
 	}
@@ -215,7 +215,7 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet bool) erro
 		if !quiet {
 			ui.RunProgressBar(prefix, 100)
 			outInfo, _ := os.Stat(outputFile)
-			ui.ProgressComplete("Decrypted", filepath.Base(inputFile), formatSize(outInfo.Size()))
+			ui.ProgressComplete("Decrypt", filepath.Base(inputFile), formatSize(outInfo.Size()))
 		}
 		succeeded = true
 	}
@@ -241,8 +241,8 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 		}
 		ui.PrintHeader("Auto-Generated Password")
 		fmt.Println()
-		fmt.Printf("%s%s%s\n\n", ui.ColorBold, p, ui.ColorReset)
-		fmt.Printf("%s\n\n", ui.ColorBold+"Save this — it cannot be recovered."+ui.ColorReset)
+		fmt.Printf("%s\n\n", p)
+		fmt.Printf("Save this — it cannot be recovered.\n\n")
 		return p, nil
 	}
 
