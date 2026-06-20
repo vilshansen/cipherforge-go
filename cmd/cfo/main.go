@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
+	"github.com/vilshansen/cipherforge-go/internal/format"
 	"github.com/vilshansen/cipherforge-go/internal/ui"
 	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
 	"golang.org/x/term"
@@ -54,12 +55,19 @@ func main() {
 	}
 	defer crypto.ZeroBytes(password)
 
+	// For encryption, derive master key once and reuse for all files (performance optimization)
+	var masterKey []byte
+	if operation == "encrypt" {
+		masterKey = crypto.DeriveMasterKey(password, format.DefaultArgon2Params())
+		defer crypto.ZeroBytes(masterKey)
+	}
+
 	for _, inputFile := range inputFiles {
 		outputFile := outputOverride
 		if outputFile == "" {
 			outputFile = deriveOutputPath(operation, inputFile)
 		}
-		if err := processFile(operation, inputFile, outputFile, password, quiet, force); err != nil {
+		if err := processFile(operation, inputFile, outputFile, password, masterKey, quiet, force); err != nil {
 			ui.PrintError(fmt.Sprintf("Failed to process %s: %v", inputFile, err))
 		}
 	}
@@ -85,7 +93,7 @@ func formatSize(n int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
 }
 
-func processFile(operation, inputFile, outputFile string, password []byte, quiet, force bool) error {
+func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force bool) error {
 	if operation == "decrypt" && !strings.HasSuffix(inputFile, ".cfo") {
 		return fmt.Errorf("missing .cfo extension")
 	}
@@ -95,12 +103,12 @@ func processFile(operation, inputFile, outputFile string, password []byte, quiet
 		}
 	}
 	if operation == "encrypt" {
-		return encryptFile(inputFile, outputFile, password, quiet)
+		return encryptFile(inputFile, outputFile, password, masterKey, quiet)
 	}
 	return decryptFile(inputFile, outputFile, password, quiet)
 }
 
-func encryptFile(inputFile, outputFile string, password []byte, quiet bool) error {
+func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet bool) error {
 	in, err := os.Open(inputFile)
 	if err != nil {
 		return err
@@ -124,7 +132,12 @@ func encryptFile(inputFile, outputFile string, password []byte, quiet bool) erro
 	total := info.Size()
 	prefix := fmt.Sprintf("Encrypting %s", filepath.Base(inputFile))
 
-	enc := cipherforge.NewEncrypter(password)
+	var enc *cipherforge.Encrypter
+	if masterKey != nil {
+		enc = cipherforge.NewEncrypterWithMasterKey(password, masterKey)
+	} else {
+		enc = cipherforge.NewEncrypter(password)
+	}
 	err = enc.Encrypt(in, out, func(done int64) {
 		if !quiet && total > 0 {
 			ui.RunProgressBar(prefix, int((done*100)/total))

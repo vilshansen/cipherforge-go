@@ -228,29 +228,33 @@ Cipherforge uses hardened parameters:
 | Time      | 4      | Number of passes over memory |
 | Memory    | 1 GiB  | RAM allocated per derivation |
 | Threads   | 4      | Parallel memory lanes |
-| Output    | 64 bytes | Two 256-bit keys |
+| Output    | 32 bytes | Master key |
+
+A **master key** is derived from the password once per execution. This master
+key is then used as the input keying material for a secondary derivation step
+using **HKDF-SHA256**. 
 
 A random 16-byte **salt** is generated for each file and stored in the header.
-The salt ensures that two files encrypted with the same password produce
-completely different keys — defeating precomputation attacks (rainbow tables).
+The salt is fed into the HKDF step, ensuring that two files encrypted with the
+same password produce completely different encryption keys.
 
-One Argon2id call produces 64 bytes of key material. These are split into two
-independent keys (see [Key Separation](#key-separation)) so the expensive KDF
-operation is only paid once.
+This two-tier architecture is a significant performance optimization for batch
+operations: encrypting 100 files requires only one expensive Argon2id derivation
+(the master key) followed by 100 fast HKDF derivations, instead of 100
+expensive Argon2id operations.
 
 ### Key Separation
 
-The 64-byte Argon2id output is split into two non-overlapping keys:
+The HKDF-SHA256 expansion produces 64 bytes of key material per file, which is
+split into two non-overlapping keys:
 
 - **Bytes 0–31** → `encKey`: the XChaCha20-Poly1305 encryption key
 - **Bytes 32–63** → `macKey`: the HMAC-SHA256 key used to authenticate the
   file trailer
 
 These two keys serve entirely different cryptographic roles and are never used
-interchangeably. Deriving both from a single KDF invocation provides proper
-domain separation — they are independent 256-bit outputs of the same PRF —
-while avoiding the cost of running Argon2id twice (which at 1 GiB/run would
-double memory consumption and decryption time).
+interchangeably. Deriving both from the HKDF expansion provides proper domain
+separation — they are independent 256-bit outputs of the same PRF.
 
 ### Encryption
 

@@ -105,7 +105,7 @@ Byte offset   Length    Field
 8             4         Format version (uint32)
 12            16        Argon2id salt
 28            24        Segment Seed (HKDF IKM)
-52            12        Argon2id parameters (v2 only; absent in v1)
+52            12        Argon2id parameters (v2+; absent in v1)
 64            …         Payload (variable; see below)
 EOF−40        8         Segment count (uint64)
 EOF−32        32        Trailer HMAC-SHA256
@@ -316,7 +316,7 @@ chosen for simplicity.
 
 ---
 
-## Argon2id Parameters (v2 only; bytes 52–63)
+## Argon2id Parameters (v2+; bytes 52–63)
 
 **Value:** 12 bytes encoding three KDF parameters:
 
@@ -350,6 +350,15 @@ covers any realistic Argon2id configuration for the foreseeable future.
 v1 file uses the original production defaults (time=4, memory=1,048,576 KiB,
 threads=4). This ensures backward compatibility without special-casing the
 decryption logic.
+
+**Decoder safety limits:** To prevent resource-exhaustion attacks from crafted
+files, the decoder rejects parameters that exceed implementation-defined
+ceilings: `time > 100` or `memory > 16,777,216 KiB` (16 GiB). These limits
+are intentionally generous — no realistic Argon2id configuration approaches
+them — but they prevent a malicious file from forcing multi-terabyte memory
+allocation or unbounded CPU consumption during key derivation. The HMAC
+cannot protect against this because key derivation must complete before the
+HMAC can be verified.
 
 **Relationship to the HMAC:** In v2, the parameters are included in the
 trailer HMAC after the Segment Seed and before the segment count:
@@ -579,13 +588,13 @@ to an attacker does not help them forge a valid HMAC without `macKey`.
 side-channel attacks where an attacker probes the comparison one byte at a
 time by observing response latency.
 
-**What macKey is:** The MAC key is bytes 32–63 of the 64-byte Argon2id
-output. It is derived from the same password and salt as the encryption key
-(`encKey`, bytes 0–31) but is a non-overlapping, independent 256-bit slice
-of the same PRF output. Using two non-overlapping halves of one Argon2id
-invocation means the two keys are fully independent (there is no known
-relationship between the first and second halves of an Argon2id output), and
-the memory-hard Argon2id cost is paid only once.
+**What macKey is:** The MAC key is derived from a master key and the file's salt
+via HKDF-SHA256. The master key is derived from the password via Argon2id.
+The HKDF expansion produces 64 bytes of key material per file. Bytes 32–63
+are the MAC key (`macKey`), and bytes 0–31 are the encryption key (`encKey`).
+Using two non-overlapping halves of one HKDF invocation means the two keys are
+fully independent, and the memory-hard Argon2id cost is paid only once per password
+(producing the master key), rather than once per file.
 
 `macKey` is never stored. It exists only in memory during an active session
 and is zeroed (via a `runtime.KeepAlive`-guarded loop) immediately after the
@@ -638,7 +647,8 @@ that is central to the design.
 4. Read Segment Seed (24 bytes).
 5. If version ≥ 2: read Argon2id parameters (12 bytes). If version = 1: use
    production defaults (time=4, memory=1,048,576 KiB, threads=4).
-6. Derive `encKey` and `macKey` from password + salt + parameters via Argon2id.
+6. Derive `masterKey` from password + fixed salt + parameters via Argon2id.
+   Derive `encKey` and `macKey` from `masterKey` + file salt via HKDF-SHA256.
 7. Seek to `EOF − 40`. Read segment count and stored HMAC.
 8. Compute expected HMAC (using the version-appropriate construction).
    Compare with `hmac.Equal`.
@@ -662,14 +672,20 @@ The user's password is never stored. On both encryption and decryption, it is
 fed into Argon2id along with the salt and parameters from the file header
 (or production defaults for v1 files):
 
-```
-raw = Argon2id(
+masterKey = Argon2id(
     password = <user-supplied password>,
-    salt     = <16-byte salt from header>,
+    salt     = "cipherforge-master-key-v1",
     time     = <argon2Time from header, or 4 for v1>,
     memory   = <argon2Memory from header, or 1,048,576 for v1>,
     threads  = <argon2Threads from header, or 4 for v1>,
-    keyLen   = 64
+    keyLen   = 32
+)
+
+raw = HKDF-SHA256(
+    ikm   = masterKey,
+    salt  = <16-byte file salt from header>,
+    info  = "cipherforge-file-key-v1",
+    outLen = 64
 )
 
 encKey = raw[0:32]    — XChaCha20-Poly1305 encryption key
@@ -694,13 +710,13 @@ decryption session, but an attacker must pay it for every password guess. At
 simultaneous guesses — a far cry from the millions per second achievable
 against unsalted or weakly-iterated hashes.
 
-**Why derive both keys from one invocation:** Calling Argon2id twice — once
-for `encKey` and once for `macKey` — would double the time and memory cost on
-every encryption and decryption. Deriving 64 bytes instead of 32 and
-splitting the output is an established pattern. The two halves are
-non-overlapping, independent outputs of the same PRF: there is no known
-relationship between `raw[0:32]` and `raw[32:64]` from a single Argon2id
-run, and they are used for entirely different cryptographic operations.
+**Why derive keys via HKDF:** In v3, calling Argon2id once to derive a master
+key and then using HKDF to derive file-specific keys is a batch optimization.
+For multiple files, the expensive memory-hard Argon2id cost is paid once.
+Deriving 64 bytes of key material from HKDF and splitting the output is an
+established pattern for domain separation. There is no known relationship
+between `raw[0:32]` and `raw[32:64]` from a single HKDF expansion, and they are
+used for entirely different cryptographic operations.
 
 ### Key Lifetime and Zeroing
 
@@ -792,9 +808,10 @@ function DecryptCFO(file, password) -> plaintext | error:
        Set argon2Time = 4, argon2Memory = 1048576, argon2Threads = 4
 
   6. Derive keys:
-       raw = Argon2id(password, salt,
-                      time=argon2Time, memory=argon2Memory,
-                      threads=argon2Threads, keyLen=64)
+       masterKey = Argon2id(password, "cipherforge-master-key-v1",
+                            time=argon2Time, memory=argon2Memory,
+                            threads=argon2Threads, keyLen=32)
+       raw = HKDF-SHA256(masterKey, salt, "cipherforge-file-key-v1")
        encKey = raw[0:32]
        macKey = raw[32:64]
 
@@ -865,5 +882,5 @@ function DecryptCFO(file, password) -> plaintext | error:
 Byte order is big-endian throughout. The HKDF info field is the exact byte
 concatenation of the ASCII string and the 8-byte counter with no separator.
 The HMAC input is the exact byte concatenation of the context string, salt,
-Segment Seed, Argon2 parameters (v2 only), and 8-byte segment count with no
+Segment Seed, Argon2 parameters (v2+), and 8-byte segment count with no
 separators or length prefixes.

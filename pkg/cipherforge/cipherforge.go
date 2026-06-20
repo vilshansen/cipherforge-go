@@ -16,8 +16,9 @@ import (
 
 // Encrypter handles the encryption of a stream in segments.
 type Encrypter struct {
-	password []byte
-	params   format.Argon2Params
+	password  []byte
+	params    format.Argon2Params
+	masterKey []byte // optional: pre-derived master key for batch encryption
 }
 
 // NewEncrypter creates an Encrypter with the given password and production-hardened
@@ -34,6 +35,16 @@ func NewEncrypterWithParams(password []byte, params format.Argon2Params) *Encryp
 	return &Encrypter{password: password, params: params}
 }
 
+// NewEncrypterWithMasterKey creates an Encrypter with a pre-derived master key for batch encryption.
+// This skips the expensive Argon2id derivation, making encryption of multiple files much faster.
+func NewEncrypterWithMasterKey(password []byte, masterKey []byte) *Encrypter {
+	return &Encrypter{
+		password:  password,
+		params:    format.DefaultArgon2Params(),
+		masterKey: masterKey,
+	}
+}
+
 func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) error {
 	salt, err := crypto.GenerateSalt()
 	if err != nil {
@@ -46,8 +57,20 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	}
 
 	// v3: Use optimized key derivation (master key + HKDF)
-	masterKey := crypto.DeriveMasterKey(e.password, e.params)
-	defer crypto.ZeroBytes(masterKey)
+	var masterKey []byte
+	var shouldZeroMasterKey bool
+	if e.masterKey != nil {
+		// Use pre-derived master key (batch encryption optimization)
+		masterKey = e.masterKey
+		shouldZeroMasterKey = false
+	} else {
+		// Derive master key on demand
+		masterKey = crypto.DeriveMasterKey(e.password, e.params)
+		shouldZeroMasterKey = true
+	}
+	if shouldZeroMasterKey {
+		defer crypto.ZeroBytes(masterKey)
+	}
 
 	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
 	defer crypto.ZeroBytes(encKey)

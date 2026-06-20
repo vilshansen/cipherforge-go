@@ -1,5 +1,28 @@
 # Changelog
 
+## v3.0.1 (2026-06-20)
+
+### Security
+
+- Intermediate key material (`raw` slice) in `DeriveKeysFromMaster` and
+  `DeriveKeys` is now copied into independent allocations and explicitly
+  zeroed, preventing residual key data from lingering on the heap.
+- Argon2id parameters read from file headers are now validated against
+  upper-bound safety limits (`time ≤ 100`, `memory ≤ 16 GiB`) to prevent
+  resource-exhaustion denial-of-service from crafted `.cfo` files.
+
+### Added
+
+- Package-level documentation on `internal/crypto` documenting the inherent
+  Go garbage-collector limitation: heap compaction may retain copies of key
+  material in freed memory beyond application control.
+
+### Fixed
+
+- Missing `format` import in `cmd/cfo/main.go` (pre-existing build error).
+- Missing `masterKey` argument in `cmd/cfo/main_test.go` (pre-existing test
+  compilation error).
+
 ## v3.0.0 (2026-06-18) — BREAKING CHANGE
 
 ### ⚠️ Breaking Changes

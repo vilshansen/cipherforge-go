@@ -19,6 +19,12 @@ const (
 	// 4 (time) + 4 (memory) + 1 (threads) + 3 (reserved).
 	Argon2ParamSize = 12
 
+	// Maximum acceptable Argon2id parameters when reading from a file header.
+	// These ceilings prevent a crafted file from causing resource exhaustion
+	// during key derivation.
+	MaxArgon2Time   = 100
+	MaxArgon2Memory = 16 * 1024 * 1024 // 16 GiB in KiB
+
 	TrailerSize = 8 + HMACSize
 	SegmentSize = 1048576
 
@@ -96,6 +102,10 @@ func ReadArgon2Params(r io.Reader) (Argon2Params, error) {
 	if p.Time == 0 || p.Memory == 0 || p.Threads == 0 {
 		return p, fmt.Errorf("argon2 params must be non-zero: time=%d memory=%d threads=%d",
 			p.Time, p.Memory, p.Threads)
+	}
+	if p.Time > MaxArgon2Time || p.Memory > MaxArgon2Memory {
+		return p, fmt.Errorf("argon2 params exceed safety limits: time=%d (max %d) memory=%d KiB (max %d KiB)",
+			p.Time, MaxArgon2Time, p.Memory, MaxArgon2Memory)
 	}
 	return p, nil
 }

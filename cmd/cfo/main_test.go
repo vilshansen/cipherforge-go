@@ -210,7 +210,7 @@ func TestProcessFilePaths(t *testing.T) {
 			// which would require files.
 			if tt.op == "decrypt" && !strings.HasSuffix(tt.inputFile, ".cfo") {
 				outFile := "out.txt"
-				if err := processFile(tt.op, tt.inputFile, outFile, nil, false, true); err == nil {
+				if err := processFile(tt.op, tt.inputFile, outFile, nil, nil, false, true); err == nil {
 					t.Errorf("expected error for decrypting %s", tt.inputFile)
 				}
 			}

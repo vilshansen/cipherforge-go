@@ -1,3 +1,16 @@
+// Package crypto provides cryptographic primitives for Cipherforge: key
+// derivation (Argon2id + HKDF), random generation, and sensitive-memory
+// management.
+//
+// # Memory Security Limitations
+//
+// This package makes a best-effort attempt to protect key material in memory
+// via mlock (to prevent swapping) and ZeroBytes (to overwrite secrets after
+// use). However, Go's garbage collector may copy heap-allocated byte slices
+// during compaction, leaving residual copies in freed memory that cannot be
+// zeroed by application code. Callers requiring stronger memory-residency
+// guarantees should consider a C or Rust implementation where allocations
+// can be pinned and page-protected.
 package crypto
 
 import (
@@ -47,7 +60,11 @@ func DeriveKeysFromMaster(masterKey, fileSalt []byte) (encKey, macKey []byte) {
 	if _, err := io.ReadFull(r, raw); err != nil {
 		return nil, nil
 	}
-	encKey, macKey = raw[:32], raw[32:]
+	encKey = make([]byte, 32)
+	macKey = make([]byte, 32)
+	copy(encKey, raw[:32])
+	copy(macKey, raw[32:])
+	ZeroBytes(raw)
 	MlockBytes(encKey)
 	MlockBytes(macKey)
 	return encKey, macKey
@@ -71,7 +88,11 @@ func DeriveKeys(password, salt []byte, params format.Argon2Params) (encKey, macK
 		params.Threads,
 		64,
 	)
-	encKey, macKey = raw[:32], raw[32:]
+	encKey = make([]byte, 32)
+	macKey = make([]byte, 32)
+	copy(encKey, raw[:32])
+	copy(macKey, raw[32:])
+	ZeroBytes(raw)
 	MlockBytes(encKey)
 	MlockBytes(macKey)
 	return encKey, macKey
