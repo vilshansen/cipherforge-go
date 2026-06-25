@@ -1,5 +1,50 @@
 # Changelog
 
+## v3.1.0 (2026-06-25)
+
+### Security
+
+- `MaxArgon2Time` reduced from 100 to 10 passes to limit DoS potential from
+  crafted files with inflated KDF parameters. Key derivation happens before
+  HMAC verification, so safety limits are the only defense against parameter
+  inflation attacks. No legitimate use case needs >10 passes with 1 GiB memory.
+- Short-password warning: when encrypting multiple files with a user-supplied
+  password shorter than 20 characters, a warning explains the v3 batch
+  optimisation trade-off (one Argon2id run covers all files).
+
+### Added
+
+- `-a` / `--atomic` flag: decrypts to a temporary file in the output
+  directory and renames to the final path only on success. Prevents partial
+  plaintext from ever appearing at the target path if decryption fails
+  mid-stream (e.g., a corrupted segment after the trailer HMAC has passed).
+
+### Changed
+
+- `FILEFORMAT.MD` rewritten for v3. The document now describes the current
+  two-tier key derivation (master key + HKDF), the v3 trailer HMAC context,
+  and the version-enforcement behaviour. v1/v2 formats are documented in a
+  legacy section at the end.
+- `README.MD` format version updated to v3; HMAC context updated to
+  `cipherforge-trailer-hmac-v3`; new flags (`-q`, `-f`, `-a`) documented.
+
+### Fixed
+
+- `--atomic` mode: eliminated a redundant file descriptor (`os.CreateTemp` +
+  `os.OpenFile` opened the temp file twice). The temp file is now used
+  directly as the output writer.
+- `build-all.sh`: enabled global `set -euo pipefail`; replaced `echo | cut`
+  subshells with bash parameter expansion for OS/ARCH extraction.
+- `test/test.sh`: added prerequisite checks (`timeout`, `dd`, `sha256sum`)
+  with clear failure messages; added content-integrity verification (SHA-256)
+  to single-file encrypt/decrypt tests; corrected `fault_kill_once` and
+  `test_fault_truncate` to compare decrypted output against the saved original
+  rather than stdout or a never-written file.
+- `build-all.sh`: replaced `cd -` anti-patterns with explicit directory
+  save/restore for robustness.
+- `test/test.sh`: `pkill(1)` replaced with `kill` for portability; cleanup
+  reliability improved.
+
 ## v3.0.1 (2026-06-20)
 
 ### Security

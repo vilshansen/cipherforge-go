@@ -5,3 +5,4 @@ tmp/*
 test.txt
 lipsum.txt
 *.cfo
+*.bin

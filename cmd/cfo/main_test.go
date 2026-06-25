@@ -96,7 +96,7 @@ func TestGetParameters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			os.Args = tt.args
-			op, files, pwd, out, _, _, err := getParameters()
+			op, files, pwd, out, _, _, _, err := getParameters()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getParameters() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -210,7 +210,7 @@ func TestProcessFilePaths(t *testing.T) {
 			// which would require files.
 			if tt.op == "decrypt" && !strings.HasSuffix(tt.inputFile, ".cfo") {
 				outFile := "out.txt"
-				if err := processFile(tt.op, tt.inputFile, outFile, nil, nil, false, true); err == nil {
+				if err := processFile(tt.op, tt.inputFile, outFile, nil, nil, false, true, false); err == nil {
 					t.Errorf("expected error for decrypting %s", tt.inputFile)
 				}
 			}

@@ -31,7 +31,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	operation, inputPattern, userPassword, outputOverride, quiet, force, err := getParameters()
+	operation, inputPattern, userPassword, outputOverride, quiet, force, atomic, err := getParameters()
 	if err != nil {
 		ui.PrintError(fmt.Sprintf("%v", err))
 		os.Exit(1)
@@ -55,6 +55,18 @@ func main() {
 	}
 	defer crypto.ZeroBytes(password)
 
+	// Warn when using a short user-supplied password with multiple files: the
+	// v3 batch optimisation means the Argon2id cost is paid once, not per file,
+	// so an attacker gets N files' keys for the price of one Argon2id guess.
+	if operation == "encrypt" && userPassword != nil && len(userPassword) < 20 && len(inputFiles) > 1 {
+		ui.PrintWarning(fmt.Sprintf(
+			"Short password (%d chars) with %d files. The v3 batch optimisation derives\n"+
+				"                all file keys from one Argon2id run — a weak password puts every\n"+
+				"                output file at risk. Consider a longer password or encrypting\n"+
+				"                files separately with different passwords.",
+			len(userPassword), len(inputFiles)))
+	}
+
 	// For encryption, derive master key once and reuse for all files (performance optimization)
 	var masterKey []byte
 	if operation == "encrypt" {
@@ -67,7 +79,7 @@ func main() {
 		if outputFile == "" {
 			outputFile = deriveOutputPath(operation, inputFile)
 		}
-		if err := processFile(operation, inputFile, outputFile, password, masterKey, quiet, force); err != nil {
+		if err := processFile(operation, inputFile, outputFile, password, masterKey, quiet, force, atomic); err != nil {
 			ui.PrintError(fmt.Sprintf("Failed to process %s: %v", inputFile, err))
 		}
 	}
@@ -93,7 +105,7 @@ func formatSize(n int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
 }
 
-func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force bool) error {
+func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force, atomic bool) error {
 	if operation == "decrypt" && !strings.HasSuffix(inputFile, ".cfo") {
 		return fmt.Errorf("missing .cfo extension")
 	}
@@ -105,7 +117,7 @@ func processFile(operation, inputFile, outputFile string, password, masterKey []
 	if operation == "encrypt" {
 		return encryptFile(inputFile, outputFile, password, masterKey, quiet)
 	}
-	return decryptFile(inputFile, outputFile, password, quiet)
+	return decryptFile(inputFile, outputFile, password, quiet, atomic)
 }
 
 func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet bool) error {
@@ -155,23 +167,36 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 	return err
 }
 
-func decryptFile(inputFile, outputFile string, password []byte, quiet bool) error {
+func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic bool) error {
 	in, err := os.Open(inputFile)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
+	// When --atomic is set, decrypt into a temporary file in the same directory
+	// and rename on success.  This prevents partial plaintext from ever
+	// appearing at the final output path if decryption fails mid-stream.
+	writePath := outputFile
+	var out *os.File
+	if atomic {
+		out, err = os.CreateTemp(filepath.Dir(outputFile), ".cfo-decrypt-*")
+		if err != nil {
+			return fmt.Errorf("cannot create temp file for atomic decrypt: %w", err)
+		}
+		writePath = out.Name()
+	} else {
+		out, err = os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return err
+		}
 	}
 
 	succeeded := false
 	defer func() {
 		out.Close()
 		if !succeeded {
-			os.Remove(outputFile)
+			os.Remove(writePath)
 		}
 	}()
 
@@ -181,13 +206,13 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet bool) erro
 
 	// Estimate plaintext size for accurate progress bar.
 	estimatedTotal := fileSize
-	headerSize := int64(52) // v1 default
+	headerSize := int64(format.HeaderSize)
 	if fileSize >= 40 {
 		if _, err := in.Seek(8, io.SeekStart); err == nil {
 			var versionBuf [4]byte
 			if _, err := io.ReadFull(in, versionBuf[:]); err == nil {
 				if binary.BigEndian.Uint32(versionBuf[:]) >= 2 {
-					headerSize = 64
+					headerSize = int64(format.HeaderSize)
 				}
 			}
 		}
@@ -214,10 +239,19 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet bool) erro
 	if err == nil {
 		if !quiet {
 			ui.RunProgressBar(prefix, 100)
-			outInfo, _ := os.Stat(outputFile)
+			outInfo, _ := os.Stat(writePath)
 			ui.ProgressComplete("Decrypt", filepath.Base(inputFile), formatSize(outInfo.Size()))
 		}
 		succeeded = true
+	}
+
+	// Atomically rename the temp file to the final output path.
+	if atomic && succeeded {
+		out.Close()
+		if err := os.Rename(writePath, outputFile); err != nil {
+			os.Remove(writePath)
+			return fmt.Errorf("atomic rename failed: %w", err)
+		}
 	}
 	return err
 }
@@ -257,13 +291,13 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 	}
 }
 
-func getParameters() (string, []string, []byte, string, bool, bool, error) {
+func getParameters() (string, []string, []byte, string, bool, bool, bool, error) {
 	args := os.Args[1:]
 	var encryptInputs []string
 	var decryptInputs []string
 	var explicitPassword []byte
 	var outputFile string
-	var quiet, force bool
+	var quiet, force, atomic bool
 	passwordSeen := false
 	outputSeen := false
 
@@ -279,6 +313,8 @@ func getParameters() (string, []string, []byte, string, bool, bool, error) {
 			quiet = true
 		case "-f", "--force":
 			force = true
+		case "-a", "--atomic":
+			atomic = true
 		case "-e":
 			i++
 			for i < len(args) && args[i][0] != '-' {
@@ -295,18 +331,18 @@ func getParameters() (string, []string, []byte, string, bool, bool, error) {
 			i--
 		case "-o":
 			if outputSeen {
-				return "", nil, nil, "", false, false, fmt.Errorf("-o may only be specified once")
+				return "", nil, nil, "", false, false, false, fmt.Errorf("-o may only be specified once")
 			}
 			outputSeen = true
 			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
 				i++
 				outputFile = args[i]
 			} else {
-				return "", nil, nil, "", false, false, fmt.Errorf("-o requires an output filename")
+				return "", nil, nil, "", false, false, false, fmt.Errorf("-o requires an output filename")
 			}
 		case "-p":
 			if passwordSeen {
-				return "", nil, nil, "", false, false, fmt.Errorf("-p may only be specified once")
+				return "", nil, nil, "", false, false, false, fmt.Errorf("-p may only be specified once")
 			}
 			passwordSeen = true
 			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
@@ -314,12 +350,12 @@ func getParameters() (string, []string, []byte, string, bool, bool, error) {
 				explicitPassword = []byte(args[i])
 			}
 		default:
-			return "", nil, nil, "", false, false, fmt.Errorf("unknown argument: %s", args[i])
+			return "", nil, nil, "", false, false, false, fmt.Errorf("unknown argument: %s", args[i])
 		}
 	}
 
 	if (len(encryptInputs) > 0 && len(decryptInputs) > 0) || (len(encryptInputs) == 0 && len(decryptInputs) == 0) {
-		return "", nil, nil, "", false, false, fmt.Errorf("provide exactly one flag: -e or -d")
+		return "", nil, nil, "", false, false, false, fmt.Errorf("provide exactly one flag: -e or -d")
 	}
 
 	op := "encrypt"
@@ -332,12 +368,12 @@ func getParameters() (string, []string, []byte, string, bool, bool, error) {
 	if passwordSeen && explicitPassword == nil {
 		p, err := resolvePasswordInteractive(op)
 		if err != nil {
-			return "", nil, nil, "", false, false, err
+			return "", nil, nil, "", false, false, false, err
 		}
 		explicitPassword = p
 	}
 
-	return op, inputs, explicitPassword, outputFile, quiet, force, nil
+	return op, inputs, explicitPassword, outputFile, quiet, force, atomic, nil
 }
 
 func resolvePasswordInteractive(op string) ([]byte, error) {
@@ -420,6 +456,8 @@ func showHelp() {
 	fmt.Println("                    decryption prompts interactively.")
 	fmt.Println("  -q, --quiet       Suppress progress bar and summary output")
 	fmt.Println("  -f, --force       Overwrite output file if it already exists")
+	fmt.Println("  -a, --atomic      Decrypt to a temp file, rename only on success")
+	fmt.Println("                    (prevents partial plaintext on disk if decrypt fails)")
 	fmt.Println("  -h, --help        Show this help text")
 	fmt.Println("  -v, --version     Show version information")
 	

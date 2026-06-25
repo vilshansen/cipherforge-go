@@ -264,3 +264,99 @@ func TestMlockBytes(t *testing.T) {
 		t.Error("MlockBytes modified data")
 	}
 }
+
+func TestDeriveMasterKey(t *testing.T) {
+	password := []byte("test-password")
+	params := format.DefaultArgon2Params()
+
+	mk := DeriveMasterKey(password, params)
+	if len(mk) != 32 {
+		t.Errorf("DeriveMasterKey length = %d, want 32", len(mk))
+	}
+
+	// Deterministic: same password + same params = same master key
+	mk2 := DeriveMasterKey(password, params)
+	if !bytes.Equal(mk, mk2) {
+		t.Error("DeriveMasterKey not deterministic")
+	}
+
+	// Different password = different master key
+	mk3 := DeriveMasterKey([]byte("different-password"), params)
+	if bytes.Equal(mk, mk3) {
+		t.Error("Different passwords should produce different master keys")
+	}
+
+	// Different params = different master key
+	fastParams := format.Argon2Params{Time: 1, Memory: 64 * 1024, Threads: 1}
+	mk4 := DeriveMasterKey(password, fastParams)
+	if bytes.Equal(mk, mk4) {
+		t.Error("Different Argon2 params should produce different master keys")
+	}
+}
+
+func TestDeriveKeysFromMaster(t *testing.T) {
+	password := []byte("test-password")
+	params := format.DefaultArgon2Params()
+	masterKey := DeriveMasterKey(password, params)
+
+	salt := []byte("test-salt-12345678")
+	encKey, macKey := DeriveKeysFromMaster(masterKey, salt)
+
+	if len(encKey) != 32 {
+		t.Errorf("encKey length = %d, want 32", len(encKey))
+	}
+	if len(macKey) != 32 {
+		t.Errorf("macKey length = %d, want 32", len(macKey))
+	}
+
+	// The two keys must be different
+	if bytes.Equal(encKey, macKey) {
+		t.Error("encKey and macKey should be different")
+	}
+
+	// Deterministic
+	encKey2, macKey2 := DeriveKeysFromMaster(masterKey, salt)
+	if !bytes.Equal(encKey, encKey2) || !bytes.Equal(macKey, macKey2) {
+		t.Error("DeriveKeysFromMaster not deterministic")
+	}
+
+	// Different salt = different keys
+	encKey3, macKey3 := DeriveKeysFromMaster(masterKey, []byte("different-salt-1234"))
+	if bytes.Equal(encKey, encKey3) {
+		t.Error("Different salts should produce different encKeys")
+	}
+	if bytes.Equal(macKey, macKey3) {
+		t.Error("Different salts should produce different macKeys")
+	}
+}
+
+func TestV3KeyDerivationRoundTrip(t *testing.T) {
+	// Simulate the full v3 key derivation flow: encrypt side derives masterKey
+	// + per-file keys, then decrypt side independently does the same and
+	// should arrive at identical keys.
+	password := []byte("test-password")
+	params := format.DefaultArgon2Params()
+	salt := []byte("0123456789abcdef") // 16 bytes
+
+	// Encrypt side
+	mkEnc := DeriveMasterKey(password, params)
+	encKeyEnc, macKeyEnc := DeriveKeysFromMaster(mkEnc, salt)
+
+	// Decrypt side (independent derivation)
+	mkDec := DeriveMasterKey(password, params)
+	encKeyDec, macKeyDec := DeriveKeysFromMaster(mkDec, salt)
+
+	if !bytes.Equal(encKeyEnc, encKeyDec) {
+		t.Error("encKey mismatch between encrypt and decrypt sides")
+	}
+	if !bytes.Equal(macKeyEnc, macKeyDec) {
+		t.Error("macKey mismatch between encrypt and decrypt sides")
+	}
+}
+
+func TestRandReader(t *testing.T) {
+	r := RandReader()
+	if r == nil {
+		t.Error("RandReader returned nil")
+	}
+}

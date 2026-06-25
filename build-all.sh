@@ -1,9 +1,9 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="${VERSION:-3.0.1}"
+VERSION="${VERSION:-3.1.0}"
 
 SOURCE_FILE="cmd/cfo/main.go"
 
@@ -86,6 +86,27 @@ for p in "${PLATFORMS[@]}"; do
 done
 
 # -------------------------------------------------------
+# Prerequisite checks
+# -------------------------------------------------------
+
+section "Prerequisites"
+
+for cmd in go git; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        fail "$cmd is required but not found in PATH"
+        exit 1
+    fi
+done
+ok "go $(go version | cut -d' ' -f3)"
+ok "git $(git version | cut -d' ' -f3)"
+
+if command -v upx >/dev/null 2>&1; then
+    ok "upx $(upx --version 2>/dev/null | head -1 || echo 'found')"
+else
+    warn "upx not found — compression step will be skipped"
+fi
+
+# -------------------------------------------------------
 # Header
 # -------------------------------------------------------
 
@@ -101,21 +122,22 @@ info "Targets  : ${#PLATFORMS[@]}"
 section "Unit Tests"
 
 go test -race -v ./... 2>&1 | tee test_output.log
+test_rc=$?
 
-if grep -q "^--- FAIL:" test_output.log; then
-    fail "Unit tests failed — build aborted."
-    rm test_output.log
+if [ $test_rc -ne 0 ]; then
+    fail "Unit tests failed (exit code $test_rc) — build aborted."
+    rm -f test_output.log
     exit 1
 fi
 
 if grep -q "panic:" test_output.log; then
     fail "Test panic detected — build aborted."
-    rm test_output.log
+    rm -f test_output.log
     exit 1
 fi
 
 ok "All unit tests passed."
-rm test_output.log
+rm -f test_output.log
 
 # -------------------------------------------------------
 # Integration tests
@@ -124,13 +146,13 @@ rm test_output.log
 section "Integration Tests"
 
 if [ -f "test/test.sh" ]; then
-    cd test
-    chmod +x test.sh
-    ./test.sh || {
+    ( cd test
+      chmod +x test.sh
+      ./test.sh
+    ) || {
         fail "Integration tests failed — build aborted."
         exit 1
     }
-    cd ..
     ok "All integration tests passed."
 else
     warn "test/test.sh not found — skipping integration tests."
@@ -142,14 +164,20 @@ fi
 
 section "Compilation"
 
+# Safety check: DIST_DIR must be a non-empty subdirectory of the project root,
+# not something that could cause catastrophic deletion.
+if [ -z "${DIST_DIR}" ] || [ "${DIST_DIR}" = "/" ] || [ "${DIST_DIR}" = "." ] || [ "${DIST_DIR}" = ".." ]; then
+    fail "DIST_DIR sanity check failed: '${DIST_DIR}'"
+    exit 1
+fi
 rm -rf "${DIST_DIR}"
 
 PASS=0
 FAIL=0
 
 for PLATFORM in "${PLATFORMS[@]}"; do
-    TARGET_OS=$(echo "${PLATFORM}"   | cut -d '/' -f 1)
-    TARGET_ARCH=$(echo "${PLATFORM}" | cut -d '/' -f 2)
+    TARGET_OS="${PLATFORM%%/*}"
+    TARGET_ARCH="${PLATFORM##*/}"
 
     mkdir -p "${DIST_DIR}/originals/${TARGET_OS}/${TARGET_ARCH}"
 
@@ -189,11 +217,11 @@ fi
 
 section "Checksums"
 
-cd "${DIST_DIR}/originals"
-find . -type f | sort | while read -r f; do
-    sha256sum "${f}" >> ../checksums.txt
-done
-cd - > /dev/null
+( cd "${DIST_DIR}/originals"
+  find . -type f | sort | while read -r f; do
+      sha256sum "${f}" >> ../checksums.txt
+  done
+)
 
 while read -r hash path; do
     ok "${path}"

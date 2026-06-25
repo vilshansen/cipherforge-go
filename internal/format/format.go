@@ -22,7 +22,7 @@ const (
 	// Maximum acceptable Argon2id parameters when reading from a file header.
 	// These ceilings prevent a crafted file from causing resource exhaustion
 	// during key derivation.
-	MaxArgon2Time   = 100
+	MaxArgon2Time   = 10
 	MaxArgon2Memory = 16 * 1024 * 1024 // 16 GiB in KiB
 
 	TrailerSize = 8 + HMACSize

@@ -111,4 +111,48 @@ func TestConstants(t *testing.T) {
 	if HeaderSize != 64 {
 		t.Errorf("HeaderSize = %d, want 64", HeaderSize)
 	}
+	if MaxArgon2Time != 10 {
+		t.Errorf("MaxArgon2Time = %d, want 10", MaxArgon2Time)
+	}
+	if MaxArgon2Memory != 16*1024*1024 {
+		t.Errorf("MaxArgon2Memory = %d, want %d", MaxArgon2Memory, 16*1024*1024)
+	}
+}
+
+func TestReadArgon2ParamsBoundary(t *testing.T) {
+	tests := []struct {
+		name    string
+		params  Argon2Params
+		wantErr bool
+	}{
+		{"production defaults", DefaultArgon2Params(), false},
+		{"minimal valid", Argon2Params{Time: 1, Memory: 1, Threads: 1}, false},
+		{"max time", Argon2Params{Time: MaxArgon2Time, Memory: 1024, Threads: 1}, false},
+		{"time exceeds max", Argon2Params{Time: MaxArgon2Time + 1, Memory: 1024, Threads: 1}, true},
+		{"memory exceeds max", Argon2Params{Time: 1, Memory: MaxArgon2Memory + 1, Threads: 1}, true},
+		{"zero time", Argon2Params{Time: 0, Memory: 1024, Threads: 1}, true},
+		{"zero memory", Argon2Params{Time: 1, Memory: 0, Threads: 1}, true},
+		{"zero threads", Argon2Params{Time: 1, Memory: 1024, Threads: 0}, true},
+		{"all zero", Argon2Params{Time: 0, Memory: 0, Threads: 0}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			if err := WriteArgon2Params(buf, tt.params); err != nil {
+				t.Fatalf("WriteArgon2Params failed: %v", err)
+			}
+			_, err := ReadArgon2Params(buf)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ReadArgon2Params() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestTrailerSize(t *testing.T) {
+	// Trailer is 8 bytes (segment count) + 32 bytes (HMAC-SHA256) = 40 bytes
+	if TrailerSize != 8+HMACSize {
+		t.Errorf("TrailerSize = %d, want %d", TrailerSize, 8+HMACSize)
+	}
 }

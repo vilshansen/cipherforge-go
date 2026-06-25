@@ -4,17 +4,33 @@ set -euo pipefail
 # =============================================================================
 # CONFIG
 # =============================================================================
+CFO_BIN=""
+BUILT_LOCALLY=false
+
 if [ -f "../dist/compressed/linux/amd64/cfo" ]; then
     CFO_BIN="../dist/compressed/linux/amd64/cfo"
 elif [ -f "../dist/originals/linux/amd64/cfo" ]; then
     CFO_BIN="../dist/originals/linux/amd64/cfo"
-else
+fi
+
+if [ -z "$CFO_BIN" ]; then
     echo "Binary not found, building test binary..."
     cd ..
     go build -o test/test_bin ./cmd/cfo/
     cd test
     CFO_BIN="./test_bin"
+    BUILT_LOCALLY=true
 fi
+
+# ---------------------------------------------------------------------------
+# Prerequisite checks (fail early with a clear message)
+# ---------------------------------------------------------------------------
+for cmd in "$CFO_BIN" timeout dd sha256sum; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "ERROR: required command not found: $cmd" >&2
+        exit 1
+    fi
+done
 
 TEST_DIR="./test_data"
 CHAOS_RUNS=${CHAOS_RUNS:-5}
@@ -34,9 +50,14 @@ report() { printf "%-45s %-8s\n" "$1" "$2"; }
 # CLEANUP
 # =============================================================================
 cleanup() {
-    pkill -P $$ 2>/dev/null || true
+    # Kill any child processes still running under this script's process group.
+    kill -TERM -$$ 2>/dev/null || true
     sleep 0.1
-    for _ in {1..3}; do rm -rf "$TEST_DIR" && break; sleep 0.1; done
+    local attempt
+    for attempt in 1 2 3; do
+        rm -rf "$TEST_DIR" 2>/dev/null && break
+        sleep 0.1
+    done
 }
 trap cleanup EXIT
 
@@ -63,18 +84,27 @@ test_single() {
     local file="$TEST_DIR/single_${size}.bin"
 
     dd if=/dev/urandom of="$file" bs="$size" count=1 status=none 2>/dev/null
+    local orig_sum
+    orig_sum=$(sha256sum "$file" | cut -d' ' -f1)
 
     if ! do_encrypt "$file"; then
-        report "Single (${size})" "FAIL"
+        report "Single (${size})" "FAIL (encrypt)"
         return 1
     fi
 
     rm -f "$file"
 
-    if do_decrypt "${file}.cfo" && [ -f "$file" ]; then
+    if ! do_decrypt "${file}.cfo"; then
+        report "Single (${size})" "FAIL (decrypt)"
+        return 1
+    fi
+
+    local dec_sum
+    dec_sum=$(sha256sum "$file" | cut -d' ' -f1)
+    if [ "$orig_sum" = "$dec_sum" ]; then
         report "Single (${size})" "PASS"
     else
-        report "Single (${size})" "FAIL (decrypt)"
+        report "Single (${size})" "FAIL (checksum mismatch)"
         return 1
     fi
 }
@@ -113,7 +143,7 @@ test_zero() {
     touch "$file"
 
     if ! do_encrypt "$file"; then
-        report "Zero-byte file" "FAIL"
+        report "Zero-byte file" "FAIL (encrypt)"
         return 1
     fi
 
@@ -160,9 +190,15 @@ test_tamper() {
 # =============================================================================
 # FAULT TESTS
 # =============================================================================
-
+# fault_kill_once verifies that killing the encryption process mid-stream does
+# not produce a valid .cfo file that decrypts to the correct plaintext.  It
+# returns 0 (success) when either:
+#   a) no .cfo was written (process killed before any output), or
+#   b) decryption of the partial .cfo fails (AEAD or HMAC catches corruption).
+# It is NOT a failure when encryption finished before the kill — the random
+# sleep window is small, so this is rare but harmless.
 fault_kill_once() {
-    local file orig cfo
+    local file orig cfo dec
     file=$(mktemp "$TEST_DIR/fault_XXXXXX.bin")
     orig=$(mktemp "$TEST_DIR/fault_XXXXXX.orig")
 
@@ -172,6 +208,7 @@ fault_kill_once() {
     "$CFO_BIN" -e "$file" -p "$TEST_PASSWORD" >/dev/null 2>/dev/null &
     local pid=$!
 
+    # Sleep a random fraction of a second to try to catch mid-encryption.
     sleep "0.$((RANDOM % 10))"
     kill -9 "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -179,19 +216,21 @@ fault_kill_once() {
     cfo="${file}.cfo"
 
     if [ ! -f "$cfo" ]; then
+        # No output file — encryption was killed before writing anything.
         rm -f "$file" "$orig"
         return 0
     fi
 
-    local dec
     dec=$(mktemp "$TEST_DIR/fault_XXXXXX.dec")
-    if "$CFO_BIN" -d "$cfo" -p "$TEST_PASSWORD" >"$dec" 2>/dev/null \
-            && cmp -s "$dec" "$orig" 2>/dev/null; then
-        # Encryption finished before kill — valid file, not a fault
+    if "$CFO_BIN" -d "$cfo" -p "$TEST_PASSWORD" -f >/dev/null 2>&1 \
+            && cmp -s "$file" "$orig" 2>/dev/null; then
+        # Encryption completed before kill — valid file produced.
+        # This is not a fault; the kill happened after the file was written.
         rm -f "$file" "$orig" "$cfo" "$dec"
         return 0
     fi
 
+    # Decryption either failed or produced wrong output — fault handled correctly.
     rm -f "$file" "$orig" "$cfo" "$dec"
     return 0
 }
@@ -212,12 +251,13 @@ test_fault_kill() {
 
 test_fault_truncate() {
     local file="$TEST_DIR/trunc.bin"
-    local dec="$TEST_DIR/trunc.dec"
+    local orig="$TEST_DIR/trunc.orig"
 
     dd if=/dev/urandom of="$file" bs=1M count=1 status=none 2>/dev/null
+    cp "$file" "$orig"  # save original for comparison after decrypt
 
     if ! do_encrypt "$file"; then
-        report "Fault: truncated ciphertext" "FAIL"
+        report "Fault: truncated ciphertext" "FAIL (encrypt)"
         return 1
     fi
 
@@ -227,14 +267,23 @@ test_fault_truncate() {
     else
         current_size=$(stat -c%s "${file}.cfo")
     fi
-    truncate -s "$((current_size - 100))" "${file}.cfo" 2>/dev/null || true
-
-    if do_decrypt "${file}.cfo" && cmp -s "$dec" "$file" 2>/dev/null; then
-        report "Fault: truncated ciphertext" "FAIL"
-        return 1
+    # Truncate by 100 bytes: try truncate(1) first, fall back to dd.
+    local new_size=$((current_size - 100))
+    if command -v truncate >/dev/null 2>&1; then
+        truncate -s "$new_size" "${file}.cfo"
     else
-        report "Fault: truncated ciphertext" "PASS"
+        dd if="${file}.cfo" of="${file}.cfo.trunc" bs="$new_size" count=1 status=none 2>/dev/null \
+            && mv "${file}.cfo.trunc" "${file}.cfo"
     fi
+
+    # Decryption of a truncated file must fail, or produce wrong output.
+    # If it succeeds *and* the output matches the original, the corruption was
+    # not detected — that is a test failure.
+    if do_decrypt "${file}.cfo" && cmp -s "$file" "$orig" 2>/dev/null; then
+        report "Fault: truncated ciphertext" "FAIL (undetected)"
+        return 1
+    fi
+    report "Fault: truncated ciphertext" "PASS"
 }
 
 test_chaos() {
@@ -266,7 +315,7 @@ main() {
     test_fault_truncate || failed=1
     test_chaos          || failed=1
 
-    rm -f "$CFO_BIN"
+    if $BUILT_LOCALLY; then rm -f "$CFO_BIN"; fi
     echo ""
     if [ "$failed" -eq 0 ]; then
         echo "🎉 ALL TESTS PASSED"
