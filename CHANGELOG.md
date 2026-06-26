@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.3.0 (2026-06-26)
+
+### Added
+
+- **Stdin/stdout support via `-`.** Encrypt from stdin and decrypt to stdout
+  using the standard Unix `-` convention. `echo "Hello" | cfo -e -o out.cfo`
+  encrypts piped input; `cfo -d file.cfo -o -` decrypts to stdout. When stdin
+  is not a terminal, `-e` can be omitted entirely: `echo "Hello" | cfo -o out.cfo`
+  auto-detects stdin. Decrypt from stdin is intentionally unsupported (the
+  decryptor requires a seekable input for trailer-HMAC verification).
+
+### Changed
+
+- Filename listings (tar `-v` style) now go to stderr instead of stdout,
+  keeping data output (`-o -`) clean for piping.
+
 ## v3.2.0 (2026-06-26)
 
 ### Changed

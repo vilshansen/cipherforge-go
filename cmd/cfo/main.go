@@ -41,8 +41,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	if len(inputFiles) > 1 {
+		for _, f := range inputFiles {
+			if f == "-" {
+				ui.PrintError("stdin (-) cannot be combined with other input files")
+				os.Exit(1)
+			}
+		}
+	}
 	if outputOverride != "" && len(inputFiles) > 1 {
 		ui.PrintError("-o requires a single input file")
+		os.Exit(1)
+	}
+	if inputFiles[0] == "-" && outputOverride == "" {
+		ui.PrintError("stdin requires -o <output>")
 		os.Exit(1)
 	}
 
@@ -84,6 +96,9 @@ func main() {
 }
 
 func deriveOutputPath(operation, inputFile string) string {
+	if inputFile == "-" {
+		return "-"
+	}
 	if operation == "encrypt" {
 		return inputFile + ".cfo"
 	}
@@ -91,10 +106,10 @@ func deriveOutputPath(operation, inputFile string) string {
 }
 
 func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force, atomic bool) error {
-	if operation == "decrypt" && !strings.HasSuffix(inputFile, ".cfo") {
+	if operation == "decrypt" && inputFile != "-" && !strings.HasSuffix(inputFile, ".cfo") {
 		return fmt.Errorf("missing .cfo extension")
 	}
-	if !force {
+	if outputFile != "-" && !force {
 		if _, err := os.Stat(outputFile); err == nil {
 			return fmt.Errorf("output file %q already exists (use -f to overwrite)", outputFile)
 		}
@@ -106,27 +121,45 @@ func processFile(operation, inputFile, outputFile string, password, masterKey []
 }
 
 func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet bool) error {
-	in, err := os.Open(inputFile)
-	if err != nil {
-		return err
+	var in *os.File
+	if inputFile == "-" {
+		in = os.Stdin
+	} else {
+		var err error
+		in, err = os.Open(inputFile)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
 	}
-	defer in.Close()
 
-	out, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return err
+	var out *os.File
+	if outputFile == "-" {
+		out = os.Stdout
+	} else {
+		var err error
+		out, err = os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		if err != nil {
+			return err
+		}
 	}
 
 	succeeded := false
 	defer func() {
-		out.Close()
-		if !succeeded {
-			os.Remove(outputFile)
+		if outputFile != "-" {
+			out.Close()
+			if !succeeded {
+				os.Remove(outputFile)
+			}
 		}
 	}()
 
-	if !quiet {
-		fmt.Println(filepath.Base(inputFile))
+	if !quiet && outputFile != "-" {
+		if inputFile == "-" {
+			fmt.Fprintln(os.Stderr, "(stdin)")
+		} else {
+			fmt.Fprintln(os.Stderr, filepath.Base(inputFile))
+		}
 	}
 
 	var enc *cipherforge.Encrypter
@@ -135,7 +168,7 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 	} else {
 		enc = cipherforge.NewEncrypter(password)
 	}
-	err = enc.Encrypt(in, out, nil)
+	err := enc.Encrypt(in, out, nil)
 
 	if err == nil {
 		succeeded = true
@@ -144,18 +177,21 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 }
 
 func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic bool) error {
+	if inputFile == "-" {
+		return fmt.Errorf("decrypt from stdin is not supported (seek required for trailer HMAC)")
+	}
+
 	in, err := os.Open(inputFile)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	// When --atomic is set, decrypt into a temporary file in the same directory
-	// and rename on success.  This prevents partial plaintext from ever
-	// appearing at the final output path if decryption fails mid-stream.
-	writePath := outputFile
 	var out *os.File
-	if atomic {
+	writePath := outputFile
+	if outputFile == "-" {
+		out = os.Stdout
+	} else if atomic {
 		out, err = os.CreateTemp(filepath.Dir(outputFile), ".cfo-decrypt-*")
 		if err != nil {
 			return fmt.Errorf("cannot create temp file for atomic decrypt: %w", err)
@@ -170,14 +206,16 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic bo
 
 	succeeded := false
 	defer func() {
-		out.Close()
-		if !succeeded {
-			os.Remove(writePath)
+		if outputFile != "-" {
+			out.Close()
+			if !succeeded {
+				os.Remove(writePath)
+			}
 		}
 	}()
 
-	if !quiet {
-		fmt.Println(filepath.Base(inputFile))
+	if !quiet && outputFile != "-" {
+		fmt.Fprintln(os.Stderr, filepath.Base(inputFile))
 	}
 
 	dec := cipherforge.NewDecrypter(password)
@@ -188,7 +226,7 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic bo
 	}
 
 	// Atomically rename the temp file to the final output path.
-	if atomic && succeeded {
+	if atomic && succeeded && outputFile != "-" {
 		out.Close()
 		if err := os.Rename(writePath, outputFile); err != nil {
 			os.Remove(writePath)
@@ -258,14 +296,14 @@ func getParameters() (string, []string, []byte, string, bool, bool, bool, error)
 			atomic = true
 		case "-e":
 			i++
-			for i < len(args) && args[i][0] != '-' {
+			for i < len(args) && (args[i] == "-" || args[i][0] != '-') {
 				encryptInputs = append(encryptInputs, args[i])
 				i++
 			}
 			i--
 		case "-d":
 			i++
-			for i < len(args) && args[i][0] != '-' {
+			for i < len(args) && (args[i] == "-" || args[i][0] != '-') {
 				decryptInputs = append(decryptInputs, args[i])
 				i++
 			}
@@ -275,7 +313,7 @@ func getParameters() (string, []string, []byte, string, bool, bool, bool, error)
 				return "", nil, nil, "", false, false, false, fmt.Errorf("-o may only be specified once")
 			}
 			outputSeen = true
-			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
+			if i+1 < len(args) && len(args[i+1]) > 0 && (args[i+1] == "-" || args[i+1][0] != '-') {
 				i++
 				outputFile = args[i]
 			} else {
@@ -295,7 +333,20 @@ func getParameters() (string, []string, []byte, string, bool, bool, bool, error)
 		}
 	}
 
-	if (len(encryptInputs) > 0 && len(decryptInputs) > 0) || (len(encryptInputs) == 0 && len(decryptInputs) == 0) {
+	// Auto-detect stdin: if neither -e nor -d received file arguments and
+	// stdin is not a terminal, default to encrypt-from-stdin.
+	if len(encryptInputs) == 0 && len(decryptInputs) == 0 {
+		if !term.IsTerminal(int(syscall.Stdin)) {
+			encryptInputs = []string{"-"}
+		} else {
+			return "", nil, nil, "", false, false, false, fmt.Errorf("provide exactly one flag: -e or -d")
+		}
+	}
+	// Decrypt from stdin is not supported — give a clear error.
+	if len(decryptInputs) > 0 && decryptInputs[0] == "-" {
+		return "", nil, nil, "", false, false, false, fmt.Errorf("decrypt from stdin is not supported (seek required for trailer HMAC)")
+	}
+	if len(encryptInputs) > 0 && len(decryptInputs) > 0 {
 		return "", nil, nil, "", false, false, false, fmt.Errorf("provide exactly one flag: -e or -d")
 	}
 
@@ -358,6 +409,10 @@ func resolvePasswordInteractive(op string) ([]byte, error) {
 func expandInputPaths(inputs []string, op string) ([]string, error) {
 	var files []string
 	for _, input := range inputs {
+		if input == "-" {
+			files = append(files, "-")
+			continue
+		}
 		matches, err := filepath.Glob(input)
 		if err != nil {
 			return nil, fmt.Errorf("glob pattern %q: %w", input, err)
@@ -386,11 +441,12 @@ func showHelp() {
 	fmt.Println("       cfo -e <file> -o <out>.cfo")
 	fmt.Println("       cfo -e <file...> -p <pwd>")
 	fmt.Println("       cfo -e <file...> -p")
+	fmt.Println("       cfo -e -o <out>.cfo           (reads from stdin)")
 
 	fmt.Println("\nFlags:")
 	fmt.Println("  -e                Encrypt — each input file produces <name>.cfo")
 	fmt.Println("  -d                Decrypt — each .cfo file produces its original name")
-	fmt.Println("  -o <file>         Output filename (requires a single input file)")
+	fmt.Println("  -o <file>         Output filename (use - for stdout)")
 	fmt.Println("  -p [pwd]          Supply a password. Without -p, encryption auto-generates one;")
 	fmt.Println("                    decryption prompts interactively")
 	fmt.Println("  -q, --quiet       Suppress all non-error output")
@@ -405,6 +461,8 @@ func showHelp() {
 	fmt.Println("  cfo -d document.pdf.cfo            Decrypt (prompts for password)")
 	fmt.Println("  cfo -d *.cfo -p mysecret           Decrypt all .cfo files")
 	fmt.Println("  cfo -e backup.tar -o archive.cfo   Encrypt to a custom output name")
+	fmt.Println("  echo 'Hello' | cfo -e -o out.cfo   Encrypt from stdin")
+	fmt.Println("  cfo -d file.cfo -o -               Decrypt to stdout")
 
 	fmt.Println("\nNotes:")
 	fmt.Println("  The auto-generated password is 44 characters — shown once, cannot be recovered.")

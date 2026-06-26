@@ -3,7 +3,7 @@
 set -euo pipefail
 
 GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="${VERSION:-3.2.0}"
+VERSION="${VERSION:-3.3.0}"
 
 SOURCE_FILE="cmd/cfo/main.go"
 
