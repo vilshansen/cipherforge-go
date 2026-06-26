@@ -2,9 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,19 +90,6 @@ func deriveOutputPath(operation, inputFile string) string {
 	return strings.TrimSuffix(inputFile, ".cfo")
 }
 
-func formatSize(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for nn := n / unit; nn >= unit && exp < 3; nn /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGT"[exp])
-}
-
 func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force, atomic bool) error {
 	if operation == "decrypt" && !strings.HasSuffix(inputFile, ".cfo") {
 		return fmt.Errorf("missing .cfo extension")
@@ -140,9 +125,9 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 		}
 	}()
 
-	info, _ := in.Stat()
-	total := info.Size()
-	prefix := fmt.Sprintf("Encrypting %s", filepath.Base(inputFile))
+	if !quiet {
+		fmt.Println(filepath.Base(inputFile))
+	}
 
 	var enc *cipherforge.Encrypter
 	if masterKey != nil {
@@ -150,18 +135,9 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 	} else {
 		enc = cipherforge.NewEncrypter(password)
 	}
-	err = enc.Encrypt(in, out, func(done int64) {
-		if !quiet && total > 0 {
-			ui.RunProgressBar(prefix, int((done*100)/total))
-		}
-	})
+	err = enc.Encrypt(in, out, nil)
 
 	if err == nil {
-		if !quiet {
-			ui.RunProgressBar(prefix, 100)
-			outInfo, _ := os.Stat(outputFile)
-			ui.ProgressComplete("Encrypt", filepath.Base(inputFile), formatSize(outInfo.Size()))
-		}
 		succeeded = true
 	}
 	return err
@@ -200,48 +176,14 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic bo
 		}
 	}()
 
-	info, _ := in.Stat()
-	fileSize := info.Size()
-	prefix := fmt.Sprintf("Decrypting %s", filepath.Base(inputFile))
-
-	// Estimate plaintext size for accurate progress bar.
-	estimatedTotal := fileSize
-	headerSize := int64(format.HeaderSize)
-	if fileSize >= 40 {
-		if _, err := in.Seek(8, io.SeekStart); err == nil {
-			var versionBuf [4]byte
-			if _, err := io.ReadFull(in, versionBuf[:]); err == nil {
-				if binary.BigEndian.Uint32(versionBuf[:]) >= 2 {
-					headerSize = int64(format.HeaderSize)
-				}
-			}
-		}
-		if _, err := in.Seek(-40, io.SeekEnd); err == nil {
-			var trailerHead [8]byte
-			if _, err := io.ReadFull(in, trailerHead[:]); err == nil {
-				segCount := int64(binary.BigEndian.Uint64(trailerHead[:]))
-				estimatedTotal = fileSize - headerSize - 40 - segCount*24
-			}
-		}
-		in.Seek(0, io.SeekStart)
-	}
-	if estimatedTotal <= 0 {
-		estimatedTotal = 1
+	if !quiet {
+		fmt.Println(filepath.Base(inputFile))
 	}
 
 	dec := cipherforge.NewDecrypter(password)
-	err = dec.Decrypt(in, out, func(done int64) {
-		if !quiet && estimatedTotal > 0 {
-			ui.RunProgressBar(prefix, int((done*100)/estimatedTotal))
-		}
-	})
+	err = dec.Decrypt(in, out, nil)
 
 	if err == nil {
-		if !quiet {
-			ui.RunProgressBar(prefix, 100)
-			outInfo, _ := os.Stat(writePath)
-			ui.ProgressComplete("Decrypt", filepath.Base(inputFile), formatSize(outInfo.Size()))
-		}
 		succeeded = true
 	}
 
@@ -273,9 +215,8 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		ui.PrintHeader("Auto-Generated Password")
 		fmt.Printf("%s\n", p)
-		fmt.Printf("Save this — it cannot be recovered.\n")
+		fmt.Fprintf(os.Stderr, "cfo: Save this password — it cannot be recovered.\n")
 		return p, nil
 	}
 
@@ -307,7 +248,7 @@ func getParameters() (string, []string, []byte, string, bool, bool, bool, error)
 			showHelp()
 			os.Exit(0)
 		case "-v", "--version":
-			fmt.Printf("Cipherforge v%s (commit: %s)\n", Version, GitCommit)
+			fmt.Printf("cfo %s\n", Version)
 			os.Exit(0)
 		case "-q", "--quiet":
 			quiet = true
@@ -400,7 +341,7 @@ func resolvePasswordInteractive(op string) ([]byte, error) {
 			}
 			crypto.ZeroBytes(p1)
 			crypto.ZeroBytes(p2)
-			fmt.Fprintln(os.Stderr, "Error: Passwords do not match.")
+			fmt.Fprintln(os.Stderr, "cfo: Passwords do not match.")
 		}
 	}
 	for {
@@ -438,43 +379,38 @@ func expandInputPaths(inputs []string, op string) ([]string, error) {
 }
 
 func showHelp() {
-	fmt.Printf("%s%sCipherforge v%s%s (commit: %s)\n\n", ui.ColorBold, ui.ColorCyan, Version, ui.ColorReset, GitCommit)
-	fmt.Print("Encrypt and decrypt files using XChaCha20-Poly1305 and Argon2id key derivation.\n\n")
-	
-	ui.PrintHeader("Usage")
-	fmt.Println("  cfo -e <file...>              Encrypt one or more files")
-	fmt.Println("  cfo -d <file...>              Decrypt one or more .cfo files")
-	fmt.Println("  cfo -e <file> -o <out>.cfo    Encrypt to a specific output file")
-	fmt.Println("  cfo -e <file...> -p <pwd>     Encrypt with an explicit password")
-	fmt.Println("  cfo -e <file...> -p           Encrypt with an interactive password prompt")
-	
-	ui.PrintHeader("Flags")
-	fmt.Println("  -e                Encrypt. Each input file produces <name>.cfo")
-	fmt.Println("  -d                Decrypt. Each .cfo file produces its original name")
+	fmt.Printf("cfo %s — encrypt and decrypt files with XChaCha20-Poly1305 and Argon2id.\n\n", Version)
+
+	fmt.Println("Usage: cfo -e <file...>")
+	fmt.Println("       cfo -d <file...>")
+	fmt.Println("       cfo -e <file> -o <out>.cfo")
+	fmt.Println("       cfo -e <file...> -p <pwd>")
+	fmt.Println("       cfo -e <file...> -p")
+
+	fmt.Println("\nFlags:")
+	fmt.Println("  -e                Encrypt — each input file produces <name>.cfo")
+	fmt.Println("  -d                Decrypt — each .cfo file produces its original name")
 	fmt.Println("  -o <file>         Output filename (requires a single input file)")
 	fmt.Println("  -p [pwd]          Supply a password. Without -p, encryption auto-generates one;")
-	fmt.Println("                    decryption prompts interactively.")
-	fmt.Println("  -q, --quiet       Suppress progress bar and summary output")
+	fmt.Println("                    decryption prompts interactively")
+	fmt.Println("  -q, --quiet       Suppress all non-error output")
 	fmt.Println("  -f, --force       Overwrite output file if it already exists")
 	fmt.Println("  -a, --atomic      Decrypt to a temp file, rename only on success")
-	fmt.Println("                    (prevents partial plaintext on disk if decrypt fails)")
 	fmt.Println("  -h, --help        Show this help text")
 	fmt.Println("  -v, --version     Show version information")
-	
-	ui.PrintHeader("Examples")
+
+	fmt.Println("\nExamples:")
 	fmt.Println("  cfo -e document.pdf                Encrypt document.pdf → document.pdf.cfo")
 	fmt.Println("  cfo -e *.txt -p mysecret           Encrypt all .txt files (skips .cfo files)")
 	fmt.Println("  cfo -d document.pdf.cfo            Decrypt (prompts for password)")
 	fmt.Println("  cfo -d *.cfo -p mysecret           Decrypt all .cfo files")
 	fmt.Println("  cfo -e backup.tar -o archive.cfo   Encrypt to a custom output name")
-	
-	ui.PrintHeader("Notes")
-	fmt.Println("  • The auto-generated password is 44 characters long and is shown")
-	fmt.Println("    only once. Save it — it cannot be recovered.")
-	fmt.Println("  • Argon2id KDF uses 1 GiB of memory per operation; encryption and")
-	fmt.Println("    decryption each take several seconds.")
-	fmt.Println("  • The .cfo file reveals the original filename and approximate plaintext")
-	fmt.Println("    size. It does not hide the existence of encrypted data.")
-	fmt.Println("  • File format details: see FILEFORMAT.MD")
+
+	fmt.Println("\nNotes:")
+	fmt.Println("  The auto-generated password is 44 characters — shown once, cannot be recovered.")
+	fmt.Println("  Argon2id KDF uses 256 MiB memory per operation; each takes ~1 second.")
+	fmt.Println("  The .cfo file reveals the original filename and approximate plaintext size")
+	fmt.Println("  but does not hide the existence of encrypted data.")
+	fmt.Println("  File format details: see FILEFORMAT.MD")
 	fmt.Println()
 }

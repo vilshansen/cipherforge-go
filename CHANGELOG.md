@@ -1,5 +1,32 @@
 # Changelog
 
+## v3.2.0 (2026-06-26)
+
+### Changed
+
+- **Argon2id parameters reduced** from 1 GiB / 4 passes to 256 MiB / 5 passes.
+  For auto-generated 44-character passwords (~258 bits entropy), the KDF parameters
+  are cryptographically irrelevant — the keyspace is physically unsearchable. For
+  user-supplied passwords, 256 MiB is the threshold that forces even a custom-ASIC
+  attacker into external DRAM (rather than on-die SRAM), which is where Argon2id's
+  memory-hardness imposes real economic cost. Above 256 MiB, returns diminish:
+  1 GiB quadruples both attacker per-core memory cost and user wait time. The time
+  parameter was raised from 4 to 5 to partially compensate at negligible runtime
+  cost. Derivation completes in ~1 second on modern hardware (down from ~4–8 s)
+  while keeping brute-force cost above $200K in ASIC silicon even for a weak
+  8-character password.
+- **Console output redesigned to mimic tar(1).** No ANSI colors, no progress bars,
+  no decorative symbols (✓, ✗, ⚠). Filenames are printed as each file is processed
+  (like `tar -v`). Prompts, warnings, and errors go to stderr with a `cfo:` prefix;
+  only data output (auto-generated password, filenames) goes to stdout. Success is
+  silent. Help and version output use minimal plain-text formatting.
+
+### Fixed
+
+- **Source archive no longer stalls.** `build-all.sh` now uses `git archive` instead
+  of `tar --exclude` for the source tarball, avoiding the 9.4 GiB untracked
+  `bin.bin` test artifact that caused the tar step to hang.
+
 ## v3.1.0 (2026-06-25)
 
 ### Security

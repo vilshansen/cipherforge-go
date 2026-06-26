@@ -3,7 +3,7 @@
 set -euo pipefail
 
 GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="${VERSION:-3.1.0}"
+VERSION="${VERSION:-3.2.0}"
 
 SOURCE_FILE="cmd/cfo/main.go"
 
@@ -235,7 +235,7 @@ info "SHA256 checksums written to ${DIST_DIR}/checksums.txt"
 
 section "Source Archive"
 
-tar -czf "${DIST_DIR}/cipherforge_source.tar.gz" --exclude=dist --exclude=.git .
+git archive --format=tar.gz --output="${DIST_DIR}/cipherforge_source.tar.gz" HEAD
 ok "Source archive -> ${DIST_DIR}/cipherforge_source.tar.gz"
 
 # -------------------------------------------------------

@@ -6,93 +6,42 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"syscall"
-	"time"
 
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"golang.org/x/term"
 )
 
-// ANSI color codes (matches dnf style)
-const (
-	ColorReset   = "\033[0m"
-	ColorBold    = "\033[1m"
-	ColorGreen   = "\033[32m"
-	ColorYellow  = "\033[33m"
-	ColorCyan    = "\033[36m"
-	ColorRed     = "\033[31m"
-	ColorGray    = "\033[90m"
-)
+// PrintSuccess prints nothing — tar style is silent on success.
+func PrintSuccess(msg string) {}
 
-// Progress represents progress state for dnf-style output
-type Progress struct {
-	startTime time.Time
-	lastUpdate time.Time
-	total     int64
-	done      int64
-}
-
-// RunProgressBar displays a dnf-style progress bar with percentage
-func RunProgressBar(prefix string, percent int) {
-	const barWidth = 20
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
-	filled := (percent * barWidth) / 100
-	bar := strings.Repeat("=", filled) + strings.Repeat(" ", barWidth-filled)
-	
-	// dnf style: use color and cleaner formatting
-	fmt.Printf("\r%s%-45s %s[%-20s]%s %3d%%", 
-		ColorCyan, prefix, ColorGreen, bar, ColorReset, percent)
-}
-
-// ProgressComplete finishes the progress bar and prints a summary on one line
-func ProgressComplete(operation string, filename string, size string) {
-	text := fmt.Sprintf("%s %s (%s)", operation, filename, size)
-	padding := ""
-	if len(text) < 45 {
-		padding = strings.Repeat(" ", 45-len(text))
-	}
-	fmt.Printf("\r%s%s%s %s (%s)%s %s[%s]%s 100%% %s✓%s\033[K\n", 
-		ColorCyan, operation, ColorReset, filename, size, padding, ColorGreen, strings.Repeat("=", 20), ColorReset, ColorGreen, ColorReset)
-}
-
-// PrintSuccess prints a green success message (dnf style)
-func PrintSuccess(msg string) {
-	fmt.Printf("%s✓%s %s\n", ColorGreen, ColorReset, msg)
-}
-
-// PrintWarning prints a yellow warning message (dnf style)
+// PrintWarning prints a warning to stderr in tar style.
 func PrintWarning(msg string) {
-	fmt.Printf("%s⚠%s %s\n", ColorYellow, ColorReset, msg)
+	fmt.Fprintf(os.Stderr, "cfo: warning: %s\n", msg)
 }
 
-// PrintError prints a red error message (dnf style)
+// PrintError prints an error to stderr in tar style.
 func PrintError(msg string) {
-	fmt.Printf("%s✗%s %s\n", ColorRed, ColorReset, msg)
+	fmt.Fprintf(os.Stderr, "cfo: %s\n", msg)
 }
 
-// PrintHeader prints a section header (dnf style)
+// PrintHeader prints a plain section header (no ANSI, no decorations).
 func PrintHeader(title string) {
-	fmt.Printf("\n%s%s==%s %s %s==%s\n", ColorBold, ColorCyan, ColorReset, title, ColorCyan, ColorReset)
+	fmt.Printf("\n%s\n", title)
 }
 
-// PrintInfo prints an informational line with padding
+// PrintInfo prints an informational line.
 func PrintInfo(key string, value string) {
-	fmt.Printf("  %s%-20s%s %s\n", ColorGray, key, ColorReset, value)
+	fmt.Printf("  %s %s\n", key, value)
 }
 
-// ReadPasswordFromTerminal reads a password from terminal (hidden on input)
+// ReadPasswordFromTerminal reads a password from terminal (hidden on input).
 func ReadPasswordFromTerminal(prompt string) ([]byte, error) {
 	fd := int(syscall.Stdin)
 	if term.IsTerminal(fd) {
-		fmt.Fprint(os.Stdout, prompt)
+		fmt.Fprint(os.Stderr, prompt)
 		bytePassword, err := term.ReadPassword(fd)
-		fmt.Println()
+		fmt.Fprintln(os.Stderr)
 		return bytePassword, err
 	}
 	reader := bufio.NewReader(os.Stdin)
@@ -106,7 +55,7 @@ func ReadPasswordFromTerminal(prompt string) ([]byte, error) {
 	return bytes.TrimRight(line, "\r\n"), nil
 }
 
-// ReadPasswordStarred reads a password with star masking (dnf style)
+// ReadPasswordStarred reads a password with star masking (prompts go to stderr).
 func ReadPasswordStarred(prompt string) ([]byte, error) {
 	fd := int(syscall.Stdin)
 	if !term.IsTerminal(fd) {
@@ -117,7 +66,7 @@ func ReadPasswordStarred(prompt string) ([]byte, error) {
 		return nil, fmt.Errorf("failed to set raw terminal mode: %w", err)
 	}
 	defer term.Restore(fd, oldState)
-	fmt.Fprint(os.Stdout, prompt)
+	fmt.Fprint(os.Stderr, prompt)
 	var password []byte
 	buf := make([]byte, 1)
 	for {
@@ -129,21 +78,21 @@ func ReadPasswordStarred(prompt string) ([]byte, error) {
 		b := buf[0]
 		switch {
 		case b == '\r' || b == '\n':
-			fmt.Print("\r\n")
+			fmt.Fprint(os.Stderr, "\r\n")
 			return password, nil
 		case b == 3:
-			fmt.Print("\r\n")
+			fmt.Fprint(os.Stderr, "\r\n")
 			crypto.ZeroBytes(password)
 			return nil, fmt.Errorf("cancelled by user")
 		case b == 127 || b == '\b':
 			if len(password) > 0 {
 				crypto.ZeroBytes(password[len(password)-1:])
 				password = password[:len(password)-1]
-				fmt.Print("\b \b")
+				fmt.Fprint(os.Stderr, "\b \b")
 			}
 		case b >= 32 && b < 127:
 			password = append(password, b)
-			fmt.Print("*")
+			fmt.Fprint(os.Stderr, "*")
 		}
 	}
 }

@@ -222,17 +222,33 @@ Argon2id was the winner of the Password Hashing Competition (2015) and is the
 current recommendation of OWASP, NIST, and the IETF for password-based key
 derivation. It is specifically designed to be resistant to GPU and ASIC
 acceleration: while a GPU can run thousands of cheap hash computations in
-parallel, it cannot run thousands of 1 GiB memory allocations in parallel
+parallel, it cannot run thousands of 256 MiB memory allocations in parallel
 — memory bandwidth is the bottleneck, not compute.
 
 Cipherforge uses hardened parameters:
 
-| Parameter | Value  | Purpose |
-|-----------|--------|---------|
-| Time      | 4      | Number of passes over memory |
-| Memory    | 1 GiB  | RAM allocated per derivation |
-| Threads   | 4      | Parallel memory lanes |
+| Parameter | Value   | Purpose |
+|-----------|---------|---------|
+| Time      | 5       | Number of passes over memory |
+| Memory    | 256 MiB | RAM allocated per derivation |
+| Threads   | 4       | Parallel memory lanes |
 | Output    | 32 bytes | Master key |
+
+**Why 256 MiB and 5 passes?** For the default auto-generated 44-character
+passwords (~258 bits of entropy), the keyspace is physically unsearchable —
+the KDF parameters are cryptographically irrelevant. The parameters matter for
+user-supplied passwords. 256 MiB is the threshold where even a custom-ASIC
+attacker must use external DRAM rather than on-die SRAM, which is where
+Argon2id's memory-hardness imposes real economic cost. Below 256 MiB, ASIC
+cores can fit their working memory on-die, dramatically reducing per-guess
+cost. Above 256 MiB, returns diminish: going to 1 GiB quadruples attacker
+per-core memory cost but also quadruples user wait time with no corresponding
+improvement in the security margin for passwords of reasonable length. Five
+passes (up from four) compensates for the reduced memory by making
+time-memory tradeoff attacks more expensive, at negligible runtime cost.
+The result is ~1 second per derivation on modern hardware while keeping the
+cost to brute-force even a weak 8-character password above $200K in ASIC
+silicon.
 
 A **master key** is derived from the password once per execution. This master
 key is then used as the input keying material for a secondary derivation step

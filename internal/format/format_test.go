@@ -67,11 +67,11 @@ func TestArgon2ParamsRoundTrip(t *testing.T) {
 
 func TestDefaultArgon2Params(t *testing.T) {
 	p := DefaultArgon2Params()
-	if p.Time != 4 {
-		t.Errorf("Time = %d, want 4", p.Time)
+	if p.Time != 5 {
+		t.Errorf("Time = %d, want 5", p.Time)
 	}
-	if p.Memory != 1024*1024 {
-		t.Errorf("Memory = %d, want %d", p.Memory, 1024*1024)
+	if p.Memory != 256*1024 {
+		t.Errorf("Memory = %d, want %d", p.Memory, 256*1024)
 	}
 	if p.Threads != 4 {
 		t.Errorf("Threads = %d, want 4", p.Threads)
