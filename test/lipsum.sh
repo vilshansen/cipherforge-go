@@ -104,48 +104,73 @@ END {
   # covers the full numerical breadth of Unicode.
 
   # --- init full-spectrum UTF-8 sprinkle ranges -------------------------
-  split("", ranges_lo)
-  split("", ranges_hi)
-  rc = 0                # range count
-  total_span = 0        # sum of (hi - lo + 1) across all ranges
+  # Each entry: "lo,hi,weight" — weight controls selection probability
+  # independent of span size.  Large blocks (CJK) get capped weight so
+  # smaller blocks (Greek, currency, emoji…) get proportional share.
+  split("", rlo); split("", rhi); split("", rw)
+  rc = 0; total_weight = 0
 
-  # Assigned Unicode blocks spread across the entire code-point range.
-  # We skip: surrogates (D800-DFFF), noncharacters, and ALL Private Use
-  # Areas (E000-F8FF, F0000-FFFFF, 100000-10FFFF).  Unassigned planes
-  # 4–13 are omitted — they contain no standard characters.
+  # Block                       | Span    | Weight | Rationale
+  # --- BMP / Plane 0 ----------+---------+--------+-------------------
+  add_weighted(0x00A0, 0x024F,    8)  # Latin-1 supp + Latin Ext-A/B
+  add_weighted(0x0250, 0x02AF,    2)  # IPA Extensions
+  add_weighted(0x0370, 0x03FF,    3)  # Greek & Coptic
+  add_weighted(0x0400, 0x04FF,    3)  # Cyrillic
+  add_weighted(0x0530, 0x058F,    2)  # Armenian
+  add_weighted(0x0590, 0x05FF,    2)  # Hebrew
+  add_weighted(0x0600, 0x06FF,    3)  # Arabic
+  add_weighted(0x0900, 0x0DFF,    3)  # Devanagari through Malayalam
+  add_weighted(0x0E00, 0x0FFF,    2)  # Thai, Lao, Tibetan
+  add_weighted(0x2000, 0x206F,    3)  # General punctuation
+  add_weighted(0x2070, 0x209F,    1)  # Superscripts & subscripts
+  add_weighted(0x20A0, 0x20CF,    2)  # Currency symbols
+  add_weighted(0x2100, 0x214F,    2)  # Letterlike symbols
+  add_weighted(0x2150, 0x218F,    1)  # Number forms
+  add_weighted(0x2190, 0x21FF,    3)  # Arrows
+  add_weighted(0x2200, 0x22FF,    4)  # Mathematical operators
+  add_weighted(0x2300, 0x23FF,    2)  # Miscellaneous technical
+  add_weighted(0x2460, 0x24FF,    1)  # Enclosed alphanumerics
+  add_weighted(0x2500, 0x257F,    2)  # Box drawing
+  add_weighted(0x2580, 0x259F,    1)  # Block elements
+  add_weighted(0x25A0, 0x25FF,    2)  # Geometric shapes
+  add_weighted(0x2600, 0x26FF,    3)  # Miscellaneous symbols
+  add_weighted(0x2700, 0x27BF,    2)  # Dingbats
+  add_weighted(0x2800, 0x28FF,    1)  # Braille patterns
+  add_weighted(0x3000, 0x303F,    1)  # CJK symbols & punctuation
+  add_weighted(0x3040, 0x30FF,    2)  # Hiragana & Katakana
+  add_weighted(0x3400, 0x4DBF,    2)  # CJK Ext A (sample)
+  add_weighted(0x4E00, 0x9FFF,    5)  # CJK Unified Ideographs
+  add_weighted(0xAC00, 0xD7AF,    3)  # Hangul syllables
+  add_weighted(0xF900, 0xFAFF,    1)  # CJK compat ideographs
+  add_weighted(0xFB00, 0xFB4F,    1)  # Alphabetic presentation forms
+  add_weighted(0xFE30, 0xFE4F,    1)  # CJK compatibility forms
+  add_weighted(0xFF00, 0xFFEF,    2)  # Halfwidth & fullwidth forms
 
-  # --- BMP / Plane 0 -----------------------------------------------
-  add_range(0x00A0, 0x07FF)    # Latin, Greek, Cyrillic, Hebrew, Arabic…
-  add_range(0x0800, 0x1FFF)    # More scripts: Thai, Lao, Tibetan, etc.
-  add_range(0x2000, 0x2FFF)    # Punctuation, currency, letterlike, math
-  add_range(0x3000, 0x4DFF)    # CJK symbols, Hiragana, Katakana, Ext A
-  add_range(0x4E00, 0x9FFF)    # CJK Unified Ideographs (main block)
-  add_range(0xA000, 0xD7FF)    # Yi, Hangul syllables, more CJK
-  # Surrogates D800-DFFF excluded
-  # Private Use E000-F8FF excluded
-  add_range(0xF900, 0xFFEF)    # CJK compat idgphs, presentation forms,
-                                # halfwidth/fullwidth forms (no FFFE-FFFF)
+  # --- SMP / Plane 1 ----------+---------+--------+-------------------
+  add_weighted(0x10300, 0x1032F,  1)  # Old Italic
+  add_weighted(0x10380, 0x1039F,  1)  # Ugaritic
+  add_weighted(0x12000, 0x123FF,  1)  # Cuneiform
+  add_weighted(0x1D000, 0x1D0FF,  1)  # Byzantine musical symbols
+  add_weighted(0x1D100, 0x1D1FF,  1)  # Musical symbols
+  add_weighted(0x1D400, 0x1D7FF,  3)  # Mathematical alphanumerics
+  add_weighted(0x1F000, 0x1F02F,  1)  # Mahjong tiles
+  add_weighted(0x1F0A0, 0x1F0FF,  1)  # Playing cards
+  add_weighted(0x1F300, 0x1F5FF,  3)  # Misc symbols & pictographs
+  add_weighted(0x1F600, 0x1F64F,  2)  # Emoticons (emoji)
+  add_weighted(0x1F680, 0x1F6FF,  2)  # Transport & map symbols
+  add_weighted(0x1F780, 0x1F7FF,  1)  # Geometric shapes extended
+  add_weighted(0x1F900, 0x1F9FF,  2)  # Supplemental symbols & pictographs
+  add_weighted(0x1FA00, 0x1FA6F,  1)  # Chess symbols
 
-  # --- SMP / Plane 1 -----------------------------------------------
-  add_range(0x10000, 0x107FF)  # Linear B, Aegean numbers, ancient scripts
-  add_range(0x10800, 0x10FFF)  # Cypriot, Aramaic, Phoenician, Kharoshthi
-  add_range(0x12000, 0x123FF)  # Cuneiform
-  add_range(0x12400, 0x1247F)  # Cuneiform numbers & punctuation
-  add_range(0x1D000, 0x1D7FF)  # Musical symbols & Math Alphanumerics
-  add_range(0x1F000, 0x1FAFF)  # Emoji, emoticons, transport, symbols,
-                                # chess, pictographs extended-A
+  # --- SIP / Plane 2 ----------+---------+--------+-------------------
+  add_weighted(0x20000, 0x2A6DF,  3)  # CJK Ext B
+  add_weighted(0x2F800, 0x2FA1F,  1)  # CJK compat ideographs supp
 
-  # --- SIP / Plane 2 -----------------------------------------------
-  add_range(0x20000, 0x2A6DF)  # CJK Ext B
-  add_range(0x2A700, 0x2EBEF)  # CJK Ext C/D/E/F
-  add_range(0x2F800, 0x2FA1F)  # CJK compat ideographs supplement
+  # --- TIP / Plane 3 ----------+---------+--------+-------------------
+  add_weighted(0x30000, 0x3134F,  1)  # CJK Ext G
 
-  # --- TIP / Plane 3 -----------------------------------------------
-  add_range(0x30000, 0x323AF)  # CJK Ext G/H (only assigned blocks in plane 3)
-
-  # --- SSP / Plane 14 ----------------------------------------------
-  add_range(0xE0000, 0xE007F)  # Tags
-  add_range(0xE0100, 0xE01EF)  # Variation Selectors Supplement
+  # --- SSP / Plane 14 ---------+---------+--------+-------------------
+  add_weighted(0xE0000, 0xE007F,  1)  # Tags
 
   # --- punctuation arrays ------------------------------------------------
   split(". . . . . ? !", periods, " ")
@@ -179,11 +204,10 @@ function pick_a() { return words_a[int(rand() * cnt_a)] }
 function pick_b() { return words_b[int(rand() * cnt_b)] }
 
 # --- UTF-8-range management ----------------------------------------------
-function add_range(lo, hi) {
+function add_weighted(lo, hi, w) {
   rc++
-  ranges_lo[rc] = lo
-  ranges_hi[rc] = hi
-  total_span += (hi - lo + 1)
+  rlo[rc] = lo; rhi[rc] = hi; rw[rc] = w
+  total_weight += w
 }
 
 # Encode a Unicode code point to UTF-8 bytes.
@@ -208,24 +232,25 @@ function cp_to_utf8(cp,   b1,b2,b3,b4) {
   }
 }
 
-# Pick a random valid code point across the full Unicode spectrum.
+# Pick a random code point: first select a range by weight, then
+# pick uniformly within its span.  Skips noncharacters.
 function random_codepoint(   pos, i, lo, hi, span, cp) {
-  pos = int(rand() * total_span)
+  pos = int(rand() * total_weight)
   for (i = 1; i <= rc; i++) {
-    lo = ranges_lo[i] + 0
-    hi = ranges_hi[i] + 0
-    span = hi - lo + 1
-    if (pos < span) {
-      cp = lo + pos
+    if (pos < rw[i]) {
+      lo = rlo[i] + 0
+      hi = rhi[i] + 0
+      span = hi - lo + 1
+      cp = lo + int(rand() * span)
       # Skip noncharacters: U+FDD0-U+FDEF and U+xxFFFE-U+xxFFFF
       if ((cp >= 0xFDD0 && cp <= 0xFDEF) || (cp % 0x10000) >= 0xFFFE) {
-        return random_codepoint()   # retry (vanishingly rare)
+        return random_codepoint()
       }
       return cp
     }
-    pos -= span
+    pos -= rw[i]
   }
-  return 0xFFFD   # fallback: replacement character
+  return 0xFFFD
 }
 
 function sprinkle() {
