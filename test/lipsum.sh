@@ -96,9 +96,46 @@ END {
     exit 1
   }
 
-  # --- UTF-8 sprinkles ----------------------------------------------------
-  split("“ ” ‘ ’ — – …   é è ê ë ñ ü ç à â ä ö ô û î ï € £ ¥ ¢ © ® ™ ° ± × ÷ ∑ √ ∞ ≈ ≠ ≤ ≥ → ← ↑ ↓ ↔ α β γ δ ε λ μ π σ φ ω • ★ ☆ ♥ ♦ ♣ ♠ ✓ ✗", sprinkles, " ")
-  scnt = length(sprinkles)
+  # --- UTF-8 sprinkles: code-point → UTF-8 converter --------------------
+  # Instead of a static list, we define ranges spread across the
+  # ENTIRE Unicode spectrum (U+0080 through U+10FFFD, skipping
+  # surrogates U+D800–U+DFFF and noncharacters U+xxFFFE–xxFFFF).
+  # Each range contributes proportionally to its span so the output
+  # covers the full numerical breadth of Unicode.
+
+  # --- init full-spectrum UTF-8 sprinkle ranges -------------------------
+  split("", ranges_lo)
+  split("", ranges_hi)
+  rc = 0                # range count
+  total_span = 0        # sum of (hi - lo + 1) across all ranges
+
+  # Spread across the entire valid Unicode spectrum (~20 bands).
+  # We exclude surrogates and noncharacters but include private-use.
+  # --- BMP (plane 0) in ~16K-wide bands, skipping surrogates ---
+  add_range(0x00A0, 0x3FFF)    # Latin/Greek/Cyrillic/misc
+  add_range(0x4000, 0x7FFF)    # CJK Unified Ideographs
+  add_range(0x8000, 0xD7FF)    # CJK + Hangul + rest of BMP pre-surrogate
+  # Skip surrogates 0xD800-0xDFFF
+  add_range(0xE000, 0xFFEF)    # Private Use + CJK compat + halfwidth
+  # --- SMP (plane 1) -------------------------------------------
+  add_range(0x10000, 0x1FFFF)  # Linear B, musical, math alphanum, emoji
+  # --- SIP (plane 2) -------------------------------------------
+  add_range(0x20000, 0x2FFFF)  # CJK Extension B + compat ideographs
+  # --- Higher planes (3-16) — smaller slices -------------------
+  add_range(0x30000, 0x3FFFF)
+  add_range(0x40000, 0x4FFFF)
+  add_range(0x50000, 0x5FFFF)
+  add_range(0x60000, 0x6FFFF)
+  add_range(0x70000, 0x7FFFF)
+  add_range(0x80000, 0x8FFFF)
+  add_range(0x90000, 0x9FFFF)
+  add_range(0xA0000, 0xAFFFF)
+  add_range(0xB0000, 0xBFFFF)
+  add_range(0xC0000, 0xCFFFF)
+  add_range(0xD0000, 0xDFFFF)
+  add_range(0xE0000, 0xEFFFF)
+  add_range(0xF0000, 0xFFFFF)
+  add_range(0x100000, 0x10FFFF)
 
   # --- punctuation arrays ------------------------------------------------
   split(". . . . . ? !", periods, " ")
@@ -130,7 +167,60 @@ END {
 
 function pick_a() { return words_a[int(rand() * cnt_a)] }
 function pick_b() { return words_b[int(rand() * cnt_b)] }
-function sprinkle() { return sprinkles[int(rand() * scnt) + 1] }
+
+# --- UTF-8-range management ----------------------------------------------
+function add_range(lo, hi) {
+  rc++
+  ranges_lo[rc] = lo
+  ranges_hi[rc] = hi
+  total_span += (hi - lo + 1)
+}
+
+# Encode a Unicode code point to UTF-8 bytes.
+function cp_to_utf8(cp,   b1,b2,b3,b4) {
+  if (cp < 0x80) {
+    return sprintf("%c", cp)
+  } else if (cp < 0x800) {
+    b1 = 0xC0 + int(cp / 0x40)
+    b2 = 0x80 + (cp % 0x40)
+    return sprintf("%c%c", b1, b2)
+  } else if (cp < 0x10000) {
+    b1 = 0xE0 + int(cp / 0x1000)
+    b2 = 0x80 + (int(cp / 0x40) % 0x40)
+    b3 = 0x80 + (cp % 0x40)
+    return sprintf("%c%c%c", b1, b2, b3)
+  } else {
+    b1 = 0xF0 + int(cp / 0x40000)
+    b2 = 0x80 + (int(cp / 0x1000) % 0x40)
+    b3 = 0x80 + (int(cp / 0x40) % 0x40)
+    b4 = 0x80 + (cp % 0x40)
+    return sprintf("%c%c%c%c", b1, b2, b3, b4)
+  }
+}
+
+# Pick a random valid code point across the full Unicode spectrum.
+function random_codepoint(   pos, i, lo, hi, span, cp) {
+  pos = int(rand() * total_span)
+  for (i = 1; i <= rc; i++) {
+    lo = ranges_lo[i] + 0
+    hi = ranges_hi[i] + 0
+    span = hi - lo + 1
+    if (pos < span) {
+      cp = lo + pos
+      # Skip noncharacters: U+FDD0-U+FDEF and U+xxFFFE-U+xxFFFF
+      if ((cp >= 0xFDD0 && cp <= 0xFDEF) || (cp % 0x10000) >= 0xFFFE) {
+        return random_codepoint()   # retry (vanishingly rare)
+      }
+      return cp
+    }
+    pos -= span
+  }
+  return 0xFFFD   # fallback: replacement character
+}
+
+function sprinkle() {
+  return cp_to_utf8(random_codepoint())
+}
 
 function np(   r) {
   r = int(rand() * 6)
