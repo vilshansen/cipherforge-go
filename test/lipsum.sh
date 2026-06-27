@@ -142,7 +142,7 @@ END {
   utf8_lines[++uc] = "Cuneiform (plane 1): 𒀀𒀁𒀂𒀃𒀄 𒀅𒀆𒀇𒀈𒀉 𒀊𒀋𒀌𒀍𒀎 𒀏𒀐𒀑𒀒𒀓 𒀔𒀕𒀖𒀗𒀘"
   utf8_lines[++uc] = "CJK Ext B (plane 2): 𠀀𠀁𠀂𠀃𠀄 𠀅𠀆𠀇𠀈𠀉 𠀊𠀋𠀌𠀍𠀎 𠀏𠀐𠀑𠀒𠀓 𠀔𠀕𠀖𠀗𠀘"
   utf8_lines[++uc] = "CJK Ext G (plane 3): 𰀀𰀁𰀂𰀃𰀄 𰀅𰀆𰀇𰀈𰀉 𰀊𰀋𰀌𰀍𰀎 𰀏𰀐𰀑𰀒𰀓 𰀔𰀕𰀖𰀗𰀘"
-  utf8_lines[++uc] = "Tags (plane 14): 󰀀󰀁󰀂󰀃󰀄 󰀅󰀆󰀇󰀈󰀉 󰀊󰀋󰀌󰀍󰀎 󰀏󰀐󰀑󰀒󰀓 󰀔󰀕󰀖󰀗󰀘"
+  utf8_lines[++uc] = "Plane 14 (SSP): only invisible formatting tags & variation selectors — no displayable characters."
 
   bytes_out = 0
   utf8_idx = 0
