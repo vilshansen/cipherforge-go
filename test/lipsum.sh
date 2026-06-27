@@ -68,7 +68,7 @@ if [[ -n "$OUTFILE" ]]; then exec > "$OUTFILE"; fi
   printf '%s\n' "$WORDS_A"
   echo "---SENTINEL---"
   printf '%s\n' "$WORDS_B"
-} | gawk -v MAX_BYTES="$MAX_BYTES" '
+} | LC_ALL=C gawk -v MAX_BYTES="$MAX_BYTES" '
 BEGIN {
   srand()
 
