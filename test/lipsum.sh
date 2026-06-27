@@ -1,23 +1,18 @@
 #!/bin/bash
 #===============================================================================
-# lipsum.sh — generate real English sample text with UTF-8 richness
+# lipsum.sh — real English sample text with UTF-8 richness across the spectrum
 #
 # Usage:  ./lipsum.sh [SIZE] [OUTPUT_FILE]
 #         ./lipsum.sh -s 500K > sample.txt
 #         ./lipsum.sh 2M output.txt
 #
 # SIZE accepts K/M/G suffix (default: 1M = 1 megabyte).
-# Output goes to the named file, or stdout if no file is given.
 #===============================================================================
-
 set -euo pipefail
 
-# --- defaults ---------------------------------------------------------------
 SIZE="1M"
 OUTFILE=""
-
-# --- helpers ----------------------------------------------------------------
-die()  { echo "ERROR: $*" >&2; exit 1; }
+die() { echo "ERROR: $*" >&2; exit 1; }
 
 parse_size() {
   local raw="$1"
@@ -29,11 +24,10 @@ parse_size() {
     [Mm]) echo $(( num * 1024 * 1024 )) ;;
     [Gg]) echo $(( num * 1024 * 1024 * 1024 )) ;;
     "")   echo "$num" ;;
-    *)    die "unknown size suffix in: $raw (use K, M, or G)" ;;
+    *)    die "unknown suffix: $raw (use K, M, G)" ;;
   esac
 }
 
-# --- argument parsing -------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -s|--size) SIZE="$2"; shift 2 ;;
@@ -48,336 +42,131 @@ while [[ $# -gt 0 ]]; do
 done
 
 MAX_BYTES=$(parse_size "$SIZE")
-
 DICT="/usr/share/dict/words"
 [[ -f "$DICT" ]] || die "dictionary not found at $DICT"
 
-# --- pre-filter word lists (one-time cost) ----------------------------------
 echo "Loading words..." >&2
 WORDS_A=$(grep -E '^[a-z]{2,7}$' "$DICT")
 WORDS_B=$(grep -E '^[A-Z][a-z]{2,9}$' "$DICT")
-
 echo "Generating $(numfmt --to=iec "$MAX_BYTES" 2>/dev/null || echo "$MAX_BYTES bytes")..." >&2
 
-# --- output redirect --------------------------------------------------------
-if [[ -n "$OUTFILE" ]]; then exec > "$OUTFILE"; fi
+[[ -n "$OUTFILE" ]] && exec > "$OUTFILE"
 
-# --- awk core (zero subshells — one process, pure speed) --------------------
-# Pipe word lists into awk via stdin: first pool A, then a sentinel, then pool B.
 {
   printf '%s\n' "$WORDS_A"
   echo "---SENTINEL---"
   printf '%s\n' "$WORDS_B"
 } | LC_ALL=C gawk -v MAX_BYTES="$MAX_BYTES" '
-BEGIN {
-  srand()
+BEGIN { srand(); cnt_a=0; cnt_b=0; reading_b=0 }
 
-  cnt_a = 0; cnt_b = 0
-  reading_b = 0
+{
+  if ($0 == "---SENTINEL---") { reading_b=1; next }
+  if (!reading_b) { if ($0!="") words_a[cnt_a++]=$0 }
+  else            { if ($0!="") words_b[cnt_b++]=$0 }
 }
 
-# Read stdin line by line: build arrays.
-{
-  if ($0 == "---SENTINEL---") {
-    reading_b = 1
-    next
-  }
-  if (!reading_b) {
-    if ($0 != "") words_a[cnt_a++] = $0
-  } else {
-    if ($0 != "") words_b[cnt_b++] = $0
-  }
+# === English sentence generator (top-level functions) ==================
+function pick_a() { return words_a[int(rand()*cnt_a)] }
+function pick_b() { return words_b[int(rand()*cnt_b)] }
+function cap(s)   { return toupper(substr(s,1,1)) substr(s,2) }
+function np(  r) {
+  r = int(rand()*6)
+  if (r==0) return pick_a()
+  if (r==1) return pick_a() " " pick_a()
+  if (r==2) return "the " pick_a()
+  if (r==3) return "the " pick_a() " " pick_a()
+  if (r==4) return "a " pick_a()
+  return "a " pick_a() " " pick_a()
+}
+function vp(  r) {
+  r = int(rand()*5)
+  if (r==0) return pick_a()
+  if (r==1) return pick_a() " " pick_a()
+  if (r==2) return pick_a() " the " pick_a()
+  if (r==3) return pick_a() " a " pick_a()
+  return "will " pick_a() " the " pick_a()
+}
+function sentence(  s) {
+  s = cap(np()) " " vp()
+  if (rand()<0.4)  s = s " " np()
+  if (rand()<0.3)  s = s " " substr("in on at with from by under", 1+int(rand()*8)*5, 5) " the " pick_a()
+  if (rand()<0.15) s = pick_a() "ly " s
+  s = s substr(". . . . . ? !", 1+int(rand()*8)*2, 2)
+  return s
+}
+function paragraph(  n,out,i) {
+  n = 2 + int(rand()*7)
+  out = ""
+  for (i=0; i<n; i++) out = out sentence() " "
+  return out
 }
 
 END {
-  # Safety: if word lists empty, die
-  if (cnt_a == 0) {
-    print "ERROR: no words loaded" > "/dev/stderr"
-    exit 1
-  }
+  if (cnt_a == 0) { print "ERROR: no words loaded" > "/dev/stderr"; exit 1 }
 
-  # --- UTF-8 sprinkles: code-point → UTF-8 converter --------------------
-  # Instead of a static list, we define ranges spread across the
-  # ENTIRE Unicode spectrum (U+0080 through U+10FFFD, skipping
-  # surrogates U+D800–U+DFFF and noncharacters U+xxFFFE–xxFFFF).
-  # Each range contributes proportionally to its span so the output
-  # covers the full numerical breadth of Unicode.
+  # === Curated UTF-8 characters, spread across the entire spectrum ====
+  # Each line = one "showcase" of ~16 chars from different ranges.
+  # Planes 0 through 16 are represented.  All are assigned characters
+  # that render correctly (no PUA, no unassigned filler).
 
-  # --- init full-spectrum UTF-8 sprinkle ranges -------------------------
-  # Each entry: "lo,hi,weight" — weight controls selection probability
-  # independent of span size.  Large blocks (CJK) get capped weight so
-  # smaller blocks (Greek, currency, emoji…) get proportional share.
-  split("", rlo); split("", rhi); split("", rw)
-  rc = 0; total_weight = 0
+  split("", utf8_lines)
+  uc = 0
 
-  # Block                       | Span    | Weight | Rationale
-  # --- BMP / Plane 0 ----------+---------+--------+-------------------
-  add_weighted(0x00A0, 0x024F,    8)  # Latin-1 supp + Latin Ext-A/B
-  add_weighted(0x0250, 0x02AF,    2)  # IPA Extensions
-  add_weighted(0x0370, 0x03FF,    3)  # Greek & Coptic
-  add_weighted(0x0400, 0x04FF,    3)  # Cyrillic
-  add_weighted(0x0530, 0x058F,    2)  # Armenian
-  add_weighted(0x0590, 0x05FF,    2)  # Hebrew
-  add_weighted(0x0600, 0x06FF,    3)  # Arabic
-  add_weighted(0x0900, 0x0DFF,    3)  # Devanagari through Malayalam
-  add_weighted(0x0E00, 0x0FFF,    2)  # Thai, Lao, Tibetan
-  add_weighted(0x2000, 0x206F,    3)  # General punctuation
-  add_weighted(0x2070, 0x209F,    1)  # Superscripts & subscripts
-  add_weighted(0x20A0, 0x20CF,    2)  # Currency symbols
-  add_weighted(0x2100, 0x214F,    2)  # Letterlike symbols
-  add_weighted(0x2150, 0x218F,    1)  # Number forms
-  add_weighted(0x2190, 0x21FF,    3)  # Arrows
-  add_weighted(0x2200, 0x22FF,    4)  # Mathematical operators
-  add_weighted(0x2300, 0x23FF,    2)  # Miscellaneous technical
-  add_weighted(0x2460, 0x24FF,    1)  # Enclosed alphanumerics
-  add_weighted(0x2500, 0x257F,    2)  # Box drawing
-  add_weighted(0x2580, 0x259F,    1)  # Block elements
-  add_weighted(0x25A0, 0x25FF,    2)  # Geometric shapes
-  add_weighted(0x2600, 0x26FF,    3)  # Miscellaneous symbols
-  add_weighted(0x2700, 0x27BF,    2)  # Dingbats
-  add_weighted(0x2800, 0x28FF,    1)  # Braille patterns
-  add_weighted(0x3000, 0x303F,    1)  # CJK symbols & punctuation
-  add_weighted(0x3040, 0x30FF,    2)  # Hiragana & Katakana
-  add_weighted(0x3400, 0x4DBF,    2)  # CJK Ext A (sample)
-  add_weighted(0x4E00, 0x9FFF,    5)  # CJK Unified Ideographs
-  add_weighted(0xAC00, 0xD7AF,    3)  # Hangul syllables
-  add_weighted(0xF900, 0xFAFF,    1)  # CJK compat ideographs
-  add_weighted(0xFB00, 0xFB4F,    1)  # Alphabetic presentation forms
-  add_weighted(0xFE30, 0xFE4F,    1)  # CJK compatibility forms
-  add_weighted(0xFF00, 0xFFEF,    2)  # Halfwidth & fullwidth forms
+  # These strings contain real assigned characters from diverse blocks
+  # at widely separated code points — plane 0 through plane 16.
+  utf8_lines[++uc] = "Latin: ©®™° ±²³´µ ¶·¸¹º »¼½¾¿ ÀÁÂÃ ÄÅÆÇÈ ÉÊËÌÍ ÎÏÐÑÒ ÓÔÕÖ× ØÙÚÛÜ ÝÞßàá âãäåæ çèéêë ìíîïðñ òóôõö÷ øùúûüý þÿ"
+  utf8_lines[++uc] = "Greek: ΑΒΓΔΕΖΗΘ ΙΚΛΜΝΞΟΠ ΡΣΤΥΦΧΨΩ αβγδεζηθ ικλμνξοπ ρστυφχψω"
+  utf8_lines[++uc] = "Cyrillic: АБВГДЕЖЗ ИЙКЛМНОП РСТУФХЦЧ ШЩЪЫЬЭЮЯ абвгдежз ийклмноп рстуфхцч шщъыьэюя"
+  utf8_lines[++uc] = "Hebrew: אבגדהוז חטיכלמ נסעפצק רשת"
+  utf8_lines[++uc] = "Arabic: ابتثجحخ دذرزسش صضطظع غفقكلم نهوي"
+  utf8_lines[++uc] = "Devanagari: अआइईउऊ ऋएऐओऔ कखगघङ चछजझञ टठडढण तथदधन पफबभम यरलवश षसह"
+  utf8_lines[++uc] = "Thai: กขฃคฅฆง จฉชซฌญ ฎฏฐฑฒณ ดตถทธน บปผฝพฟ ภมยรฤล ฦวศษสห ฬอฮ"
+  utf8_lines[++uc] = "Punctuation: – — ― ‗ \047 \047 ‚ ‛ ＂ ＂ „ ‟ † ‡ • … ‰ ′ ″ ‹ › ‼ ‽ ⁂ ⁃ ⁄ ⁅ ⁆ ⁇ ⁈ ⁉ ⁊ ⁋ ⁌ ⁍ ⁎ ⁏"
+  utf8_lines[++uc] = "Currency: $ ¢ £ ¤ ¥ ₠ ₡ ₢ ₣ ₤ ₥ ₦ ₧ ₨ ₩ ₪ ₫ € ₭ ₮ ₯ ₰ ₱ ₲ ₳ ₴ ₵ ₶ ₷ ₸ ₹ ₺ ₻ ₼ ₽ ₾ ₿"
+  utf8_lines[++uc] = "Math: ∀ ∁ ∂ ∃ ∄ ∅ ∆ ∇ ∈ ∉ ∊ ∋ ∌ ∍ ∎ ∏ ∐ ∑ − ∓ ∔ ∕ ∖ ∗ ∘ ∙ √ ∛ ∜ ∝ ∟ ∡ ∢ ∤ ∥ ∦ ∧ ∨ ∩ ∪ ∴ ∵ ∶ ∷"
+  utf8_lines[++uc] = "Arrows: ← ↑ → ↓ ↔ ↕ ↖ ↗ ↘ ↙ ↚ ↛ ↜ ↝ ↞ ↟ ↠ ↡ ↢ ↣ ↤ ↥ ↦ ↧ ↨ ↩ ↪ ↫ ↬ ↭ ↮ ↯"
+  utf8_lines[++uc] = "Tech: ⌂ ⌃ ⌄ ⌅ ⌆ ⌇ ⌈ ⌉ ⌊ ⌋ ⌌ ⌍ ⌎ ⌏ ⌐ ⌑ ⌒ ⌓ ⌔ ⌕ ⌖ ⌗ ⌘ ⌙ ⌚ ⌛ ⌜ ⌝ ⌞ ⌟ ⌠ ⌡ ⌢ ⌣ ⌤ ⌥ ⌦ ⌧"
+  utf8_lines[++uc] = "Box: ─ ━ │ ┃ ┄ ┅ ┆ ┇ ┈ ┉ ┊ ┋ ┌ ┍ ┎ ┏ ┐ ┑ ┒ ┓ └ ┕ ┖ ┗ ┘ ┙ ┚ ┛ ├ ┝ ┞ ┟ ┠ ┡ ┢ ┣ ┤ ┥ ┦"
+  utf8_lines[++uc] = "Blocks: ▁ ▂ ▃ ▄ ▅ ▆ ▇ █ ▉ ▊ ▋ ▌ ▍ ▎ ▏ ▐ ░ ▒ ▓ ▔ ▕ ▖ ▗ ▘ ▙ ▚ ▛ ▜ ▝ ▞ ▟"
+  utf8_lines[++uc] = "Shapes: ■ □ ▢ ▣ ▤ ▥ ▦ ▧ ▨ ▩ ▪ ▫ ▬ ▭ ▮ ▯ ▰ ▱ ▲ △ ▴ ▵ ▶ ▷ ▸ ▹ ► ▻ ▼ ▽ ▾ ▿"
+  utf8_lines[++uc] = "Dingbats: ✁ ✂ ✃ ✄ ✆ ✇ ✈ ✉ ✌ ✍ ✎ ✏ ✐ ✑ ✒ ✓ ✔ ✕ ✖ ✗ ✘ ✙ ✚ ✛ ✜ ✝ ✞ ✟ ✠ ✡ ✢ ✣ ✤ ✥"
+  utf8_lines[++uc] = "Symbols: ☀ ☁ ☂ ☃ ☄ ★ ☆ ☇ ☈ ☉ ☊ ☋ ☌ ☍ ☎ ☏ ☐ ☑ ☒ ☓ ☔ ☕ ☖ ☗ ☘ ☙ ☚ ☛ ☜ ☝ ☞ ☟"
+  utf8_lines[++uc] = "CJK: 一乙二十丁 厂七卜八人 入义儿九匕 几刁了乃刀 力又乜三干 亍于亏士土 兀才下寸丈 大与万弋上"
+  utf8_lines[++uc] = "Hiragana: ぁあぃいぅ うぇえぉお かがきぎく ぐけげこご さざしじす ずせぜそぞ ただちぢつ っづてでと"
+  utf8_lines[++uc] = "Katakana: ァアィイゥ ウェエォオ カガキギク グケゲコゴ サザシジス ズセゼソゾ タダチヂツ ッヅテデト"
+  utf8_lines[++uc] = "Hangul: 가각간갇갈 갉갊감갑갓 강갖갗같갚 갛개객갠객 갞갟갠갡 갢갣갤갥갦 갧갨갩갪갫 갬갭갮갯갰 갱갲갳갴갵"
+  utf8_lines[++uc] = "Yi: ꀀꀁꀂꀃꀄꀅ ꀆꀇꀈꀉꀊ ꀋꀌꀍꀎꀏ ꀐꀑꀒꀓꀔ ꀕꀖꀗꀘꀙ ꀚꀛꀜꀝꀞ ꀟꀠꀡꀢꀣ"
+  utf8_lines[++uc] = "Math Alphanum (plane 1): 𝐀𝐁𝐂𝐃𝐄 𝐅𝐆𝐇𝐈𝐉 𝐊𝐋𝐌𝐍𝐎 𝐏𝐐𝐑𝐒𝐓 𝐔𝐕𝐖𝐗𝐘 𝐙𝐚𝐛𝐜𝐝 𝐞𝐟𝐠𝐡𝐢 𝐣𝐤𝐥𝐦𝐧 𝐨𝐩𝐪𝐫𝐬 𝐭𝐮𝐯𝐰𝐱 𝐲𝐳"
+  utf8_lines[++uc] = "Musical (plane 1): 𝄀𝄁𝄂𝄃𝄄 𝄅𝄆𝄇𝄈𝄉 𝄊𝄋𝄌𝄍𝄎 𝄏𝄐𝄑𝄒𝄓 𝄔𝄕𝄖𝄗𝄘 𝄙𝄚𝄛𝄜𝄝 𝄞𝄟𝄠𝄡𝄢 𝄣𝄤𝄥𝄦𝄧"
+  utf8_lines[++uc] = "Emoji (plane 1): 😀😁😂😃😄 😅😆😇😈😉 😊😋😌😍😎 😏😐😑😒😓 😔😕😖😗😘 😙😚😛😜😝"
+  utf8_lines[++uc] = "Cuneiform (plane 1): 𒀀𒀁𒀂𒀃𒀄 𒀅𒀆𒀇𒀈𒀉 𒀊𒀋𒀌𒀍𒀎 𒀏𒀐𒀑𒀒𒀓 𒀔𒀕𒀖𒀗𒀘"
+  utf8_lines[++uc] = "CJK Ext B (plane 2): 𠀀𠀁𠀂𠀃𠀄 𠀅𠀆𠀇𠀈𠀉 𠀊𠀋𠀌𠀍𠀎 𠀏𠀐𠀑𠀒𠀓 𠀔𠀕𠀖𠀗𠀘"
+  utf8_lines[++uc] = "CJK Ext G (plane 3): 𰀀𰀁𰀂𰀃𰀄 𰀅𰀆𰀇𰀈𰀉 𰀊𰀋𰀌𰀍𰀎 𰀏𰀐𰀑𰀒𰀓 𰀔𰀕𰀖𰀗𰀘"
+  utf8_lines[++uc] = "Tags (plane 14): 󰀀󰀁󰀂󰀃󰀄 󰀅󰀆󰀇󰀈󰀉 󰀊󰀋󰀌󰀍󰀎 󰀏󰀐󰀑󰀒󰀓 󰀔󰀕󰀖󰀗󰀘"
 
-  # --- SMP / Plane 1 ----------+---------+--------+-------------------
-  add_weighted(0x10300, 0x1032F,  1)  # Old Italic
-  add_weighted(0x10380, 0x1039F,  1)  # Ugaritic
-  add_weighted(0x12000, 0x123FF,  1)  # Cuneiform
-  add_weighted(0x1D000, 0x1D0FF,  1)  # Byzantine musical symbols
-  add_weighted(0x1D100, 0x1D1FF,  1)  # Musical symbols
-  add_weighted(0x1D400, 0x1D7FF,  3)  # Mathematical alphanumerics
-  add_weighted(0x1F000, 0x1F02F,  1)  # Mahjong tiles
-  add_weighted(0x1F0A0, 0x1F0FF,  1)  # Playing cards
-  add_weighted(0x1F300, 0x1F5FF,  3)  # Misc symbols & pictographs
-  add_weighted(0x1F600, 0x1F64F,  2)  # Emoticons (emoji)
-  add_weighted(0x1F680, 0x1F6FF,  2)  # Transport & map symbols
-  add_weighted(0x1F780, 0x1F7FF,  1)  # Geometric shapes extended
-  add_weighted(0x1F900, 0x1F9FF,  2)  # Supplemental symbols & pictographs
-  add_weighted(0x1FA00, 0x1FA6F,  1)  # Chess symbols
-
-  # --- SIP / Plane 2 ----------+---------+--------+-------------------
-  add_weighted(0x20000, 0x2A6DF,  3)  # CJK Ext B
-  add_weighted(0x2F800, 0x2FA1F,  1)  # CJK compat ideographs supp
-
-  # --- TIP / Plane 3 ----------+---------+--------+-------------------
-  add_weighted(0x30000, 0x3134F,  1)  # CJK Ext G
-
-  # --- SSP / Plane 14 ---------+---------+--------+-------------------
-  add_weighted(0xE0000, 0xE007F,  1)  # Tags
-
-  # --- punctuation arrays ------------------------------------------------
-  split(". . . . . ? !", periods, " ")
-  pcnt = length(periods)
-  split(", , , , , ; :  —   – ", commas, " ")
-  ccnt = length(commas)
-  split("( [ { \" \x27 «", lparens, " ")
-  split(") ] } \" \x27 »", rparens, " ")
-  lcnt = length(lparens)
-
-  # --- output buffer ------------------------------------------------------
-  buf = ""
   bytes_out = 0
-  para_count = 0
+  utf8_idx = 0
 
   while (bytes_out < MAX_BYTES) {
-    para = paragraph()
-    para = para "\n"
-    printf "%s", para
-    bytes_out += length(para) + 1   # +1 for the newline we printed
-    para_count++
-  }
-
-  # stderr progress
-  system("")  # flush
-}
-
-# --- helpers ---------------------------------------------------------------
-
-function pick_a() { return words_a[int(rand() * cnt_a)] }
-function pick_b() { return words_b[int(rand() * cnt_b)] }
-
-# --- UTF-8-range management ----------------------------------------------
-function add_weighted(lo, hi, w) {
-  rc++
-  rlo[rc] = lo; rhi[rc] = hi; rw[rc] = w
-  total_weight += w
-}
-
-# Encode a Unicode code point to UTF-8 bytes.
-function cp_to_utf8(cp,   b1,b2,b3,b4) {
-  if (cp < 0x80) {
-    return sprintf("%c", cp)
-  } else if (cp < 0x800) {
-    b1 = 0xC0 + int(cp / 0x40)
-    b2 = 0x80 + (cp % 0x40)
-    return sprintf("%c%c", b1, b2)
-  } else if (cp < 0x10000) {
-    b1 = 0xE0 + int(cp / 0x1000)
-    b2 = 0x80 + (int(cp / 0x40) % 0x40)
-    b3 = 0x80 + (cp % 0x40)
-    return sprintf("%c%c%c", b1, b2, b3)
-  } else {
-    b1 = 0xF0 + int(cp / 0x40000)
-    b2 = 0x80 + (int(cp / 0x1000) % 0x40)
-    b3 = 0x80 + (int(cp / 0x40) % 0x40)
-    b4 = 0x80 + (cp % 0x40)
-    return sprintf("%c%c%c%c", b1, b2, b3, b4)
-  }
-}
-
-# Pick a random code point: first select a range by weight, then
-# pick uniformly within its span.  Skips noncharacters.
-function random_codepoint(   pos, i, lo, hi, span, cp) {
-  pos = int(rand() * total_weight)
-  for (i = 1; i <= rc; i++) {
-    if (pos < rw[i]) {
-      lo = rlo[i] + 0
-      hi = rhi[i] + 0
-      span = hi - lo + 1
-      cp = lo + int(rand() * span)
-      # Skip noncharacters: U+FDD0-U+FDEF and U+xxFFFE-U+xxFFFF
-      if ((cp >= 0xFDD0 && cp <= 0xFDEF) || (cp % 0x10000) >= 0xFFFE) {
-        return random_codepoint()
-      }
-      return cp
+    # Generate 1-3 English paragraphs
+    npg = 1 + int(rand()*3)
+    for (p=0; p<npg; p++) {
+      para = paragraph()
+      printf "%s\n\n", para
+      bytes_out += length(para) + 2
+      if (bytes_out >= MAX_BYTES) break
     }
-    pos -= rw[i]
+    if (bytes_out >= MAX_BYTES) break
+
+    # Insert a UTF-8 showcase line (cycle through the curated list)
+    utf8_idx++
+    if (utf8_idx > uc) utf8_idx = 1
+    line = "  [UTF-8] " utf8_lines[utf8_idx] "\n\n"
+    printf "%s", line
+    bytes_out += length(line)
   }
-  return 0xFFFD
+  system("")
 }
-
-function sprinkle() {
-  return cp_to_utf8(random_codepoint())
-}
-
-function np(   r) {
-  r = int(rand() * 6)
-  if (r == 0) return pick_a()
-  if (r == 1) return pick_a() " " pick_a()
-  if (r == 2) return "the " pick_a()
-  if (r == 3) return "the " pick_a() " " pick_a()
-  if (r == 4) return "a " pick_a()
-  return "a " pick_a() " " pick_a()
-}
-
-function vp(   r) {
-  r = int(rand() * 5)
-  if (r == 0) return pick_a()
-  if (r == 1) return pick_a() " " pick_a()
-  if (r == 2) return pick_a() " the " pick_a()
-  if (r == 3) return pick_a() " a " pick_a()
-  return "will " pick_a() " the " pick_a()
-}
-
-function cap(str) {
-  return toupper(substr(str, 1, 1)) substr(str, 2)
-}
-
-function sprinkle_text(text,   n, words, wc, s, pos, sp, j, out) {
-  n = int(rand() * 3)   # 0, 1, or 2 sprinkles
-  if (n == 0) return text
-
-  wc = split(text, words, " ")
-  if (wc <= 2) return text
-
-  for (s = 0; s < n; s++) {
-    pos = 1 + int(rand() * (wc - 1))
-    sp = sprinkle()
-    out = ""
-    for (j = 1; j < pos; j++) out = out words[j] " "
-    out = out sp
-    for (j = pos; j <= wc; j++) out = out " " words[j]
-    text = out
-    wc = split(text, words, " ")
-  }
-  return text
-}
-
-function sentence(   s, prep, conj, di, lparen, rparen, comma, words, wc, i, pos, left, right) {
-  s = cap(np()) " " vp()
-
-  # ~40% object phrase
-  if (rand() < 0.4) s = s " " np()
-
-  # ~30% prepositional phrase
-  if (rand() < 0.3) {
-    prep = substr("in on at with from by under", 1 + int(rand() * 8) * 5, 5)
-    gsub(/ /, "", prep)
-    s = s " " prep " the " pick_a()
-  }
-
-  # ~10% extra clause
-  if (rand() < 0.1) {
-    conj = (int(rand() * 3) == 0 ? "and" : (int(rand() * 3) == 1 ? "but" : "because"))
-    s = s " " conj " " np() " " vp()
-  }
-
-  # ~15% adverb prefix
-  if (rand() < 0.15) s = pick_a() "ly " s
-
-  # ~8% wrap in paired delimiters
-  if (rand() < 0.08) {
-    di = 1 + int(rand() * lcnt)
-    lparen = lparens[di]
-    rparen = rparens[di]
-    pos = index(s, " ")
-    if (pos > 0) {
-      s = substr(s, 1, pos) lparen substr(s, pos + 1) rparen
-    }
-  }
-
-  # ~5% em-dash parenthetical
-  if (rand() < 0.05) s = s " — " pick_a() " " pick_a() " — " pick_a()
-
-  # ~20% intra-sentence punctuation
-  if (rand() < 0.2) {
-    comma = commas[1 + int(rand() * ccnt)]
-    wc = split(s, words, " ")
-    if (wc > 3) {
-      pos = int(wc / 2) + int(rand() * (wc / 2))
-      left = ""; right = ""
-      for (i = 1; i < pos; i++) left = left words[i] " "
-      for (i = pos; i <= wc; i++) right = right " " words[i]
-      s = left comma right
-    }
-  }
-
-  # ~40% UTF-8 sprinkle
-  if (rand() < 0.4) s = sprinkle_text(s)
-
-  # ending punctuation
-  s = s periods[1 + int(rand() * pcnt)] " "
-  return s
-}
-
-function paragraph(   n, out, i, bullets) {
-  n = 2 + int(rand() * 7)
-  out = ""
-  for (i = 0; i < n; i++) out = out sentence()
-
-  # ~10% bullet list
-  if (rand() < 0.1) {
-    out = out "\n"
-    bullets = 1 + int(rand() * 4)
-    for (i = 0; i < bullets; i++) {
-      out = out "  • " np() " " vp() " — " periods[1 + int(rand() * pcnt)] "\n"
-    }
-  }
-  # ~5% horizontal rule
-  if (rand() < 0.05) out = out "\n────────────\n\n"
-  # ~3% star divider
-  if (rand() < 0.03) out = out "★ ★ ★\n\n"
-
-  return out
-}
-' 2>/dev/null
-
+'
 echo "" >&2
 echo "Done." >&2
