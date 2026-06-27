@@ -109,33 +109,43 @@ END {
   rc = 0                # range count
   total_span = 0        # sum of (hi - lo + 1) across all ranges
 
-  # Spread across the entire valid Unicode spectrum (~20 bands).
-  # We exclude surrogates and noncharacters but include private-use.
-  # --- BMP (plane 0) in ~16K-wide bands, skipping surrogates ---
-  add_range(0x00A0, 0x3FFF)    # Latin/Greek/Cyrillic/misc
-  add_range(0x4000, 0x7FFF)    # CJK Unified Ideographs
-  add_range(0x8000, 0xD7FF)    # CJK + Hangul + rest of BMP pre-surrogate
-  # Skip surrogates 0xD800-0xDFFF
-  add_range(0xE000, 0xFFEF)    # Private Use + CJK compat + halfwidth
-  # --- SMP (plane 1) -------------------------------------------
-  add_range(0x10000, 0x1FFFF)  # Linear B, musical, math alphanum, emoji
-  # --- SIP (plane 2) -------------------------------------------
-  add_range(0x20000, 0x2FFFF)  # CJK Extension B + compat ideographs
-  # --- Higher planes (3-16) — smaller slices -------------------
-  add_range(0x30000, 0x3FFFF)
-  add_range(0x40000, 0x4FFFF)
-  add_range(0x50000, 0x5FFFF)
-  add_range(0x60000, 0x6FFFF)
-  add_range(0x70000, 0x7FFFF)
-  add_range(0x80000, 0x8FFFF)
-  add_range(0x90000, 0x9FFFF)
-  add_range(0xA0000, 0xAFFFF)
-  add_range(0xB0000, 0xBFFFF)
-  add_range(0xC0000, 0xCFFFF)
-  add_range(0xD0000, 0xDFFFF)
-  add_range(0xE0000, 0xEFFFF)
-  add_range(0xF0000, 0xFFFFF)
-  add_range(0x100000, 0x10FFFF)
+  # Assigned Unicode blocks spread across the entire code-point range.
+  # We skip: surrogates (D800-DFFF), noncharacters, and ALL Private Use
+  # Areas (E000-F8FF, F0000-FFFFF, 100000-10FFFF).  Unassigned planes
+  # 4–13 are omitted — they contain no standard characters.
+
+  # --- BMP / Plane 0 -----------------------------------------------
+  add_range(0x00A0, 0x07FF)    # Latin, Greek, Cyrillic, Hebrew, Arabic…
+  add_range(0x0800, 0x1FFF)    # More scripts: Thai, Lao, Tibetan, etc.
+  add_range(0x2000, 0x2FFF)    # Punctuation, currency, letterlike, math
+  add_range(0x3000, 0x4DFF)    # CJK symbols, Hiragana, Katakana, Ext A
+  add_range(0x4E00, 0x9FFF)    # CJK Unified Ideographs (main block)
+  add_range(0xA000, 0xD7FF)    # Yi, Hangul syllables, more CJK
+  # Surrogates D800-DFFF excluded
+  # Private Use E000-F8FF excluded
+  add_range(0xF900, 0xFFEF)    # CJK compat idgphs, presentation forms,
+                                # halfwidth/fullwidth forms (no FFFE-FFFF)
+
+  # --- SMP / Plane 1 -----------------------------------------------
+  add_range(0x10000, 0x107FF)  # Linear B, Aegean numbers, ancient scripts
+  add_range(0x10800, 0x10FFF)  # Cypriot, Aramaic, Phoenician, Kharoshthi
+  add_range(0x12000, 0x123FF)  # Cuneiform
+  add_range(0x12400, 0x1247F)  # Cuneiform numbers & punctuation
+  add_range(0x1D000, 0x1D7FF)  # Musical symbols & Math Alphanumerics
+  add_range(0x1F000, 0x1FAFF)  # Emoji, emoticons, transport, symbols,
+                                # chess, pictographs extended-A
+
+  # --- SIP / Plane 2 -----------------------------------------------
+  add_range(0x20000, 0x2A6DF)  # CJK Ext B
+  add_range(0x2A700, 0x2EBEF)  # CJK Ext C/D/E/F
+  add_range(0x2F800, 0x2FA1F)  # CJK compat ideographs supplement
+
+  # --- TIP / Plane 3 -----------------------------------------------
+  add_range(0x30000, 0x323AF)  # CJK Ext G/H (only assigned blocks in plane 3)
+
+  # --- SSP / Plane 14 ----------------------------------------------
+  add_range(0xE0000, 0xE007F)  # Tags
+  add_range(0xE0100, 0xE01EF)  # Variation Selectors Supplement
 
   # --- punctuation arrays ------------------------------------------------
   split(". . . . . ? !", periods, " ")
