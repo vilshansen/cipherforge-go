@@ -592,14 +592,24 @@ cd cipherforge-go
 go build -o cfo ./cmd/cfo/
 ```
 
-To build for all supported platforms:
+To build for all supported platforms on Unix-like shells:
 ```bash
 ./build-all.sh
 ```
 
-To build for selected platforms only:
+To build for selected platforms only on Unix-like shells:
 ```bash
 ./build-all.sh --platforms linux/amd64,darwin/arm64
+```
+
+On Windows PowerShell, use:
+```powershell
+pwsh -File .\build-all.ps1
+```
+
+To build for selected platforms only in PowerShell:
+```powershell
+pwsh -File .\build-all.ps1 -Platforms linux/amd64,darwin/arm64
 ```
 
 The build script runs the full test suite before compiling and aborts on any failure.

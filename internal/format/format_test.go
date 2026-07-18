@@ -156,3 +156,99 @@ func TestTrailerSize(t *testing.T) {
 		t.Errorf("TrailerSize = %d, want %d", TrailerSize, 8+HMACSize)
 	}
 }
+
+func TestReadUint64Truncated(t *testing.T) {
+	// Only 4 bytes available — should fail.
+	buf := bytes.NewReader([]byte{0x00, 0x00, 0x00, 0x01})
+	_, err := ReadUint64(buf)
+	if err == nil {
+		t.Fatal("expected error for truncated uint64 input")
+	}
+}
+
+func TestReadUint32Truncated(t *testing.T) {
+	// Only 2 bytes available — should fail.
+	buf := bytes.NewReader([]byte{0x00, 0x01})
+	_, err := ReadUint32(buf)
+	if err == nil {
+		t.Fatal("expected error for truncated uint32 input")
+	}
+}
+
+func TestReadArgon2ParamsTruncated(t *testing.T) {
+	// Provide fewer than 12 bytes — should fail.
+	buf := bytes.NewReader([]byte{0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x04, 0x00})
+	_, err := ReadArgon2Params(buf)
+	if err == nil {
+		t.Fatal("expected error for truncated Argon2 params")
+	}
+}
+
+func TestMaxArgon2MemoryBoundary(t *testing.T) {
+	// Exactly at the limit should succeed.
+	params := Argon2Params{Time: 5, Memory: MaxArgon2Memory, Threads: 4}
+	buf := &bytes.Buffer{}
+	if err := WriteArgon2Params(buf, params); err != nil {
+		t.Fatalf("WriteArgon2Params failed: %v", err)
+	}
+	got, err := ReadArgon2Params(buf)
+	if err != nil {
+		t.Fatalf("ReadArgon2Params failed at max memory boundary: %v", err)
+	}
+	if got.Memory != MaxArgon2Memory {
+		t.Errorf("Memory = %d, want %d", got.Memory, MaxArgon2Memory)
+	}
+}
+
+func TestMaxThreadsValue(t *testing.T) {
+	// Threads can go up to 255 (uint8 max) — the validation only checks > 0.
+	params := Argon2Params{Time: 5, Memory: 1024, Threads: 255}
+	buf := &bytes.Buffer{}
+	if err := WriteArgon2Params(buf, params); err != nil {
+		t.Fatalf("WriteArgon2Params failed: %v", err)
+	}
+	got, err := ReadArgon2Params(buf)
+	if err != nil {
+		t.Fatalf("ReadArgon2Params failed with max threads: %v", err)
+	}
+	if got.Threads != 255 {
+		t.Errorf("Threads = %d, want 255", got.Threads)
+	}
+}
+
+func TestSegmentSizeConstant(t *testing.T) {
+	if SegmentSize != 1048576 {
+		t.Errorf("SegmentSize = %d, want 1048576", SegmentSize)
+	}
+}
+
+func TestVersionSizeConstant(t *testing.T) {
+	if VersionSize != 4 {
+		t.Errorf("VersionSize = %d, want 4", VersionSize)
+	}
+}
+
+func TestHMACSizeConstant(t *testing.T) {
+	if HMACSize != 32 {
+		t.Errorf("HMACSize = %d, want 32", HMACSize)
+	}
+}
+
+func TestReadArgon2ParamsReservedBytesIgnored(t *testing.T) {
+	// The 3 reserved bytes after threads should be read and ignored,
+	// regardless of their values. Write non-zero reserved bytes.
+	params := Argon2Params{Time: 3, Memory: 1024, Threads: 2}
+	buf := &bytes.Buffer{}
+	WriteUint32(buf, params.Time)
+	WriteUint32(buf, params.Memory)
+	// Write threads + non-zero reserved bytes.
+	buf.Write([]byte{params.Threads, 0xFF, 0xEE, 0xDD})
+
+	got, err := ReadArgon2Params(buf)
+	if err != nil {
+		t.Fatalf("ReadArgon2Params failed: %v", err)
+	}
+	if got.Time != params.Time || got.Memory != params.Memory || got.Threads != params.Threads {
+		t.Error("reserved bytes affected param reading")
+	}
+}

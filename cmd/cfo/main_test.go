@@ -130,40 +130,74 @@ func TestExpandInputPaths(t *testing.T) {
 	f1 := filepath.Join(tmpDir, "file1.txt")
 	os.WriteFile(f1, []byte("test"), 0644)
 
+	// Create a .cfo file to test skip behavior during encrypt.
+	cfoFile := filepath.Join(tmpDir, "already.cfo")
+	os.WriteFile(cfoFile, []byte("not a real cfo"), 0644)
+
 	tests := []struct {
 		name    string
 		inputs  []string
+		op      string
 		wantLen int
 		wantErr bool
 	}{
 		{
 			name:    "literal file",
 			inputs:  []string{f1},
+			op:      "encrypt",
 			wantLen: 1,
 			wantErr: false,
 		},
 		{
 			name:    "glob pattern",
 			inputs:  []string{filepath.Join(tmpDir, "*.txt")},
+			op:      "encrypt",
 			wantLen: 1,
 			wantErr: false,
 		},
 		{
 			name:    "no files found",
 			inputs:  []string{filepath.Join(tmpDir, "*.nonexistent")},
+			op:      "encrypt",
 			wantErr: true,
+		},
+		{
+			name:    "stdin passthrough",
+			inputs:  []string{"-"},
+			op:      "encrypt",
+			wantLen: 1,
+			wantErr: false,
+		},
+		{
+			name:    "cfo skip during encrypt",
+			inputs:  []string{cfoFile},
+			op:      "encrypt",
+			wantErr: true, // no files found because .cfo is skipped
+		},
+		{
+			name:    "cfo accepted during decrypt",
+			inputs:  []string{cfoFile},
+			op:      "decrypt",
+			wantLen: 1,
+			wantErr: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			files, err := expandInputPaths(tt.inputs, "encrypt")
+			files, err := expandInputPaths(tt.inputs, tt.op)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("expandInputPaths() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !tt.wantErr && len(files) != tt.wantLen {
 				t.Errorf("len(files) = %d, want %d", len(files), tt.wantLen)
+			}
+			// Check stdin passthrough.
+			if tt.name == "stdin passthrough" && !tt.wantErr {
+				if files[0] != "-" {
+					t.Errorf("stdin not passed through: got %q", files[0])
+				}
 			}
 		})
 	}
@@ -180,6 +214,9 @@ func TestDeriveOutputPath(t *testing.T) {
 		{"encrypt with path", "encrypt", "/tmp/doc.txt", "/tmp/doc.txt.cfo"},
 		{"decrypt", "decrypt", "doc.txt.cfo", "doc.txt"},
 		{"decrypt nested", "decrypt", "a/b.txt.cfo", "a/b.txt"},
+		{"decrypt no cfo suffix", "decrypt", "doc.txt", "doc.txt.dec"},
+		{"encrypt stdin", "encrypt", "-", "-"},
+		{"decrypt stdin", "decrypt", "-", "-"},
 	}
 
 	for _, tt := range tests {
@@ -198,22 +235,28 @@ func TestProcessFilePaths(t *testing.T) {
 		op        string
 		inputFile string
 		wantError bool
+		errText   string
 	}{
-		{"encrypt valid", "encrypt", "test.txt", false},
-		{"decrypt valid", "decrypt", "test.txt.cfo", false},
-		{"decrypt invalid ext", "decrypt", "test.txt", true},
+		{"encrypt accepts no extension", "encrypt", "test.xyz", false, ""},
+		{"decrypt accepts no extension", "decrypt", "test.txt", false, ""},
+		{"decrypt valid extension", "decrypt", "test.txt.cfo", false, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// We only test the path logic here, not the actual encryption/decryption
-			// which would require files.
-			if tt.op == "decrypt" && !strings.HasSuffix(tt.inputFile, ".cfo") {
-				outFile := "out.txt"
-				if err := processFile(tt.op, tt.inputFile, outFile, nil, nil, false, true, false); err == nil {
-					t.Errorf("expected error for decrypting %s", tt.inputFile)
+			// processFile will fail because the input file doesn't exist,
+			// but we only care about extension validation which happens first.
+			outFile := "out.tmp"
+			err := processFile(tt.op, tt.inputFile, outFile, nil, nil, false, true, false)
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error for %s with input %s", tt.op, tt.inputFile)
+				} else if tt.errText != "" && !strings.Contains(err.Error(), tt.errText) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errText)
 				}
 			}
+			// Clean up any files that might have been created.
+			os.Remove(outFile)
 		})
 	}
 }

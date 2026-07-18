@@ -2,8 +2,13 @@
 
 set -euo pipefail
 
+if [[ "${1:-}" == "--powershell" ]]; then
+    echo "Switching to PowerShell build entry point..."
+    exec pwsh -NoProfile -File "$(dirname "$0")/build-all.ps1" "${@:2}"
+fi
+
 GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="${VERSION:-3.3.0}"
+VERSION="${VERSION:-3.3.1}"
 
 SOURCE_FILE="cmd/cfo/main.go"
 
@@ -121,7 +126,17 @@ info "Targets  : ${#PLATFORMS[@]}"
 
 section "Unit Tests"
 
-go test -race -v ./... 2>&1 | tee test_output.log
+# The race detector requires CGO_ENABLED=1 and a C toolchain.
+# Check whether CGO is available before using -race.
+if go env CGO_ENABLED | grep -q "1"; then
+    TEST_FLAGS="-race"
+    info "Race detector enabled (CGO is available)"
+else
+    TEST_FLAGS=""
+    warn "Race detector disabled — CGO not available (install gcc/mingw-w64 to enable)"
+fi
+
+go test ${TEST_FLAGS} -v ./... 2>&1 | tee test_output.log
 test_rc=$?
 
 if [ $test_rc -ne 0 ]; then

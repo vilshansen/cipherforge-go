@@ -1,5 +1,30 @@
 # Changelog
 
+## v3.3.1 (2026-07-18)
+
+### Fixed
+
+- **CLI exits with non-zero code on failure.** `main()` now calls `os.Exit(1)`
+  when any file operation fails. Previously errors were printed but the process
+  always exited 0, which caused integration tests (and scripts relying on exit
+  codes) to miss authentication failures.
+- **Decrypt no longer requires `.cfo` extension.** Files created with `-o`
+  (custom output names) could not be decrypted because `processFile` rejected
+  inputs missing the `.cfo` suffix. The check was removed — trailer HMAC
+  verification provides real authentication regardless of filename.
+- **Non-`.cfo` decrypt output no longer overwrites input.** `deriveOutputPath`
+  now appends `.dec` when the input does not end with `.cfo`, preventing the
+  decryptor from truncating its own input.
+
+### Changed
+
+- **Build scripts handle missing CGO gracefully.** `build-all.sh` and
+  `build-all.ps1` now check `go env CGO_ENABLED` before using `-race`. When CGO
+  is unavailable (e.g. Windows without mingw-w64), tests run without the race
+  detector and a warning is printed.
+- **PowerShell build script now runs unit tests.** `build-all.ps1` previously
+  skipped testing entirely.
+
 ## v3.3.0 (2026-06-26)
 
 ### Added

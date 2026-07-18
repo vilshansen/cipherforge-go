@@ -3,12 +3,16 @@ package crypto
 import (
 	"bytes"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/vilshansen/cipherforge-go/internal/format"
 )
 
-const characterPool = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+// characterPool mirrors the production pool from cmd/cfo/main.go.
+// Same 58 unambiguous characters: digits 1-9, A-Z minus I/O, a-z minus l.
+// Note: 0 (zero) is excluded to avoid confusion with O.
+const characterPool = "123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 // fastParams are lightweight Argon2id parameters for tests.
 var fastParams = format.Argon2Params{
@@ -231,6 +235,9 @@ func TestGenerateSecurePassword(t *testing.T) {
 				return
 			}
 			if tt.wantErr {
+				if err != nil && tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("error %q should contain %q", err.Error(), tt.errContains)
+				}
 				return
 			}
 
@@ -238,10 +245,17 @@ func TestGenerateSecurePassword(t *testing.T) {
 				t.Errorf("GenerateSecurePassword() length = %d, want %d", len(got), tt.length)
 			}
 
-			for _, c := range got {
-				if c == '-' {
-					t.Errorf("password contains hyphen: %q", got)
+			// Every character must be from the pool.
+			for i, c := range got {
+				if !strings.ContainsRune(characterPool, rune(c)) {
+					t.Errorf("character at index %d (%q) is not in the character pool", i, c)
 				}
+			}
+
+			// Generate a second password — it should be different.
+			got2, _ := GenerateSecurePassword(tt.length, characterPool)
+			if bytes.Equal(got, got2) {
+				t.Error("two generated passwords should be different")
 			}
 		})
 	}
