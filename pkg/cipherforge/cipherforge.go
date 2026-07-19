@@ -43,6 +43,7 @@ package cipherforge
 
 import (
 	"bufio"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
@@ -210,128 +211,84 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	defer bufOut.Flush() // Flush the buffered writer when done (even on error)
 
 	// Step 4: Write the 64-byte v3 header.
-	//
-	// The header is written in plaintext. None of these fields need to be
-	// secret — their integrity is protected by the trailer HMAC.
-	// Writing directly to the buffered writer; Flush() will push to the
-	// underlying writer when the buffer is full or when deferred.
-	if _, err := bufOut.Write([]byte(format.Magic)); err != nil {
-		return err
-	}
-	if err := format.WriteUint32(bufOut, format.FileVersion); err != nil {
-		return err
-	}
-	if _, err := bufOut.Write(salt); err != nil {
-		return err
-	}
-	if _, err := bufOut.Write(segmentSeed); err != nil {
-		return err
-	}
-	if err := format.WriteArgon2Params(bufOut, e.params); err != nil {
+	if err := writeHeader(bufOut, salt, segmentSeed, e.params); err != nil {
 		return err
 	}
 
-	// Step 5: Encrypt segments in a loop.
-	//
-	// Buffer allocation strategy:
-	//   - plaintextBuf: 1 MiB, reused each iteration
-	//   - ciphertextBuf: 0-length with capacity for 1 MiB + 16 (AEAD tag).
-	//     Reused via `ciphertextBuf[:0]` which resets length to 0 but keeps
-	//     the backing array. This is a zero-allocation pattern — like
-	//     reusing a ByteBuffer with clear() in Java.
-	//   - aad: 16 bytes for Additional Authenticated Data, overwritten each
-	//     iteration
-	plaintextBuf := make([]byte, format.SegmentSize)
-	ciphertextBuf := make([]byte, 0, format.SegmentSize+aead.Overhead())
-	aad := make([]byte, 16)
-	var segmentCount uint64 // Total segments written (also used as loop index)
-	var bytesDone int64     // Cumulative plaintext bytes for progress callback
-
-	for {
-		// io.ReadFull reads exactly len(plaintextBuf) bytes, UNLESS the
-		// underlying reader reaches EOF. On EOF with partial data, it
-		// returns (n, io.ErrUnexpectedEOF) where n is the bytes read.
-		// On clean EOF with no data, it returns (0, io.EOF).
-		n, err := io.ReadFull(bufIn, plaintextBuf)
-
-		// Process any data that was read, even if there was an error.
-		// This handles the final partial segment correctly.
-		if n > 0 {
-			// Derive a unique nonce for this segment from the Segment Seed.
-			// Uses HKDF-SHA256 with segment index as the info parameter.
-			// Even though nonces aren't secret, deriving them from a seed
-			// via HKDF (rather than XOR) prevents the "identity at zero"
-			// problem and keeps the seed cryptographically hidden even if
-			// multiple nonces are known.
-			nonce, err := deriveSegmentNonce(segmentSeed, segmentCount)
-			if err != nil {
-				return err
-			}
-
-			// Build the AAD (Additional Authenticated Data):
-			//   [segmentIndex: 8 bytes] || [plaintextLength: 8 bytes]
-			// This binds the segment authentication tag to both its position
-			// (preventing reordering) and its length (preventing truncation).
-			buildAAD(aad, segmentCount, uint64(n))
-
-			// aead.Seal appends ciphertext+tag to dst.
-			// `ciphertextBuf[:0]` resets the slice to zero length while
-			// keeping the backing array — no allocation occurs if the
-			// capacity is sufficient (which it always is for <= 1 MiB input).
-			// The result is: ciphertext || 16-byte Poly1305 tag.
-			ciphertextBuf = aead.Seal(ciphertextBuf[:0], nonce, plaintextBuf[:n], aad)
-
-			// Write: [ciphertext length: 8 bytes] [ciphertext + tag]
-			if err := format.WriteUint64(bufOut, uint64(len(ciphertextBuf))); err != nil {
-				return err
-			}
-			if _, err := bufOut.Write(ciphertextBuf); err != nil {
-				return err
-			}
-
-			segmentCount++
-			bytesDone += int64(n)
-			// Call progress callback if provided.
-			// In Go, you check `if progress != nil` before calling a
-			// function-typed variable — calling nil panics (NPE equivalent).
-			if progress != nil {
-				progress(bytesDone)
-			}
-		}
-
-		// After processing any data, check for termination conditions.
-		// io.EOF = clean end of file (no more data)
-		// io.ErrUnexpectedEOF = partial read at EOF (last segment)
-		// Any other error = real I/O or read error → propagate to caller
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
+	// Step 5: Encrypt segments.
+	segmentCount, err := encryptSegments(bufIn, bufOut, aead, segmentSeed, progress)
+	if err != nil {
+		return err
 	}
 
 	// Step 6: Write the trailer.
-	//
-	// [segmentCount: 8 bytes] — total number of segments in the payload.
 	if err := format.WriteUint64(bufOut, segmentCount); err != nil {
 		return err
 	}
 
-	// Compute the HMAC-SHA256 trailer authentication tag.
-	// This covers: salt, segmentSeed, segmentCount, and Argon2 parameters.
-	// Any tampering with the header or truncation of the payload will
-	// cause this HMAC to fail on decryption.
 	trailer := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params, format.FileVersion)
-	// Zero the MAC key immediately after use — it's not needed anymore.
 	crypto.ZeroBytes(macKey)
 	if _, err := bufOut.Write(trailer); err != nil {
 		return err
 	}
 
-	// bufOut.Flush() will run via defer now, ensuring all buffered data
-	// is written to the underlying writer.
 	return nil
+}
+
+// writeHeader writes the 64-byte v3 .cfo header to w.
+func writeHeader(w io.Writer, salt, segmentSeed []byte, params format.Argon2Params) error {
+	if _, err := w.Write([]byte(format.Magic)); err != nil {
+		return err
+	}
+	if err := format.WriteUint32(w, format.FileVersion); err != nil {
+		return err
+	}
+	if _, err := w.Write(salt); err != nil {
+		return err
+	}
+	if _, err := w.Write(segmentSeed); err != nil {
+		return err
+	}
+	return format.WriteArgon2Params(w, params)
+}
+
+// encryptSegments reads plaintext from r, encrypts it in 1 MiB segments,
+// and writes the payload to w. Returns the total segment count.
+func encryptSegments(r io.Reader, w io.Writer, aead cipher.AEAD, segmentSeed []byte, progress func(int64)) (uint64, error) {
+	plaintextBuf := make([]byte, format.SegmentSize)
+	ciphertextBuf := make([]byte, 0, format.SegmentSize+aead.Overhead())
+	aad := make([]byte, 16)
+	var segmentCount uint64
+	var bytesDone int64
+
+	for {
+		n, err := io.ReadFull(r, plaintextBuf)
+		if n > 0 {
+			nonce, derr := deriveSegmentNonce(segmentSeed, segmentCount)
+			if derr != nil {
+				return 0, derr
+			}
+			buildAAD(aad, segmentCount, uint64(n))
+			ciphertextBuf = aead.Seal(ciphertextBuf[:0], nonce, plaintextBuf[:n], aad)
+			if werr := format.WriteUint64(w, uint64(len(ciphertextBuf))); werr != nil {
+				return 0, werr
+			}
+			if _, werr := w.Write(ciphertextBuf); werr != nil {
+				return 0, werr
+			}
+			segmentCount++
+			bytesDone += int64(n)
+			if progress != nil {
+				progress(bytesDone)
+			}
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return segmentCount, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
 }
 
 // Decrypter handles the decryption of a .cfo stream in segments.
@@ -479,9 +436,8 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	// on first mismatched byte, preventing timing side-channel attacks.
 	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params, version)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
-		// Zero the MAC key before returning the error — defense in depth.
 		crypto.ZeroBytes(macKey)
-		return fmt.Errorf("authentication failed")
+		return ErrAuthenticationFailed
 	}
 	// MAC key zeroed immediately after use — it's not needed for per-segment
 	// decryption (per-segment authentication uses Poly1305 tags from the AEAD).
@@ -628,51 +584,22 @@ func deriveSegmentNonce(segmentSeed []byte, segmentCounter uint64) ([]byte, erro
 	return nonce, nil
 }
 
+// ErrAuthenticationFailed is returned when the trailer HMAC does not match,
+// indicating wrong password, tampered header, or corrupted file.
+var ErrAuthenticationFailed = fmt.Errorf("authentication failed")
+
 // computeTrailerHMAC computes the HMAC-SHA256 authentication tag for the
-// .cfo file trailer.
-//
-// The HMAC covers all header fields that must not be tampered with:
-//
-//	HMAC-SHA256(macKey,
-//	    context-string    ||  // domain separation per format version
-//	    salt              ||  // 16 bytes — detects salt substitution
-//	    segmentSeed       ||  // 24 bytes — detects seed substitution
-//	    argon2Time        ||  // 4 bytes — detects KDF downgrade
-//	    argon2Memory      ||  // 4 bytes — detects KDF downgrade
-//	    argon2Threads     ||  // 1 byte  — detects KDF downgrade
-//	    reserved(3 bytes) ||  // 3 bytes — future-proofing
-//	    segmentCount         // 8 bytes — detects truncation/appending
-//	)
-//
-// Different format versions use different context strings (cipherforge-trailer-hmac-v1,
-// -v2, -v3) to prevent cross-version attacks.
+// .cfo file trailer. Different format versions use different context strings
+// to prevent cross-version attacks.
 func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params, version uint32) []byte {
-	// hmac.New creates an HMAC hasher. Like Java's Mac.getInstance("HmacSHA256").
 	h := hmac.New(sha256.New, macKey)
 
-	if version <= 1 {
-		// v1: simpler construction — context || salt || segmentSeed || segmentCount
-		// (v1 had no embedded Argon2 params in the header)
-		h.Write([]byte(format.TrailerHMACContext))
-		h.Write(salt)
-		h.Write(segmentSeed)
-	} else if version == 2 {
-		// v2: added Argon2 params to the HMAC input
-		// context-v2 || salt || segmentSeed || time || memory || threads || reserved[3]
-		h.Write([]byte(format.TrailerHMACContextV2))
-		h.Write(salt)
-		h.Write(segmentSeed)
-		var buf [8]byte
-		binary.BigEndian.PutUint32(buf[0:4], params.Time)
-		binary.BigEndian.PutUint32(buf[4:8], params.Memory)
-		h.Write(buf[:])
-		h.Write([]byte{params.Threads, 0, 0, 0})
-	} else {
-		// v3+: same as v2 but with v3-specific context string
-		// Domain separation prevents v2 HMACs from validating in v3 decoders.
-		h.Write([]byte(format.TrailerHMACContextV3))
-		h.Write(salt)
-		h.Write(segmentSeed)
+	ctx := trailerHMACContext(version)
+	h.Write([]byte(ctx))
+	h.Write(salt)
+	h.Write(segmentSeed)
+
+	if version >= 2 {
 		var buf [8]byte
 		binary.BigEndian.PutUint32(buf[0:4], params.Time)
 		binary.BigEndian.PutUint32(buf[4:8], params.Memory)
@@ -680,12 +607,22 @@ func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, p
 		h.Write([]byte{params.Threads, 0, 0, 0})
 	}
 
-	// Append the segment count (common to all versions).
 	var countBuf [8]byte
 	binary.BigEndian.PutUint64(countBuf[:], segmentCount)
 	h.Write(countBuf[:])
 
-	// h.Sum(nil) finalizes the HMAC and returns the 32-byte tag.
-	// Passing nil means "append to a new allocation."
 	return h.Sum(nil)
+}
+
+// trailerHMACContext returns the domain-separation context string for a
+// given format version.
+func trailerHMACContext(version uint32) string {
+	switch {
+	case version <= 1:
+		return format.TrailerHMACContext
+	case version == 2:
+		return format.TrailerHMACContextV2
+	default:
+		return format.TrailerHMACContextV3
+	}
 }

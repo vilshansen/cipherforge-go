@@ -1,5 +1,31 @@
 # Changelog
 
+## v3.3.2 (2026-07-19)
+
+### Fixed
+
+- **Cross-compilation broken by multi-file package.** `build-all.sh` and
+  `build-all.ps1` compiled `cmd/cfo/main.go` as a single file, missing the
+  new `params.go`. Changed to `./cmd/cfo/` (package path).
+
+### Changed
+
+- **Argument parsing extracted to `params.go`.** `getParameters()` now returns
+  a `params` struct instead of 8 separate values. `resolvePasswordInteractive`
+  moved alongside it.
+- **Deduplicated crypto helpers.** `randRead()` shared by `GenerateSalt`/
+  `GenerateNonce`; `splitKeyPair()` shared by `DeriveKeys`/`DeriveKeysFromMaster`.
+- **Deduplicated trailer HMAC.** `trailerHMACContext()` eliminates copy-pasted
+  v2/v3 branches.
+- **`Encrypt` split into `writeHeader` and `encryptSegments`.**
+- **`CharacterPool` exported from `internal/crypto`** — removes duplicate
+  definition in `cmd/cfo/main.go` and `crypto_test.go`.
+- **`FastTestParams()` added to `internal/format`** — shared by all test files.
+- **Error wrapping added to `WriteUint64`/`WriteUint32`/`ReadUint64`/`ReadUint32`.**
+- **`PrintSuccess` removed** (empty function); `ReadPasswordFromTerminal` uses
+  `TrimSuffix` instead of `TrimRight`.
+- **`ErrAuthenticationFailed` sentinel error** in `pkg/cipherforge`.
+
 ## v3.3.1 (2026-07-18)
 
 ### Fixed

@@ -2,28 +2,14 @@ package crypto
 
 import (
 	"bytes"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/vilshansen/cipherforge-go/internal/format"
 )
 
-// characterPool mirrors the production pool from cmd/cfo/main.go.
-// Same 58 unambiguous characters: digits 1-9, A-Z minus I/O, a-z minus l.
-// Note: 0 (zero) is excluded to avoid confusion with O.
-const characterPool = "123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-
 // fastParams are lightweight Argon2id parameters for tests.
-var fastParams = format.Argon2Params{
-	Time:    1,
-	Memory:  64 * 1024, // 64 MiB
-	Threads: 1,
-}
-
-func TestMain(m *testing.M) {
-	os.Exit(m.Run())
-}
+var fastParams = format.FastTestParams()
 
 func TestDeriveKey(t *testing.T) {
 	tests := []struct {
@@ -229,7 +215,7 @@ func TestGenerateSecurePassword(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := GenerateSecurePassword(tt.length, characterPool)
+			got, err := GenerateSecurePassword(tt.length, CharacterPool)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GenerateSecurePassword() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -247,13 +233,13 @@ func TestGenerateSecurePassword(t *testing.T) {
 
 			// Every character must be from the pool.
 			for i, c := range got {
-				if !strings.ContainsRune(characterPool, rune(c)) {
+				if !strings.ContainsRune(CharacterPool, rune(c)) {
 					t.Errorf("character at index %d (%q) is not in the character pool", i, c)
 				}
 			}
 
 			// Generate a second password — it should be different.
-			got2, _ := GenerateSecurePassword(tt.length, characterPool)
+			got2, _ := GenerateSecurePassword(tt.length, CharacterPool)
 			if bytes.Equal(got, got2) {
 				t.Error("two generated passwords should be different")
 			}

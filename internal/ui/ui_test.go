@@ -43,16 +43,6 @@ func TestPrintError(t *testing.T) {
 	}
 }
 
-func TestPrintSuccess(t *testing.T) {
-	// PrintSuccess should produce no output.
-	out := captureStderr(func() {
-		PrintSuccess("should be silent")
-	})
-	if out != "" {
-		t.Errorf("PrintSuccess should be silent, got %q", out)
-	}
-}
-
 func TestPrintHeader(t *testing.T) {
 	// PrintHeader writes to stdout, not stderr. Capture stdout.
 	orig := os.Stdout

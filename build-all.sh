@@ -8,9 +8,9 @@ if [[ "${1:-}" == "--powershell" ]]; then
 fi
 
 GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="${VERSION:-3.3.1}"
+VERSION="${VERSION:-3.3.2}"
 
-SOURCE_FILE="cmd/cfo/main.go"
+SOURCE_FILE="./cmd/cfo/"
 
 ALL_PLATFORMS=(
     "linux/amd64"    # Linux Server/Desktop (Standard)

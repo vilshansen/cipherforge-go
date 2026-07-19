@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -96,7 +95,7 @@ func TestGetParameters(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			os.Args = tt.args
-			op, files, pwd, out, _, _, _, err := getParameters()
+			p, err := getParameters()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("getParameters() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -104,16 +103,16 @@ func TestGetParameters(t *testing.T) {
 			if tt.wantErr {
 				return
 			}
-			if op != tt.wantOp {
-				t.Errorf("op = %v, want %v", op, tt.wantOp)
+			if p.Operation != tt.wantOp {
+				t.Errorf("op = %v, want %v", p.Operation, tt.wantOp)
 			}
-			if len(files) != len(tt.wantFiles) {
-				t.Errorf("files = %v, want %v", files, tt.wantFiles)
+			if len(p.Inputs) != len(tt.wantFiles) {
+				t.Errorf("files = %v, want %v", p.Inputs, tt.wantFiles)
 			}
-			if out != tt.wantOutput {
-				t.Errorf("output = %q, want %q", out, tt.wantOutput)
+			if p.Output != tt.wantOutput {
+				t.Errorf("output = %q, want %q", p.Output, tt.wantOutput)
 			}
-			if tt.wantPwdPresent && pwd == nil {
+			if tt.wantPwdPresent && p.Password == nil {
 				t.Error("expected non-nil password from -p flag")
 			}
 		})
@@ -225,38 +224,6 @@ func TestDeriveOutputPath(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("deriveOutputPath(%q, %q) = %q, want %q", tt.op, tt.inputFile, got, tt.want)
 			}
-		})
-	}
-}
-
-func TestProcessFilePaths(t *testing.T) {
-	tests := []struct {
-		name      string
-		op        string
-		inputFile string
-		wantError bool
-		errText   string
-	}{
-		{"encrypt accepts no extension", "encrypt", "test.xyz", false, ""},
-		{"decrypt accepts no extension", "decrypt", "test.txt", false, ""},
-		{"decrypt valid extension", "decrypt", "test.txt.cfo", false, ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// processFile will fail because the input file doesn't exist,
-			// but we only care about extension validation which happens first.
-			outFile := "out.tmp"
-			err := processFile(tt.op, tt.inputFile, outFile, nil, nil, false, true, false)
-			if tt.wantError {
-				if err == nil {
-					t.Errorf("expected error for %s with input %s", tt.op, tt.inputFile)
-				} else if tt.errText != "" && !strings.Contains(err.Error(), tt.errText) {
-					t.Errorf("error %q should contain %q", err.Error(), tt.errText)
-				}
-			}
-			// Clean up any files that might have been created.
-			os.Remove(outFile)
 		})
 	}
 }

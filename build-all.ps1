@@ -19,11 +19,11 @@ function Show-Usage {
     Write-Host '  -Platforms  Comma-separated list of targets (default: all).'
     Write-Host '              Example: -Platforms linux/amd64,darwin/arm64'
     Write-Host ''
-    Write-Host '  -Version    Overrides the version string (default: 3.3.1).'
+    Write-Host '  -Version    Overrides the version string (default: 3.3.2).'
 }
 
 if (-not $Version) {
-    $Version = '3.3.1'
+    $Version = '3.3.2'
 }
 
 if ($Help) {
@@ -117,7 +117,7 @@ try {
         $env:GOOS = $targetOs
         $env:GOARCH = $targetArch
         Write-Host "Building $platform -> $outputFile"
-        & go build -ldflags=$ldflags -o $outputFile cmd/cfo/main.go
+        & go build -ldflags=$ldflags -o $outputFile ./cmd/cfo/
         if ($LASTEXITCODE -ne 0) {
             throw "Build failed for $platform"
         }

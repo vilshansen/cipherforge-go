@@ -10,11 +10,7 @@ import (
 )
 
 // fastParams are lightweight Argon2id parameters to keep tests fast.
-var fastParams = format.Argon2Params{
-	Time:    1,
-	Memory:  64 * 1024, // 64 MiB
-	Threads: 1,
-}
+var fastParams = format.FastTestParams()
 
 func TestRoundTrip(t *testing.T) {
 	password := []byte("test-password")

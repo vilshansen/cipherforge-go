@@ -39,10 +39,6 @@ import (
 	"golang.org/x/term"
 )
 
-// PrintSuccess prints nothing — tar style is silent on success.
-// (Exists so callers don't need to check if output is desired.)
-func PrintSuccess(msg string) {}
-
 // PrintWarning prints a warning to stderr in tar style:
 //
 //	cfo: warning: <message>
@@ -100,9 +96,12 @@ func ReadPasswordFromTerminal(prompt string) ([]byte, error) {
 	if err == io.EOF && len(line) == 0 {
 		return nil, fmt.Errorf("unexpected end of input")
 	}
-	// Trim trailing \r\n (Windows line endings) or \n (Unix).
-	// bytes.TrimRight is like String.trim() in Java but for byte slices.
-	return bytes.TrimRight(line, "\r\n"), nil
+	// Strip trailing newline(s): \r\n (Windows) or \n (Unix).
+	// Use TrimSuffix (not TrimRight) to avoid stripping trailing
+	// newlines that are legitimately part of the password.
+	line = bytes.TrimSuffix(line, []byte("\r\n"))
+	line = bytes.TrimSuffix(line, []byte("\n"))
+	return line, nil
 }
 
 // ReadPasswordStarred reads a password with star masking (one * per character).

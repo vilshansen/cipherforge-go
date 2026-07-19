@@ -82,6 +82,11 @@ func RandReader() io.Reader {
 const (
 	SaltSize   = 16 // 128-bit salt
 	XNonceSize = 24 // 192-bit nonce for XChaCha20
+
+	// CharacterPool is the set of unambiguous characters for password generation:
+	// digits 1-9 (no 0), uppercase A-Z minus I/O, lowercase a-z minus l.
+	// 58 characters total; 44 chars × log₂(58) ≈ 257.7 bits ≥ 256-bit strength.
+	CharacterPool = "123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 )
 
 // DeriveMasterKey derives a master key from password using Argon2id.
@@ -138,29 +143,12 @@ func DeriveMasterKey(password []byte, params format.Argon2Params) []byte {
 // A bare `return` returns the current values of those named variables.
 // This function uses explicit `return encKey, macKey` for clarity.
 func DeriveKeysFromMaster(masterKey, fileSalt []byte) (encKey, macKey []byte) {
-	// hkdf.New creates an HKDF reader. Parameters:
-	//   - hash function (sha256.New returns a hash.Hash, which is a factory)
-	//   - ikm (input keying material — the master key)
-	//   - salt (per-file random salt for domain separation)
-	//   - info (context string — domain separation tag)
 	r := hkdf.New(sha256.New, masterKey, fileSalt, []byte(format.FileKeyContext))
 	raw := make([]byte, 64)
 	if _, err := io.ReadFull(r, raw); err != nil {
-		// HKDF-SHA256 should never fail for 64 bytes of output, but we
-		// handle the error to satisfy the io.Reader contract.
 		return nil, nil
 	}
-	// In Go, `make([]byte, 32)` allocates a 32-byte slice initialized to zero.
-	// This is like `new byte[32]` in Java.
-	encKey = make([]byte, 32)
-	macKey = make([]byte, 32)
-	// copy() is Go's System.arraycopy(). It copies min(len(dst), len(src)) bytes.
-	copy(encKey, raw[:32]) // raw[:32] is a slice view of the first 32 bytes
-	copy(macKey, raw[32:]) // raw[32:] is a slice view from byte 32 to end
-	ZeroBytes(raw)         // Wipe the intermediate buffer immediately
-	MlockBytes(encKey)
-	MlockBytes(macKey)
-	return encKey, macKey
+	return splitKeyPair(raw)
 }
 
 // DeriveKey is a convenience wrapper around DeriveKeys for callers that only
@@ -180,14 +168,13 @@ func DeriveKey(password, salt []byte, params format.Argon2Params) []byte {
 // allowed in Go (no method overloading). However, this package exports both
 // DeriveKey (singular) and DeriveKeys (plural) as distinct functions.
 func DeriveKeys(password, salt []byte, params format.Argon2Params) (encKey, macKey []byte) {
-	raw := argon2.IDKey(
-		password,
-		salt,
-		params.Time,
-		params.Memory,
-		params.Threads,
-		64, // Double output for two 32-byte keys
-	)
+	raw := argon2.IDKey(password, salt, params.Time, params.Memory, params.Threads, 64)
+	return splitKeyPair(raw)
+}
+
+// splitKeyPair splits a 64-byte raw key into two independent 32-byte keys
+// and wipes the intermediate buffer. encKey and macKey are mlock'd.
+func splitKeyPair(raw []byte) (encKey, macKey []byte) {
 	encKey = make([]byte, 32)
 	macKey = make([]byte, 32)
 	copy(encKey, raw[:32])
@@ -195,49 +182,24 @@ func DeriveKeys(password, salt []byte, params format.Argon2Params) (encKey, macK
 	ZeroBytes(raw)
 	MlockBytes(encKey)
 	MlockBytes(macKey)
-	return encKey, macKey
+	return
 }
 
 // GenerateSalt creates a 16-byte random salt for the KDF using crypto/rand.
-//
-// Go error handling idiom:
-//
-//	salt, err := GenerateSalt()
-//	if err != nil {
-//	    // handle error — return, log, or panic (reserved for unrecoverable errors)
-//	    return err
-//	}
-//	// use salt...
-//
-// This is Go's equivalent of:
-//
-//	try {
-//	    byte[] salt = GenerateSalt();
-//	} catch (Exception e) {
-//	    // handle...
-//	}
-//
-// Go chooses explicit error returns over exceptions for all "expected" error
-// conditions (I/O failures, invalid input, etc.). True panics are only for
-// programmer errors (nil pointer dereference, out-of-bounds, etc.) and are
-// NOT caught in idiomatic Go outside of process boundaries.
-func GenerateSalt() ([]byte, error) {
-	salt := make([]byte, SaltSize)
-	if _, err := rand.Read(salt); err != nil {
-		return nil, err // nil is Go's null
-	}
-	return salt, nil
-}
+func GenerateSalt() ([]byte, error) { return randRead(SaltSize) }
 
 // GenerateNonce creates a random 24-byte (192-bit) nonce using crypto/rand.
 // This is used directly in the legacy v1/v2 path; v3 uses HKDF-derived nonces
 // from the Segment Seed instead.
-func GenerateNonce() ([]byte, error) {
-	nonce := make([]byte, XNonceSize)
-	if _, err := rand.Read(nonce); err != nil {
+func GenerateNonce() ([]byte, error) { return randRead(XNonceSize) }
+
+// randRead reads n cryptographically secure random bytes.
+func randRead(n int) ([]byte, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
 		return nil, err
 	}
-	return nonce, nil
+	return b, nil
 }
 
 // GenerateSecurePassword generates a cryptographically secure, random password

@@ -27,18 +27,15 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"github.com/vilshansen/cipherforge-go/internal/format"
 	"github.com/vilshansen/cipherforge-go/internal/ui"
 	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
-	"golang.org/x/term"
 )
 
 // Version and GitCommit are set at build time via linker flags:
@@ -56,101 +53,75 @@ var GitCommit = "none"
 // lowercase a-z without l. 58 characters total.
 //
 // 44 chars × log₂(58) ≈ 257.7 bits ≥ 256-bit key strength.
-const characterPool = "123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 const passwordLength = 44
 
-// main is the entry point — like Java's public static void main(String[] args).
-// Go's main takes no arguments; use os.Args to access command-line arguments.
 func main() {
 	if len(os.Args) < 2 {
 		showHelp()
 		os.Exit(1)
 	}
 
-	// Parse command-line arguments.
-	// Go pattern: functions return multiple values, with error as the last
-	// return. Convention: if error is non-nil, other values are undefined.
-	operation, inputPattern, userPassword, outputOverride, quiet, force, atomic, err := getParameters()
-	if err != nil {
-		ui.PrintError(fmt.Sprintf("%v", err)) // %v formats any value (like toString())
-		os.Exit(1)
-	}
-
-	// Expand glob patterns and validate input paths.
-	inputFiles, err := expandInputPaths(inputPattern, operation)
+	cfg, err := getParameters()
 	if err != nil {
 		ui.PrintError(fmt.Sprintf("%v", err))
 		os.Exit(1)
 	}
 
-	// Validation: stdin ("-") cannot be combined with other files.
-	if len(inputFiles) > 1 {
-		for _, f := range inputFiles {
-			if f == "-" {
-				ui.PrintError("stdin (-) cannot be combined with other input files")
-				os.Exit(1)
-			}
+	// Expand glob patterns and validate input paths.
+	inputFiles, err := expandInputPaths(cfg.Inputs, cfg.Operation)
+	if err != nil {
+		ui.PrintError(fmt.Sprintf("%v", err))
+		os.Exit(1)
+	}
+
+	// Validate stdin constraints.
+	for _, f := range inputFiles {
+		if f == "-" && len(inputFiles) > 1 {
+			ui.PrintError("stdin (-) cannot be combined with other input files")
+			os.Exit(1)
 		}
 	}
-	// Validation: -o requires exactly one input file.
-	if outputOverride != "" && len(inputFiles) > 1 {
+	if cfg.Output != "" && len(inputFiles) > 1 {
 		ui.PrintError("-o requires a single input file")
 		os.Exit(1)
 	}
-	// Validation: stdin input requires an explicit output path.
-	if inputFiles[0] == "-" && outputOverride == "" {
+	if len(inputFiles) > 0 && inputFiles[0] == "-" && cfg.Output == "" {
 		ui.PrintError("stdin requires -o <output>")
 		os.Exit(1)
 	}
 
 	// Resolve the password: use the user-supplied one, or generate/ask.
-	password, err := resolvePassword(operation, userPassword)
+	password, err := resolvePassword(cfg.Operation, cfg.Password)
 	if err != nil {
 		ui.PrintError(fmt.Sprintf("%v", err))
 		os.Exit(1)
 	}
-	// Ensure the password is wiped from memory when main() exits.
-	// This defers to the VERY end of main's execution — after all files
-	// are processed. The password is shared across all files in batch mode,
-	// so we can't zero it between files.
 	defer crypto.ZeroBytes(password)
 
 	// Security warning: short user-supplied password + multiple files.
-	// The v3 batch optimization means one Argon2id run covers all files.
-	if operation == "encrypt" && userPassword != nil && len(userPassword) < 20 && len(inputFiles) > 1 {
+	if cfg.Operation == "encrypt" && cfg.Password != nil && len(cfg.Password) < 20 && len(inputFiles) > 1 {
 		ui.PrintWarning(fmt.Sprintf(
 			"Short password (%d chars) with %d files. The v3 batch optimisation derives\n"+
 				"                all file keys from one Argon2id run — a weak password puts every\n"+
 				"                output file at risk. Consider a longer password or encrypting\n"+
 				"                files separately with different passwords.",
-			len(userPassword), len(inputFiles)))
+			len(cfg.Password), len(inputFiles)))
 	}
 
 	// For encryption, derive the master key ONCE and reuse for all files.
-	// This is the two-tier key derivation optimization: one expensive
-	// Argon2id call, then fast HKDF per file.
-	//
-	// Go note: `var masterKey []byte` declares a nil slice.
-	// In the if-block below, it gets assigned the derived key.
-	// The defer ensures it's zeroed when main() returns.
 	var masterKey []byte
-	if operation == "encrypt" {
+	if cfg.Operation == "encrypt" {
 		masterKey = crypto.DeriveMasterKey(password, format.DefaultArgon2Params())
 		defer crypto.ZeroBytes(masterKey)
 	}
 
-	// Process each input file.
-	// `for _, inputFile := range inputFiles` — the underscore discards the
-	// index (like `for (String f : files)` in Java).
 	var hasErrors bool
 	for _, inputFile := range inputFiles {
-		// Determine output path: use -o override, or derive from input name.
-		outputFile := outputOverride
+		outputFile := cfg.Output
 		if outputFile == "" {
-			outputFile = deriveOutputPath(operation, inputFile)
+			outputFile = deriveOutputPath(cfg.Operation, inputFile)
 		}
-		// Errors are printed but don't stop batch processing.
-		if err := processFile(operation, inputFile, outputFile, password, masterKey, quiet, force, atomic); err != nil {
+		if err := processFile(cfg.Operation, inputFile, outputFile, password, masterKey, cfg.Quiet, cfg.Force, cfg.Atomic); err != nil {
 			ui.PrintError(fmt.Sprintf("Failed to process %s: %v", inputFile, err))
 			hasErrors = true
 		}
@@ -338,22 +309,19 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 		if len(userPassword) < 12 {
 			ui.PrintWarning(fmt.Sprintf("Short password (%d chars). Consider a longer one.", len(userPassword)))
 		}
-		ui.PrintSuccess("Password accepted")
 		return userPassword, nil
 	}
 
-	// Auto-generate a secure password for encryption.
 	if operation == "encrypt" {
-		p, err := crypto.GenerateSecurePassword(passwordLength, characterPool)
+		p, err := crypto.GenerateSecurePassword(passwordLength, crypto.CharacterPool)
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("%s\n", p) // Print password to stdout — user must save it
+		fmt.Printf("%s\n", p)
 		fmt.Fprintf(os.Stderr, "cfo: Save this password — it cannot be recovered.\n")
 		return p, nil
 	}
 
-	// Interactive password prompt for decryption (loop until non-empty).
 	for {
 		p, err := ui.ReadPasswordStarred("Enter password for decryption: ")
 		if err != nil {
@@ -363,152 +331,6 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 			return p, nil
 		}
 		ui.PrintError("Password cannot be empty")
-	}
-}
-
-// getParameters parses command-line arguments into structured form.
-// Returns 8 values — unusual in Go but acceptable for a small CLI.
-func getParameters() (string, []string, []byte, string, bool, bool, bool, error) {
-	args := os.Args[1:] // Skip program name (os.Args[0])
-	var encryptInputs []string
-	var decryptInputs []string
-	var explicitPassword []byte
-	var outputFile string
-	var quiet, force, atomic bool
-	passwordSeen := false
-	outputSeen := false
-
-	// Manual argument parsing. Go's standard `flag` package handles flags
-	// poorly with positional arguments, so we parse manually.
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "-h", "--help":
-			showHelp()
-			os.Exit(0)
-		case "-v", "--version":
-			fmt.Printf("cfo %s\n", Version)
-			os.Exit(0)
-		case "-q", "--quiet":
-			quiet = true
-		case "-f", "--force":
-			force = true
-		case "-a", "--atomic":
-			atomic = true
-		case "-e":
-			// Collect all non-flag arguments after -e. "-" is treated as stdin.
-			i++
-			for i < len(args) && (args[i] == "-" || args[i][0] != '-') {
-				encryptInputs = append(encryptInputs, args[i])
-				i++
-			}
-			i--
-		case "-d":
-			i++
-			for i < len(args) && (args[i] == "-" || args[i][0] != '-') {
-				decryptInputs = append(decryptInputs, args[i])
-				i++
-			}
-			i--
-		case "-o":
-			if outputSeen {
-				return "", nil, nil, "", false, false, false, fmt.Errorf("-o may only be specified once")
-			}
-			outputSeen = true
-			if i+1 < len(args) && len(args[i+1]) > 0 && (args[i+1] == "-" || args[i+1][0] != '-') {
-				i++
-				outputFile = args[i]
-			} else {
-				return "", nil, nil, "", false, false, false, fmt.Errorf("-o requires an output filename")
-			}
-		case "-p":
-			// -p alone = interactive prompt; -p <value> = explicit password
-			if passwordSeen {
-				return "", nil, nil, "", false, false, false, fmt.Errorf("-p may only be specified once")
-			}
-			passwordSeen = true
-			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
-				i++
-				explicitPassword = []byte(args[i])
-			}
-		default:
-			return "", nil, nil, "", false, false, false, fmt.Errorf("unknown argument: %s", args[i])
-		}
-	}
-
-	// Auto-detect stdin: if no files given and stdin is piped, encrypt from stdin.
-	if len(encryptInputs) == 0 && len(decryptInputs) == 0 {
-		if !term.IsTerminal(int(syscall.Stdin)) {
-			encryptInputs = []string{"-"}
-		} else {
-			return "", nil, nil, "", false, false, false, fmt.Errorf("provide exactly one flag: -e or -d")
-		}
-	}
-	if len(decryptInputs) > 0 && decryptInputs[0] == "-" {
-		return "", nil, nil, "", false, false, false, fmt.Errorf("decrypt from stdin is not supported (seek required for trailer HMAC)")
-	}
-	if len(encryptInputs) > 0 && len(decryptInputs) > 0 {
-		return "", nil, nil, "", false, false, false, fmt.Errorf("provide exactly one flag: -e or -d")
-	}
-
-	op := "encrypt"
-	inputs := encryptInputs
-	if len(decryptInputs) > 0 {
-		op = "decrypt"
-		inputs = decryptInputs
-	}
-
-	// If -p was given without a value, prompt interactively.
-	if passwordSeen && explicitPassword == nil {
-		p, err := resolvePasswordInteractive(op)
-		if err != nil {
-			return "", nil, nil, "", false, false, false, err
-		}
-		explicitPassword = p
-	}
-
-	return op, inputs, explicitPassword, outputFile, quiet, force, atomic, nil
-}
-
-// resolvePasswordInteractive prompts for a password interactively.
-// Encryption: prompt twice and confirm they match.
-// Decryption: prompt once (correctness verified by HMAC later).
-func resolvePasswordInteractive(op string) ([]byte, error) {
-	if op == "encrypt" {
-		for {
-			p1, err := ui.ReadPasswordStarred("Enter password for encryption: ")
-			if err != nil {
-				return nil, err
-			}
-			if len(p1) == 0 {
-				continue
-			}
-			// If not a terminal (piped input), skip confirmation.
-			if !term.IsTerminal(int(syscall.Stdin)) {
-				return p1, nil
-			}
-			p2, err := ui.ReadPasswordStarred("Confirm password: ")
-			if err != nil {
-				crypto.ZeroBytes(p1)
-				return nil, err
-			}
-			// bytes.Equal is NOT constant-time — fine for local confirmation.
-			if bytes.Equal(p1, p2) {
-				crypto.ZeroBytes(p2)
-				return p1, nil
-			}
-			crypto.ZeroBytes(p1)
-			crypto.ZeroBytes(p2)
-			fmt.Fprintln(os.Stderr, "cfo: Passwords do not match.")
-		}
-	}
-	for {
-		p, err := ui.ReadPasswordStarred("Enter password for decryption: ")
-		if err != nil {
-			return nil, err
-		}
-		if len(p) > 0 {
-			return p, nil
-		}
 	}
 }
 

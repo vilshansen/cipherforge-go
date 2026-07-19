@@ -120,28 +120,21 @@ type Argon2Params struct {
 // DefaultArgon2Params returns the production-hardened defaults (5 passes,
 // 256 MiB memory, 4 threads). These are used when decrypting v1 files that
 // carry no embedded parameters.
-//
-// Rationale for 256 MiB (down from 1 GiB in earlier versions):
-//
-// For auto-generated 44-char passwords (~258 bits), the KDF parameters are
-// cryptographically irrelevant — the keyspace is physically unsearchable.
-// For user-supplied passwords, 256 MiB is the threshold that forces even a
-// custom-ASIC attacker into external DRAM (rather than on-die SRAM), which
-// is where Argon2id's memory-hardness imposes real economic cost. Above
-// 256 MiB, returns diminish: 1 GiB quadruples attacker per-core memory cost
-// but also quadruples user wait time. Five passes (up from 4) compensates
-// for the reduced memory by making time-memory tradeoff attacks more
-// expensive, at negligible runtime cost. The result is ~1 s per derivation
-// on modern hardware while keeping brute-force cost above $200K in ASIC
-// silicon even for a weak 8-character password.
 func DefaultArgon2Params() Argon2Params {
-	// Go struct literal: `Argon2Params{Field: value, ...}`.
-	// Like Java: `new Argon2Params(5, 256*1024, 4)` if it had a constructor.
-	// Go has no constructors — use factory functions like this one.
 	return Argon2Params{
 		Time:    5,
 		Memory:  256 * 1024, // 256 MiB in KiB
 		Threads: 4,
+	}
+}
+
+// FastTestParams returns lightweight Argon2id parameters suitable for tests
+// (1 pass, 64 MiB, single-threaded). Never use for production data.
+func FastTestParams() Argon2Params {
+	return Argon2Params{
+		Time:    1,
+		Memory:  64 * 1024,
+		Threads: 1,
 	}
 }
 
@@ -251,34 +244,36 @@ func PayloadOffset(version uint32) int64 {
 func WriteUint64(w io.Writer, v uint64) error {
 	var buf [8]byte
 	binary.BigEndian.PutUint64(buf[:], v)
-	_, err := w.Write(buf[:])
-	return err
+	if _, err := w.Write(buf[:]); err != nil {
+		return fmt.Errorf("write uint64: %w", err)
+	}
+	return nil
 }
 
 // WriteUint32 writes a 32-bit unsigned integer in big-endian byte order.
 func WriteUint32(w io.Writer, v uint32) error {
 	var buf [4]byte
 	binary.BigEndian.PutUint32(buf[:], v)
-	_, err := w.Write(buf[:])
-	return err
+	if _, err := w.Write(buf[:]); err != nil {
+		return fmt.Errorf("write uint32: %w", err)
+	}
+	return nil
 }
 
 // ReadUint64 reads a 64-bit unsigned integer in big-endian byte order.
-// Like Java's DataInputStream.readLong() (which is also big-endian).
 func ReadUint64(r io.Reader) (uint64, error) {
 	var buf [8]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
-		return 0, err // Return zero value on error (caller must check err)
+		return 0, fmt.Errorf("read uint64: %w", err)
 	}
 	return binary.BigEndian.Uint64(buf[:]), nil
 }
 
 // ReadUint32 reads a 32-bit unsigned integer in big-endian byte order.
-// Like Java's DataInputStream.readInt() but unsigned.
 func ReadUint32(r io.Reader) (uint32, error) {
 	var buf [4]byte
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("read uint32: %w", err)
 	}
 	return binary.BigEndian.Uint32(buf[:]), nil
 }
