@@ -101,7 +101,7 @@ func main() {
 	// Security warning: short user-supplied password + multiple files.
 	if cfg.Operation == "encrypt" && cfg.Password != nil && len(cfg.Password) < 20 && len(inputFiles) > 1 {
 		ui.PrintWarning(fmt.Sprintf(
-			"Short password (%d chars) with %d files. The v3 batch optimisation derives\n"+
+			"Short password (%d chars) with %d files. The v4 batch optimisation derives\n"+
 				"                all file keys from one Argon2id run — a weak password puts every\n"+
 				"                output file at risk. Consider a longer password or encrypting\n"+
 				"                files separately with different passwords.",

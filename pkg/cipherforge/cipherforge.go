@@ -128,8 +128,8 @@ func NewEncrypterWithMasterKey(password []byte, masterKey []byte) *Encrypter {
 //
 // File layout produced:
 //
-//	[Header: 64 bytes]
-//	  Magic (8) | Version (4) | Salt (16) | SegmentSeed (24) | Argon2Params (12)
+//	[Header: 65 bytes]
+//	  Magic (9) | Version (4) | Salt (16) | SegmentSeed (24) | Argon2Params (12)
 //	[Payload: variable]
 //	  For each segment:
 //	    [segmentLen: 8 bytes] [ciphertext || Poly1305 tag: variable]
@@ -153,7 +153,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	// Step 2: Key derivation (two-tier for v3).
+	// Step 2: Key derivation (two-tier for v4).
 	//
 	// If a pre-derived master key was provided (batch mode), use it directly.
 	// Otherwise, derive the master key from the password using Argon2id.
@@ -210,7 +210,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	bufOut := bufio.NewWriterSize(w, format.SegmentSize+aead.Overhead()+8)
 	defer bufOut.Flush() // Flush the buffered writer when done (even on error)
 
-	// Step 4: Write the 64-byte v3 header.
+	// Step 4: Write the 65-byte v4 header.
 	if err := writeHeader(bufOut, salt, segmentSeed, e.params); err != nil {
 		return err
 	}
@@ -226,7 +226,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	trailer := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params, format.FileVersion)
+	trailer := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params)
 	crypto.ZeroBytes(macKey)
 	if _, err := bufOut.Write(trailer); err != nil {
 		return err
@@ -235,7 +235,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	return nil
 }
 
-// writeHeader writes the 64-byte v3 .cfo header to w.
+// writeHeader writes the 65-byte v4 .cfo header to w.
 func writeHeader(w io.Writer, salt, segmentSeed []byte, params format.Argon2Params) error {
 	if _, err := w.Write([]byte(format.Magic)); err != nil {
 		return err
@@ -317,8 +317,8 @@ func NewDecrypter(password []byte) *Decrypter {
 //   - progress: func(int64) — optional progress callback (plaintext bytes).
 //
 // Verification order:
-//  1. Read and validate magic signature (8 bytes)
-//  2. Read and validate format version (must be >= 3)
+//  1. Read and validate magic signature (9 bytes)
+//  2. Read and validate format version (must equal v4)
 //  3. Read salt, Segment Seed, and Argon2 parameters from header
 //  4. Validate Argon2 parameters against safety limits
 //  5. Derive master key via Argon2id
@@ -343,22 +343,13 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return fmt.Errorf("not a valid .cfo file")
 	}
 
-	// Step 2: Read and validate version.
+	// Step 2: Read and validate version. v4 is the only supported format.
 	version, err := format.ReadUint32(r)
 	if err != nil {
 		return err
 	}
-
-	// v3 is the minimum supported version. v1 and v2 have different file
-	// layouts (no Argon2 params in the header) and are no longer supported.
-	// Users with v1/v2 files must use Cipherforge 2.1.0 to decrypt and
-	// re-encrypt with v3.
-	if version < 3 {
-		return fmt.Errorf("unsupported file version %d (v3+ required, use v2.1.0 to decrypt v1/v2 files)", version)
-	}
-	// Future-proof: reject versions higher than what this binary understands.
-	if version > format.FileVersion {
-		return fmt.Errorf("file version %d is newer than this binary (v%d)", version, format.FileVersion)
+	if version != format.FileVersion {
+		return fmt.Errorf("unsupported file version %d (v%d required)", version, format.FileVersion)
 	}
 
 	// Step 3: Read the remaining header fields.
@@ -382,11 +373,10 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	// Step 5: Key derivation (two-tier v3).
+	// Step 5: Key derivation (two-tier v4).
 	// Derive the master key from the password using the file's embedded
-	// Argon2id parameters. This ensures backward compatibility: if we change
-	// the default parameters in a future version, old files still decrypt
-	// with their original (possibly different) parameters.
+	// Argon2id parameters. This ensures files remain decryptable if
+	// default parameters change in future versions.
 	masterKey := crypto.DeriveMasterKey(d.password, params)
 	defer crypto.ZeroBytes(masterKey)
 
@@ -434,7 +424,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	// Compute the expected HMAC and compare in constant time.
 	// hmac.Equal is like Java's MessageDigest.isEqual() — no early exit
 	// on first mismatched byte, preventing timing side-channel attacks.
-	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params, version)
+	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
 		crypto.ZeroBytes(macKey)
 		return ErrAuthenticationFailed
@@ -589,40 +579,23 @@ func deriveSegmentNonce(segmentSeed []byte, segmentCounter uint64) ([]byte, erro
 var ErrAuthenticationFailed = fmt.Errorf("authentication failed")
 
 // computeTrailerHMAC computes the HMAC-SHA256 authentication tag for the
-// .cfo file trailer. Different format versions use different context strings
-// to prevent cross-version attacks.
-func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params, version uint32) []byte {
+// .cfo file trailer.
+func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params) []byte {
 	h := hmac.New(sha256.New, macKey)
 
-	ctx := trailerHMACContext(version)
-	h.Write([]byte(ctx))
+	h.Write([]byte(format.TrailerHMACContext))
 	h.Write(salt)
 	h.Write(segmentSeed)
 
-	if version >= 2 {
-		var buf [8]byte
-		binary.BigEndian.PutUint32(buf[0:4], params.Time)
-		binary.BigEndian.PutUint32(buf[4:8], params.Memory)
-		h.Write(buf[:])
-		h.Write([]byte{params.Threads, 0, 0, 0})
-	}
+	var buf [8]byte
+	binary.BigEndian.PutUint32(buf[0:4], params.Time)
+	binary.BigEndian.PutUint32(buf[4:8], params.Memory)
+	h.Write(buf[:])
+	h.Write([]byte{params.Threads, 0, 0, 0})
 
 	var countBuf [8]byte
 	binary.BigEndian.PutUint64(countBuf[:], segmentCount)
 	h.Write(countBuf[:])
 
 	return h.Sum(nil)
-}
-
-// trailerHMACContext returns the domain-separation context string for a
-// given format version.
-func trailerHMACContext(version uint32) string {
-	switch {
-	case version <= 1:
-		return format.TrailerHMACContext
-	case version == 2:
-		return format.TrailerHMACContextV2
-	default:
-		return format.TrailerHMACContextV3
-	}
 }

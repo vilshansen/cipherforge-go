@@ -46,15 +46,15 @@ import (
 // can be assigned to any compatible type. Typed constants (like FileVersion
 // with uint32) restrict usage.
 const (
-	// Magic is the 8-byte file signature: "\xC1PHRF0RG" — "Cipherforge"
+	// Magic is the 9-byte file signature: "\xC1PHRF0RGE" — "Cipherforge"
 	// with a non-ASCII leading byte to avoid false positives.
 	// Go strings can contain arbitrary bytes, including \x00.
-	Magic     = "\xC1\x50\x48\x52\x46\x30\x52\x47"
-	MagicSize = 8
+	Magic     = "\xC1\x50\x48\x52\x46\x30\x52\x47\x45"
+	MagicSize = 9
 
-	// FileVersion is the current format version (v3). Stored as uint32
+	// FileVersion is the current format version (v4). Stored as uint32
 	// big-endian in the file header.
-	FileVersion = uint32(3)
+	FileVersion = uint32(4)
 
 	VersionSize = 4  // uint32 = 4 bytes
 	XNonceSize  = 24 // XChaCha20 nonce = 192 bits
@@ -77,28 +77,20 @@ const (
 	TrailerSize = 8 + HMACSize // segmentCount (8) + HMAC (32) = 40 bytes
 	SegmentSize = 1048576      // 1 MiB (2^20 bytes)
 
-	// HeaderSize is the full v3 header size:
-	//   magic(8) + version(4) + salt(16) + seed(24) + argon2params(12)
-	HeaderSize = MagicSize + VersionSize + SaltSize + XNonceSize + Argon2ParamSize // 64
-
-	// V1HeaderSize is the legacy v1 header size for backward-compatible reads.
-	// v1 had no Argon2Params in the header, so it's 12 bytes shorter.
-	V1HeaderSize = MagicSize + VersionSize + SaltSize + XNonceSize // 52
+	// HeaderSize is the full v4 header size:
+	//   magic(9) + version(4) + salt(16) + seed(24) + argon2params(12)
+	HeaderSize = MagicSize + VersionSize + SaltSize + XNonceSize + Argon2ParamSize // 65
 
 	// HKDF and HMAC context strings for domain separation.
 	// These are ASCII strings used as info/salt parameters in HKDF and as
-	// HMAC message prefixes. Different versions use different context strings
-	// to prevent cross-version attacks (a v2 HMAC cannot validate against a
-	// v3 decoder and vice versa).
+	// HMAC message prefixes.
 	//
 	// Java note: Go strings are UTF-8 encoded and immutable (like Java strings).
 	// Converting a string to []byte allocates a new byte slice.
-	SegmentNonceContext  = "cipherforge-segment-nonce-v1"
-	TrailerHMACContext   = "cipherforge-trailer-hmac-v1"
-	TrailerHMACContextV2 = "cipherforge-trailer-hmac-v2"
-	TrailerHMACContextV3 = "cipherforge-trailer-hmac-v3"
-	MasterKeySalt        = "cipherforge-master-key-v1"
-	FileKeyContext       = "cipherforge-file-key-v1"
+	SegmentNonceContext = "cipherforge-segment-nonce-v1"
+	TrailerHMACContext  = "cipherforge-trailer-hmac-v4"
+	MasterKeySalt       = "cipherforge-master-key-v1"
+	FileKeyContext      = "cipherforge-file-key-v1"
 )
 
 // Argon2Params holds the tunable parameters for the Argon2id KDF.
@@ -215,19 +207,6 @@ func ReadArgon2Params(r io.Reader) (Argon2Params, error) {
 			p.Time, MaxArgon2Time, p.Memory, MaxArgon2Memory)
 	}
 	return p, nil
-}
-
-// PayloadOffset returns the byte offset where the payload starts for a
-// given format version. v1 = 52 bytes, v2/v3 = 64 bytes.
-//
-// Go note: `int64` is an explicit 64-bit signed integer. Go's `int` is
-// platform-dependent (32-bit on 32-bit platforms, 64-bit on 64-bit).
-// Use int64 when you need a specific size, especially for file offsets.
-func PayloadOffset(version uint32) int64 {
-	if version <= 1 {
-		return int64(V1HeaderSize)
-	}
-	return int64(HeaderSize)
 }
 
 // WriteUint64 writes a 64-bit unsigned integer in big-endian byte order.

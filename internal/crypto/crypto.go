@@ -84,8 +84,8 @@ const (
 	XNonceSize = 24 // 192-bit nonce for XChaCha20
 
 	// CharacterPool is the set of unambiguous characters for password generation:
-	// digits 1-9 (no 0), uppercase A-Z minus I/O, lowercase a-z minus l.
-	// 58 characters total; 44 chars × log₂(58) ≈ 257.7 bits ≥ 256-bit strength.
+	// digits 1-9 (no 0), uppercase A-Z minus I/L/O, lowercase a-z minus l.
+	// 57 characters total; 44 chars × log₂(57) ≈ 256.6 bits ≥ 256-bit strength.
 	CharacterPool = "123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 )
 
@@ -151,27 +151,6 @@ func DeriveKeysFromMaster(masterKey, fileSalt []byte) (encKey, macKey []byte) {
 	return splitKeyPair(raw)
 }
 
-// DeriveKey is a convenience wrapper around DeriveKeys for callers that only
-// need the encryption key. The underscore `_` discards the macKey — Go's way
-// of saying "I know this function returns two values; I only want the first."
-func DeriveKey(password, salt []byte, params format.Argon2Params) []byte {
-	encKey, _ := DeriveKeys(password, salt, params)
-	return encKey
-}
-
-// DeriveKeys derives two independent 32-byte keys from a single Argon2id run.
-// This is the legacy v2 approach — one Argon2id call produces 64 bytes split
-// into two keys. v3+ uses the two-tier approach: DeriveMasterKey (one expensive
-// Argon2id call per password) + DeriveKeysFromMaster (fast HKDF per file).
-//
-// Go note: functions with the same name but different parameters are NOT
-// allowed in Go (no method overloading). However, this package exports both
-// DeriveKey (singular) and DeriveKeys (plural) as distinct functions.
-func DeriveKeys(password, salt []byte, params format.Argon2Params) (encKey, macKey []byte) {
-	raw := argon2.IDKey(password, salt, params.Time, params.Memory, params.Threads, 64)
-	return splitKeyPair(raw)
-}
-
 // splitKeyPair splits a 64-byte raw key into two independent 32-byte keys
 // and wipes the intermediate buffer. encKey and macKey are mlock'd.
 func splitKeyPair(raw []byte) (encKey, macKey []byte) {
@@ -187,11 +166,6 @@ func splitKeyPair(raw []byte) (encKey, macKey []byte) {
 
 // GenerateSalt creates a 16-byte random salt for the KDF using crypto/rand.
 func GenerateSalt() ([]byte, error) { return randRead(SaltSize) }
-
-// GenerateNonce creates a random 24-byte (192-bit) nonce using crypto/rand.
-// This is used directly in the legacy v1/v2 path; v3 uses HKDF-derived nonces
-// from the Segment Seed instead.
-func GenerateNonce() ([]byte, error) { return randRead(XNonceSize) }
 
 // randRead reads n cryptographically secure random bytes.
 func randRead(n int) ([]byte, error) {

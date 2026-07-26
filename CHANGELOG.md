@@ -1,5 +1,31 @@
 # Changelog
 
+## v4.0.0 (2026-07-26) — BREAKING CHANGE
+
+### ⚠️ Breaking Changes
+
+**v4 files are not compatible with v3 or earlier.** This release removes all
+backwards compatibility with legacy formats. Only v4 files are accepted for
+decryption. The v4 trailer HMAC uses context string
+`cipherforge-trailer-hmac-v4`. v3 and earlier files must be decrypted with
+Cipherforge 3.3.2 and re-encrypted with v4.
+
+### Removed
+
+- **All v1/v2 backwards compatibility.** `DeriveKeys`, `DeriveKey`,
+  `GenerateNonce` removed from `internal/crypto`. `PayloadOffset`,
+  `V1HeaderSize`, v1/v2 HMAC context strings removed from `internal/format`.
+  `trailerHMACContext` removed from `pkg/cipherforge`.
+- **Version range checks in Decrypt.** Decrypt now accepts only exact
+  version match (v4), not a range from v3 upward.
+
+### Changed
+
+- **File format version bumped to 4.** `FileVersion` = 4.
+- **Magic signature corrected** to 9 bytes (`\xC1PHRF0RGE`), properly
+  encoding "Cipherforge" with the final 'E'.
+- **Trailer HMAC context** changed to `cipherforge-trailer-hmac-v4`.
+
 ## v3.3.2 (2026-07-19)
 
 ### Fixed

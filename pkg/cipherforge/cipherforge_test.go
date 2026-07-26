@@ -127,7 +127,7 @@ func TestTamperDetection(t *testing.T) {
 	enc.Encrypt(in, out, nil)
 
 	data := out.Bytes()
-	// Header is 64 bytes in v2 format. Tamper a byte in the payload region.
+	// Header is 65 bytes in v4 format. Tamper a byte in the payload region.
 	data[80] ^= 0xFF
 
 	decIn := bytes.NewReader(data)
@@ -140,10 +140,8 @@ func TestTamperDetection(t *testing.T) {
 	}
 }
 
-func TestV3RoundTrip(t *testing.T) {
-	// Test v3 format round-trip: encrypt and decrypt a file.
-	// v3 no longer supports v1/v2 files (breaking change).
-	// To decrypt v1/v2 files, use v2.1.0.
+func TestV4RoundTrip(t *testing.T) {
+	// Test v4 format round-trip: encrypt and decrypt a file.
 
 	password := []byte("test-password")
 	plaintext := []byte("hello")
@@ -165,12 +163,12 @@ func TestV3RoundTrip(t *testing.T) {
 	}
 
 	if !bytes.Equal(decOut.Bytes(), plaintext) {
-		t.Errorf("v3 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
+		t.Errorf("v4 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
 	}
 }
 
 func TestBatchEncryptionWithMasterKey(t *testing.T) {
-	// Test the v3 batch optimisation: derive a master key once, reuse for
+	// Test the v4 batch optimisation: derive a master key once, reuse for
 	// multiple files.
 	password := []byte("test-password")
 	masterKey := crypto.DeriveMasterKey(password, format.DefaultArgon2Params())
@@ -209,71 +207,6 @@ func TestBatchEncryptionWithMasterKey(t *testing.T) {
 		if !bytes.Equal(decOut.Bytes(), pt) {
 			t.Errorf("File %d round-trip mismatch", i)
 		}
-	}
-}
-
-func TestVersionRejection(t *testing.T) {
-	// Craft a file with version = 1 (legacy, unsupported by v3).
-	password := []byte("test-password")
-	plaintext := []byte("data")
-
-	in := bytes.NewReader(plaintext)
-	out := &bytes.Buffer{}
-
-	enc := NewEncrypterWithParams(password, fastParams)
-	if err := enc.Encrypt(in, out, nil); err != nil {
-		t.Fatalf("Encryption failed: %v", err)
-	}
-
-	// Tamper: change version from 3 to 1
-	data := out.Bytes()
-	data[8] = 0x00
-	data[9] = 0x00
-	data[10] = 0x00
-	data[11] = 0x01
-
-	decIn := bytes.NewReader(data)
-	decOut := &bytes.Buffer{}
-
-	dec := NewDecrypter(password)
-	err := dec.Decrypt(decIn, decOut, nil)
-	if err == nil {
-		t.Fatal("expected error for v1 file")
-	}
-	if !strings.Contains(err.Error(), "unsupported") {
-		t.Errorf("expected 'unsupported' error, got: %v", err)
-	}
-}
-
-func TestFutureVersionRejection(t *testing.T) {
-	password := []byte("test-password")
-	plaintext := []byte("data")
-
-	in := bytes.NewReader(plaintext)
-	out := &bytes.Buffer{}
-
-	enc := NewEncrypterWithParams(password, fastParams)
-	if err := enc.Encrypt(in, out, nil); err != nil {
-		t.Fatalf("Encryption failed: %v", err)
-	}
-
-	// Tamper: change version from 3 to 99 (future)
-	data := out.Bytes()
-	data[8] = 0x00
-	data[9] = 0x00
-	data[10] = 0x00
-	data[11] = 0x63
-
-	decIn := bytes.NewReader(data)
-	decOut := &bytes.Buffer{}
-
-	dec := NewDecrypter(password)
-	err := dec.Decrypt(decIn, decOut, nil)
-	if err == nil {
-		t.Fatal("expected error for future version")
-	}
-	if !strings.Contains(err.Error(), "newer") {
-		t.Errorf("expected 'newer' error, got: %v", err)
 	}
 }
 

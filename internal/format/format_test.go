@@ -78,38 +78,21 @@ func TestDefaultArgon2Params(t *testing.T) {
 	}
 }
 
-func TestPayloadOffset(t *testing.T) {
-	tests := []struct {
-		version uint32
-		want    int64
-	}{
-		{1, 52},
-		{2, 64},
-		{3, 64}, // unknown future versions use v2 layout
-	}
-	for _, tt := range tests {
-		got := PayloadOffset(tt.version)
-		if got != tt.want {
-			t.Errorf("PayloadOffset(%d) = %d, want %d", tt.version, got, tt.want)
-		}
-	}
-}
-
 func TestConstants(t *testing.T) {
-	if Magic != "\xC1\x50\x48\x52\x46\x30\x52\x47" {
+	if Magic != "\xC1\x50\x48\x52\x46\x30\x52\x47\x45" {
 		t.Errorf("unexpected Magic: %q", Magic)
 	}
-	if MagicSize != 8 {
+	if MagicSize != 9 {
 		t.Errorf("unexpected MagicSize: %d", MagicSize)
 	}
-	if FileVersion != 3 {
-		t.Errorf("FileVersion = %d, want 3", FileVersion)
+	if FileVersion != 4 {
+		t.Errorf("FileVersion = %d, want 4", FileVersion)
 	}
 	if Argon2ParamSize != 12 {
 		t.Errorf("Argon2ParamSize = %d, want 12", Argon2ParamSize)
 	}
-	if HeaderSize != 64 {
-		t.Errorf("HeaderSize = %d, want 64", HeaderSize)
+	if HeaderSize != 65 {
+		t.Errorf("HeaderSize = %d, want 65", HeaderSize)
 	}
 	if MaxArgon2Time != 10 {
 		t.Errorf("MaxArgon2Time = %d, want 10", MaxArgon2Time)

@@ -87,7 +87,7 @@ Options:
   -p [pwd]     Supply a password (optional argument — prompts if omitted).
                Without -p, encryption auto-generates a password and
                decryption prompts interactively.
-  -q, --quiet  Suppress progress bar and summary output
+  -q, --quiet  Suppress all non-error output
   -f, --force  Overwrite output file if it already exists
   -a, --atomic Decrypt to a temp file, rename only on success
                (prevents partial plaintext on disk)
@@ -148,8 +148,9 @@ Enter password for encryption:
 
 Encryption appends `.cfo` to the input filename: `photo.jpg` becomes
 `photo.jpg.cfo`. Decryption strips the `.cfo` suffix to recover the original
-name. If for any reason stripping the suffix would produce an existing
-filename, Cipherforge overwrites the output file without warning.
+name. If the input does not end with `.cfo`, `.dec` is appended instead.
+By default, Cipherforge will not overwrite an existing output file — use
+`-f` / `--force` to override this safety check.
 
 To control the output filename directly, use the `-o` flag (single file only):
 ```bash
@@ -183,22 +184,22 @@ passwords are the leading cause of cryptographic failure in practice. Explicit
 passwords can be supplied with `-p` when scripting or when a user-managed
 password is preferred.
 
-Auto-generated passwords are 44 characters drawn from a 58-character clean pool
-(`1–9`, `A–Z` excluding `I` and `O`, `a–z` excluding `l`) using `crypto/rand`,
+Auto-generated passwords are 44 characters drawn from a 57-character clean pool
+(`1–9`, `A–Z` excluding `I`, `L`, and `O`, `a–z` excluding `l`) using `crypto/rand`,
 Go's interface to the operating system's cryptographically secure random number
-generator. The pool excludes the four glyphs most commonly confused with each
-other (`0`/`O`, `1`/`I`/`l`), making passwords unambiguous to read aloud or
+generator. The pool excludes the five glyphs most commonly confused with each
+other (`0`/`O`, `1`/`I`/`l`/`L`), making passwords unambiguous to read aloud or
 transcribe from paper.
 
-**Why 44 characters?** Each character carries approximately 5.86 bits of entropy
-(log₂ 58 ≈ 5.86). At 44 characters that's ~258 bits of raw entropy, matching
+**Why 44 characters?** Each character carries approximately 5.83 bits of entropy
+(log₂ 57 ≈ 5.83). At 44 characters that's ~257 bits of raw entropy, matching
 the full 256-bit strength of the encryption key. The password is a flat string
 with no separators — every character contributes entropy.
 
 **Rejection sampling** is used during generation to eliminate modulo bias.
 `crypto/rand.Int` draws an unbiased random integer in [0, poolSize), avoiding
-the favouritism toward early pool characters that a naive `byte % 58` would
-introduce. The result is a perfectly uniform distribution across all 58
+the favouritism toward early pool characters that a naive `byte % 57` would
+introduce. The result is a perfectly uniform distribution across all 57
 characters.
 
 ```
@@ -235,7 +236,7 @@ Cipherforge uses hardened parameters:
 | Output    | 32 bytes | Master key |
 
 **Why 256 MiB and 5 passes?** For the default auto-generated 44-character
-passwords (~258 bits of entropy), the keyspace is physically unsearchable —
+passwords (~257 bits of entropy), the keyspace is physically unsearchable —
 the KDF parameters are cryptographically irrelevant. The parameters matter for
 user-supplied passwords. 256 MiB is the threshold where even a custom-ASIC
 attacker must use external DRAM rather than on-die SRAM, which is where
@@ -367,7 +368,7 @@ the file at a segment boundary, or appending extra segments.
 written, a 40-byte trailer is appended:
 
 ```
-[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v3"
+[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v4"
 || salt || segmentSeed || argon2Params || segmentCount): 32 bytes]
 ```
 
@@ -454,8 +455,8 @@ All multi-byte integer values are stored in **big-endian** byte order.
 +-------------------+---------------------+-----------+------------------+
 | Field Name        | Data Type           | Length    | Value            |
 +-------------------+---------------------+-----------+------------------+
-| Magic             | byte array          | 8 bytes   | 0xC1PHRF0RGE     |
-| Version           | uint32 (big-endian) | 4 bytes   | 0x00000003       |
+| Magic             | byte array          | 9 bytes   | 0xC1PHRF0RGE     |
+| Version           | uint32 (big-endian) | 4 bytes   | 0x00000004       |
 | Salt              | byte array          | 16 bytes  | Argon2id Salt    |
 | Segment Seed      | byte array          | 24 bytes  | HKDF IKM         |
 | Argon2 Time       | uint32 (big-endian) | 4 bytes   | KDF passes       |
@@ -480,15 +481,14 @@ All multi-byte integer values are stored in **big-endian** byte order.
 +-------------------+---------------------+-----------+------------------+
 ```
 
-**Header** (64 bytes fixed):
+**Header** (65 bytes fixed):
 - `Magic` (8 bytes): `0xC1 0x50 0x48 0x52 0x46 0x30 0x52 0x47` — allows fast
   rejection of non-`.cfo` files before any key derivation is attempted
-- `Version` (4 bytes): format version, currently `0x00000003`. v1/v2 files
-  use `0x00000001`/`0x00000002` and are no longer supported by v3 binaries.
-- `Salt` (16 bytes): random HKDF salt (v3) / Argon2id salt (v1/v2), unique per file
+- `Version` (4 bytes): format version, currently `0x00000004`
+- `Salt` (16 bytes): random HKDF salt, unique per file
 - `Segment Seed` (24 bytes): random HKDF IKM, unique per file
 - `Argon2 Time` (4 bytes): number of passes over memory
-- `Argon2 Memory` (4 bytes): KiB of RAM for the KDF (1,048,576 = 1 GiB)
+- `Argon2 Memory` (4 bytes): KiB of RAM for the KDF (262,144 = 256 MiB)
 - `Argon2 Threads` (1 byte): degree of parallelism
 - `Reserved` (3 bytes): must be zero, reserved for future use
 
@@ -501,15 +501,15 @@ size is 1,048,576 + 16 bytes (plaintext + AEAD overhead).
 **Trailer** (40 bytes fixed):
 - `Segment Count` (8 bytes): total number of segments written
 - `Trailer HMAC` (32 bytes): version-dependent construction:
-  - v3: `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v3" || salt || segmentSeed || argon2Time || argon2Memory || argon2Threads || zero[3] || segmentCount)`
+  - v4: `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v4" || salt || segmentSeed || argon2Time || argon2Memory || argon2Threads || zero[3] || segmentCount)`
 
 The trailer is always at `EOF - 40`. The decoder seeks to this offset first,
 verifies the HMAC, then performs a single sequential read of the payload.
 
-**Header size**: 8 + 4 + 16 + 24 + 12 = **64 bytes** (v3)  
-**Minimum valid file size**: 64 (header) + 40 (trailer) = **104 bytes**  
+**Header size**: 9 + 4 + 16 + 24 + 12 = **65 bytes** (v4)  
+**Minimum valid file size**: 65 (header) + 40 (trailer) = **105 bytes**  
 **Overhead per segment**: 8 (length) + 16 (tag) = **24 bytes**  
-**File overhead**: 104 bytes + 24 bytes per segment
+**File overhead**: 105 bytes + 24 bytes per segment
 
 ---
 

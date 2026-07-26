@@ -19,11 +19,11 @@ function Show-Usage {
     Write-Host '  -Platforms  Comma-separated list of targets (default: all).'
     Write-Host '              Example: -Platforms linux/amd64,darwin/arm64'
     Write-Host ''
-    Write-Host '  -Version    Overrides the version string (default: 3.3.2).'
+    Write-Host '  -Version    Overrides the version string (default: 4.0.0).'
 }
 
 if (-not $Version) {
-    $Version = '3.3.2'
+    $Version = '4.0.0'
 }
 
 if ($Help) {

@@ -3,7 +3,7 @@
 ## Purpose of This Document
 
 This document is the authoritative specification for the Cipherforge `.cfo`
-binary file format **version 3** (v3). It is written for three audiences: a
+binary file format **version 4** (v4). It is written for three audiences: a
 security reviewer who wants to evaluate whether the cryptographic design is
 sound; a developer who wants to write a compatible decoder without reference to
 the Go source; and a future maintainer who needs to understand why the format
@@ -15,11 +15,9 @@ or authenticity), what an attacker could accomplish if the field were absent
 or modified, and why alternative designs were rejected. Understanding *why*
 the format exists is as important as knowing *what* it contains.
 
-**Note on versions:** v3 is the current and only supported format version as
-of Cipherforge 3.0.0+. v1 and v2 files are no longer supported for decryption
-by the v3 binary; use Cipherforge 2.1.0 to decrypt v1/v2 files and re-encrypt
-them with v3. See [Legacy Formats](#legacy-formats-v1v2) at the end of this
-document for the historical format details.
+**Note on versions:** v4 is the current and only supported format version.
+Earlier formats (v1, v2, v3) are not supported for decryption by the v4
+binary; use Cipherforge 3.3.2 to decrypt v3 files and re-encrypt them with v4.
 
 ---
 
@@ -85,7 +83,7 @@ done. The cost is that decryption requires a seekable input (to jump to the
 end and read the trailer). This is acceptable for file encryption, where
 inputs are always regular files.
 
-The minimum valid file size is **104 bytes**: 64-byte header plus 40-byte
+The minimum valid file size is **105 bytes**: 65-byte header plus 40-byte
 trailer with no payload segments (the result of encrypting an empty file).
 
 ---
@@ -97,15 +95,15 @@ All multi-byte integer fields use **big-endian** byte order throughout.
 ```
 Byte offset   Length    Field
 ───────────   ──────    ─────────────────────────────────────────
-0             8         Magic signature
-8             4         Format version (uint32, = 3)
-12            16        File salt (HKDF salt)
-28            24        Segment Seed (HKDF IKM)
-52            4         Argon2id time (uint32, passes)
-56            4         Argon2id memory (uint32, KiB)
-60            1         Argon2id threads (uint8)
-61            3         Reserved (must be zero)
-64            …         Payload (variable; see below)
+0             9         Magic signature
+9             4         Format version (uint32, = 4)
+13            16        File salt (HKDF salt)
+29            24        Segment Seed (HKDF IKM)
+53            4         Argon2id time (uint32, passes)
+57            4         Argon2id memory (uint32, KiB)
+61            1         Argon2id threads (uint8)
+62            3         Reserved (must be zero)
+65            …         Payload (variable; see below)
 EOF−40        8         Segment count (uint64)
 EOF−32        32        Trailer HMAC-SHA256
 ```
@@ -126,10 +124,10 @@ Segments repeat without gaps or separators until the trailer begins at
 
 ## Header Fields
 
-### Magic (bytes 0–7)
+### Magic (bytes 0–8)
 
-**Value:** the 8-byte sequence `C1 50 48 52 46 30 52 47`, which reads as the
-ASCII characters `\xC1PHRF0RG` — a stylised encoding of "Cipherforge".
+**Value:** the 9-byte sequence `C1 50 48 52 46 30 52 47 45`, which reads as the
+ASCII characters `\xC1PHRF0RGE` — a stylised encoding of "Cipherforge".
 
 **Confidentiality required:** No. The magic is the same in every `.cfo` file
 and is public by design.
@@ -138,7 +136,7 @@ and is public by design.
 decoder rejects the file before doing anything else.
 
 **Why it exists:** Argon2id with production parameters (256 MiB, 5 passes)
-takes several seconds. Checking 8 bytes before attempting key derivation
+takes several seconds. Checking 9 bytes before attempting key derivation
 costs nothing and allows the decoder to immediately reject files that are not
 `.cfo` files — including truncated files, files of the wrong type passed by
 mistake, and simple corruption.
@@ -149,22 +147,21 @@ tampered with, the file is rejected at the parsing stage with a clear error.
 
 ---
 
-### Version (bytes 8–11)
+### Version (bytes 9–12)
 
-**Value:** `00 00 00 03` — the uint32 value 3, encoded big-endian.
+**Value:** `00 00 00 04` — the uint32 value 4, encoded big-endian.
 
 **Confidentiality required:** No.
 
 **Integrity required:** Yes, trivially. Flipping this causes rejection or a
 layout mismatch caught by the trailer HMAC.
 
-**Why it exists:** Enables forward-compatible format detection. v3 decoders
-reject files with `version < 3` (legacy formats) and `version > 3` (future
-formats).
+**Why it exists:** Enables forward-compatible format detection. v4 decoders
+reject files whose version does not equal the expected value exactly.
 
 ---
 
-### File Salt (bytes 12–27)
+### File Salt (bytes 13–28)
 
 **Value:** 16 bytes (128 bits) of uniformly random data produced by
 `crypto/rand` for each file independently.
@@ -173,7 +170,7 @@ formats).
 
 **Integrity required:** Yes. The salt is included in the trailer HMAC.
 
-**What the salt does:** In v3, the salt is used as the **HKDF salt** when
+**What the salt does:** In v4, the salt is used as the **HKDF salt** when
 deriving file-specific keys from the master key (see Key Derivation below).
 Each file gets a unique salt, so two files encrypted with the same password
 produce independent encryption and MAC keys.
@@ -184,7 +181,7 @@ millions of files.
 
 ---
 
-### Segment Seed (bytes 28–51)
+### Segment Seed (bytes 29–52)
 
 **Value:** 24 bytes (192 bits) of uniformly random data produced by
 `crypto/rand` for each file independently.
@@ -224,16 +221,16 @@ a one-way PRF — the seed cannot be recovered from derived nonces.
 
 ---
 
-### Argon2id Parameters (bytes 52–63)
+### Argon2id Parameters (bytes 53–64)
 
 **Value:** 12 bytes encoding three KDF parameters:
 
 | Offset | Length | Field   | Encoding              |
 |--------|--------|---------|-----------------------|
-| 52     | 4      | Time    | uint32 big-endian     |
-| 56     | 4      | Memory  | uint32 big-endian — KiB |
-| 60     | 1      | Threads | uint8                 |
-| 61     | 3      | Reserved| Must be zero          |
+| 53     | 4      | Time    | uint32 big-endian     |
+| 57     | 4      | Memory  | uint32 big-endian — KiB |
+| 61     | 1      | Threads | uint8                 |
+| 62     | 3      | Reserved| Must be zero          |
 
 Production defaults: Time=5, Memory=262,144 KiB (256 MiB), Threads=4.
 
@@ -336,7 +333,7 @@ decryption.
 ```
 HMAC-SHA256(
     key   = macKey,
-    input = "cipherforge-trailer-hmac-v3"
+    input = "cipherforge-trailer-hmac-v4"
           || salt                          (16 bytes)
           || segmentSeed                   (24 bytes)
           || uint32_be(argon2Time)         (4 bytes)
@@ -347,9 +344,8 @@ HMAC-SHA256(
 )
 ```
 
-The v3 context string (`cipherforge-trailer-hmac-v3`) provides domain
-separation from v1 and v2, ensuring a v3 HMAC can never validate against an
-older decoder.
+The v4 context string (`cipherforge-trailer-hmac-v4`) provides domain
+separation from earlier format versions.
 
 **What the HMAC covers and why:**
 
@@ -366,11 +362,11 @@ timing side-channel attacks on the HMAC verification.
 
 ---
 
-## Key Derivation (v3)
+## Key Derivation (v4)
 
 ### Two-Tier Architecture
 
-v3 uses a two-tier key derivation design:
+v4 uses a two-tier key derivation design:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -403,7 +399,7 @@ v3 uses a two-tier key derivation design:
 ```
 
 **Why two tiers:** The memory-hard Argon2id derivation is expensive (~several
-seconds). For batch encryption of N files, the v3 design pays this cost
+seconds). For batch encryption of N files, the v4 design pays this cost
 **once** (for the master key) rather than N times. File-specific keys are
 derived via HKDF, which is extremely fast (~microseconds).
 
@@ -421,7 +417,7 @@ derivations per guess. This is a deliberate trade-off: it makes batch
 encryption dramatically faster, but it also means the attacker's per-guess
 cost is independent of the number of files. **This trade-off is acceptable
 when the password has sufficient entropy** — the auto-generated 44-character
-passwords provide ~258 bits of entropy, making any brute-force attack
+passwords provide ~257 bits of entropy, making any brute-force attack
 infeasible regardless of this optimization.
 
 **Why Argon2id:** Winner of the 2015 Password Hashing Competition, specified
@@ -429,9 +425,9 @@ in RFC 9106. Its memory-hardness directly limits GPU/ASIC brute-force
 parallelism: each guess requires its own 256 MiB allocation, and memory
 bandwidth — not compute — is the bottleneck.
 
-**Why 256 MiB and 5 passes (v3.2+):** Earlier versions used 1 GiB / 4 passes.
+**Why 256 MiB and 5 passes:** Earlier versions used 1 GiB / 4 passes.
 Analysis showed that for the default auto-generated 44-character passwords
-(~258 bits), the KDF parameters are cryptographically irrelevant — the keyspace
+(~257 bits), the KDF parameters are cryptographically irrelevant — the keyspace
 is physically unsearchable regardless of Argon2 settings. For user-supplied
 passwords, the critical threshold is ~256 MiB: below this, an ASIC attacker can
 fit working memory on-die (SRAM), dramatically reducing per-guess cost. At
@@ -455,7 +451,7 @@ cryptographic operations.
 ## Verification Order (Decryption)
 
 ```
-1.  Read and validate magic (8 bytes).
+1.  Read and validate magic (9 bytes).
 2.  Read and validate version (4 bytes) — must be ≥ 3.
 3.  Read file salt (16 bytes).
 4.  Read Segment Seed (24 bytes).
@@ -463,9 +459,9 @@ cryptographic operations.
 6.  Derive masterKey = Argon2id(password, fixedSalt, params).
 7.  Derive encKey, macKey = HKDF-SHA256(masterKey, fileSalt, fileKeyContext).
 8.  Seek to EOF − 40. Read segment count and stored HMAC.
-9.  Compute expected HMAC (v3 construction). Compare with hmac.Equal.
+9.  Compute expected HMAC. Compare with hmac.Equal.
 10. If HMAC fails: return "authentication failed" immediately.
-11. Seek to payload start (byte 64). Decrypt segments sequentially.
+11. Seek to payload start (byte 65). Decrypt segments sequentially.
 ```
 
 Steps 1–5 happen before key derivation because magic/version validation is
@@ -533,25 +529,25 @@ Go-language limitation, not a Cipherforge-specific issue.
 
 ---
 
-## Reference: Decryption Algorithm (v3)
+## Reference: Decryption Algorithm (v4)
 
 ```
 function DecryptCFO(file, password) -> plaintext | error:
 
-  1. Read 8 bytes at offset 0.
-     Assert bytes equal: C1 50 48 52 46 30 52 47
+  1. Read 9 bytes at offset 0.
+     Assert bytes equal: C1 50 48 52 46 30 52 47 45
 
-  2. Read 4 bytes at offset 8 as uint32 big-endian → version.
-     Assert version >= 3
+  2. Read 4 bytes at offset 9 as uint32 big-endian → version.
+     Assert version == 4
 
-  3. Read 16 bytes at offset 12 → fileSalt.
+  3. Read 16 bytes at offset 13 → fileSalt.
 
-  4. Read 24 bytes at offset 28 → segmentSeed.
+  4. Read 24 bytes at offset 29 → segmentSeed.
 
-  5. Read 4 bytes at offset 52 as uint32 big-endian → argon2Time
-     Read 4 bytes at offset 56 as uint32 big-endian → argon2Memory  (KiB)
-     Read 1 byte  at offset 60 as uint8             → argon2Threads
-     Skip 3 bytes at offset 61 (reserved)
+  5. Read 4 bytes at offset 53 as uint32 big-endian → argon2Time
+     Read 4 bytes at offset 57 as uint32 big-endian → argon2Memory  (KiB)
+     Read 1 byte  at offset 61 as uint8             → argon2Threads
+     Skip 3 bytes at offset 62 (reserved)
 
      Assert argon2Time    >= 1 and <= 10
      Assert argon2Memory  >= 1 and <= 16,777,216
@@ -574,7 +570,7 @@ function DecryptCFO(file, password) -> plaintext | error:
   9. Compute expectedHMAC:
        expectedHMAC = HMAC-SHA256(
            key   = macKey,
-           input = "cipherforge-trailer-hmac-v3"
+           input = "cipherforge-trailer-hmac-v4"
                 || fileSalt
                 || segmentSeed
                 || uint32_big_endian(argon2Time)
@@ -584,7 +580,7 @@ function DecryptCFO(file, password) -> plaintext | error:
        )
      Assert hmac_equal(storedHMAC, expectedHMAC)  ← constant-time
 
-  10. Seek to payload start (byte 64).
+  10. Seek to payload start (byte 65).
 
   11. For i in 0 .. segmentCount - 1:
 
@@ -624,33 +620,3 @@ concatenation of the ASCII string and the 8-byte counter. The HMAC input is
 the exact byte concatenation with no separators or length prefixes.
 
 ---
-
-## Legacy Formats (v1/v2)
-
-### v2 (Cipherforge 2.0.x – 2.1.x)
-
-v2 stored the Argon2id parameters in the header (12 bytes at offset 52,
-same layout as v3) but used a **per-file Argon2id salt** — the 16-byte salt
-at offset 12 was the Argon2id salt, not an HKDF salt. Keys were derived as:
-
-```
-raw = Argon2id(password, fileSalt, time, memory, threads, keyLen=64)
-encKey = raw[0:32]
-macKey = raw[32:64]
-```
-
-The v2 trailer HMAC used context string `"cipherforge-trailer-hmac-v2"`.
-Header size: 64 bytes. Minimum file size: 104 bytes. Version field: `0x00000002`.
-
-### v1 (Cipherforge 1.x)
-
-v1 had a 52-byte header (no Argon2id parameters). Decoders used fixed
-production defaults (time=4, memory=1,048,576 KiB, threads=4). The salt
-was the Argon2id salt. Version field: `0x00000001`. Trailer HMAC context:
-`"cipherforge-trailer-hmac-v1"`.
-
-### Migration Path
-
-1. Decrypt v1/v2 `.cfo` files using Cipherforge **v2.1.0**
-2. Re-encrypt the plaintext with Cipherforge **v3.x** (current version)
-3. Safely discard the old `.cfo` files
