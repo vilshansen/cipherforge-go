@@ -1,5 +1,35 @@
 # Changelog
 
+## v4.1.0 (2026-08-01)
+
+### Added
+
+- **Full-screen terminal UI (TUI).** Running `cfo` without flags launches an
+  interactive interface with keyboard-driven navigation. Built on Bubble Tea
+  (pure Go, statically linked, no system dependencies).
+  - Main menu with numbered shortcuts (1–5)
+  - File picker with type-ahead search
+  - Password entry with auto-generate checkbox and clear-text display
+  - Live progress bar with bytes processed, speed, and elapsed time
+  - Results screen with auto-generated password display and clipboard copy
+  - Encrypt/decrypt text mode for copy/paste workflows with base64 output
+  - Wrong password retry without restarting the workflow
+- **Base64 transport wrapper (`-b` / `--base64`).** Encrypt output can be
+  wrapped in RFC 4648 base64 for easy copy/paste. Decrypt accepts base64-
+  encoded `.cfo` data.
+- **Interactive mode flag (`-i` / `--interactive`).** Forces TUI launch even
+  when CLI flags are present.
+- **Clipboard copy shortcuts.** `c` copies auto-generated password, `Shift+c`
+  copies encrypted/decrypted text output.
+
+### Changed
+
+- **Entry point restructured.** `main()` now routes to TUI (`runInteractive`)
+  or CLI (`runCLI`) based on flags and terminal state. No flags + interactive
+  terminal = TUI. Flags present = CLI.
+- **`-e` / `-d` no longer required** when running interactively.
+- **Build version bumped to 4.1.0.**
+
 ## v4.0.0 (2026-07-26) — BREAKING CHANGE
 
 ### ⚠️ Breaking Changes

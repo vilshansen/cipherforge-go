@@ -8,7 +8,7 @@ if [[ "${1:-}" == "--powershell" ]]; then
 fi
 
 GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="${VERSION:-4.0.0}"
+VERSION="${VERSION:-4.1.0}"
 
 SOURCE_FILE="./cmd/cfo/"
 

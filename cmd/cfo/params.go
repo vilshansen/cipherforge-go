@@ -13,13 +13,15 @@ import (
 
 // params holds parsed command-line configuration.
 type params struct {
-	Operation string   // "encrypt" or "decrypt"
-	Inputs    []string // expanded input file paths
-	Password  []byte   // explicit password from -p, or nil
-	Output    string   // -o override, or ""
-	Quiet     bool
-	Force     bool
-	Atomic    bool
+	Operation   string   // "encrypt" or "decrypt"
+	Inputs      []string // expanded input file paths
+	Password    []byte   // explicit password from -p, or nil
+	Output      string   // -o override, or ""
+	Quiet       bool
+	Force       bool
+	Atomic      bool
+	Base64      bool // wrap I/O in base64 transport encoding
+	Interactive bool // launch TUI instead of CLI mode
 }
 
 // getParameters parses command-line arguments.
@@ -43,6 +45,10 @@ func getParameters() (params, error) {
 			p.Force = true
 		case "-a", "--atomic":
 			p.Atomic = true
+		case "-b", "--base64":
+			p.Base64 = true
+		case "-i", "--interactive":
+			p.Interactive = true
 		case "-e":
 			i++
 			for i < len(args) && (args[i] == "-" || args[i][0] != '-') {
@@ -97,7 +103,12 @@ func getParameters() (params, error) {
 		p.Operation = "encrypt"
 		p.Inputs = []string{"-"}
 	default:
-		return params{}, fmt.Errorf("provide exactly one flag: -e or -d")
+		// No flags and interactive terminal: launch TUI.
+		if term.IsTerminal(int(syscall.Stdin)) {
+			p.Interactive = true
+		} else {
+			return params{}, fmt.Errorf("provide exactly one flag: -e or -d")
+		}
 	}
 
 	// Decrypt from stdin is not supported.

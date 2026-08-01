@@ -55,6 +55,27 @@ Properties → Environment Variables.
 
 ## Quick Start
 
+**Launch the terminal UI (no flags):**
+```
+cfo
+```
+Cipherforge opens a full-screen terminal interface with a main menu:
+
+1. Encrypt file
+2. Decrypt file
+3. Encrypt text
+4. Decrypt text
+5. Quit
+
+Navigate with arrow keys or press 1–5 for shortcuts. The TUI guides you
+through file picker, password entry, progress display, and results — all
+with keyboard-driven navigation.
+
+**Encrypt text for copy/paste:**
+Select "Encrypt text" from the menu, type or paste any text, choose a
+password (or auto-generate one), and get base64-encoded output you can
+copy directly to your clipboard with `Shift+C`.
+
 **Encrypt a file:**
 ```
 cfo -e document.pdf
@@ -87,12 +108,14 @@ Options:
   -p [pwd]     Supply a password (optional argument — prompts if omitted).
                Without -p, encryption auto-generates a password and
                decryption prompts interactively.
-  -q, --quiet  Suppress all non-error output
-  -f, --force  Overwrite output file if it already exists
-  -a, --atomic Decrypt to a temp file, rename only on success
-               (prevents partial plaintext on disk)
-  -h, --help     Show help text
-  -v, --version  Show version information
+  -b, --base64      Wrap encrypted output in base64 encoding (encrypt only)
+  -i, --interactive Launch the full-screen terminal UI
+  -q, --quiet       Suppress all non-error output
+  -f, --force       Overwrite output file if it already exists
+  -a, --atomic      Decrypt to a temp file, rename only on success
+                    (prevents partial plaintext on disk)
+  -h, --help        Show help text
+  -v, --version     Show version information
 ```
 
 Only one of `-e` or `-d` may be used at a time. `-p` can be combined with either.
@@ -136,6 +159,12 @@ Encrypt and decrypt with an explicit password:
 ```bash
 cfo -e report.pdf -p mysecret
 cfo -d report.pdf.cfo -p mysecret
+```
+
+Encrypt to base64-encoded output (easy copy/paste):
+```bash
+cfo -e secret.txt --base64
+cfo -d secret.txt.cfo --base64 -o -
 ```
 
 Use interactive password entry (useful when the shell history is a concern):

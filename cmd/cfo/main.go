@@ -27,13 +27,17 @@
 package main
 
 import (
+	"bytes"
+	b64 "encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"github.com/vilshansen/cipherforge-go/internal/format"
+	"github.com/vilshansen/cipherforge-go/internal/tui"
 	"github.com/vilshansen/cipherforge-go/internal/ui"
 	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
 )
@@ -56,9 +60,16 @@ var GitCommit = "none"
 const passwordLength = 44
 
 func main() {
-	if len(os.Args) < 2 {
-		showHelp()
-		os.Exit(1)
+	// Always show help for -h/--help, version for -v/--version.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-h", "--help":
+			showHelp()
+			os.Exit(0)
+		case "-v", "--version":
+			fmt.Printf("cfo %s\n", Version)
+			os.Exit(0)
+		}
 	}
 
 	cfg, err := getParameters()
@@ -67,6 +78,28 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Interactive TUI mode: launch the terminal UI, get config, execute.
+	if cfg.Interactive {
+		runInteractive()
+		return
+	}
+
+	// CLI mode: existing flow.
+	runCLI(cfg)
+}
+
+// runInteractive launches the full-screen TUI. The TUI handles all
+// encryption/decryption work internally with live progress bars.
+// It loops until the user explicitly quits.
+func runInteractive() {
+	if err := tui.Run(Version, GitCommit); err != nil {
+		ui.PrintError(fmt.Sprintf("%v", err))
+		os.Exit(1)
+	}
+}
+
+// runCLI executes the traditional command-line workflow.
+func runCLI(cfg params) {
 	// Expand glob patterns and validate input paths.
 	inputFiles, err := expandInputPaths(cfg.Inputs, cfg.Operation)
 	if err != nil {
@@ -121,7 +154,7 @@ func main() {
 		if outputFile == "" {
 			outputFile = deriveOutputPath(cfg.Operation, inputFile)
 		}
-		if err := processFile(cfg.Operation, inputFile, outputFile, password, masterKey, cfg.Quiet, cfg.Force, cfg.Atomic); err != nil {
+		if err := processFile(cfg.Operation, inputFile, outputFile, password, masterKey, cfg.Quiet, cfg.Force, cfg.Atomic, cfg.Base64); err != nil {
 			ui.PrintError(fmt.Sprintf("Failed to process %s: %v", inputFile, err))
 			hasErrors = true
 		}
@@ -151,7 +184,7 @@ func deriveOutputPath(operation, inputFile string) string {
 
 // processFile dispatches to encryptFile or decryptFile based on the operation.
 // Also performs path validation and checks for existing output files.
-func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force, atomic bool) error {
+func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force, atomic, base64 bool) error {
 	// os.Stat returns (FileInfo, error). If err == nil, the file exists.
 	if outputFile != "-" && !force {
 		if _, err := os.Stat(outputFile); err == nil {
@@ -159,14 +192,16 @@ func processFile(operation, inputFile, outputFile string, password, masterKey []
 		}
 	}
 	if operation == "encrypt" {
-		return encryptFile(inputFile, outputFile, password, masterKey, quiet)
+		return encryptFile(inputFile, outputFile, password, masterKey, quiet, base64)
 	}
-	return decryptFile(inputFile, outputFile, password, quiet, atomic)
+	return decryptFile(inputFile, outputFile, password, quiet, atomic, base64)
 }
 
 // encryptFile handles I/O setup for encryption and delegates to the Encrypter engine.
-// On failure, the output file is automatically removed.
-func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet bool) error {
+// When base64 is true, the output is wrapped in RFC 4648 base64 encoding
+// (no line breaks) for easy copy/paste. On failure, the output file is
+// automatically removed.
+func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet, base64 bool) error {
 	// Open input. os.Stdin is a global *os.File for standard input (like System.in).
 	var in *os.File
 	if inputFile == "-" {
@@ -222,7 +257,24 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 	} else {
 		enc = cipherforge.NewEncrypter(password)
 	}
-	err := enc.Encrypt(in, out, nil) // nil = no progress callback
+
+	// Wrap output with base64 encoder if requested.
+	var writer io.Writer = out
+	var b64Closer io.Closer
+	if base64 {
+		b64w := b64.NewEncoder(b64.StdEncoding, out)
+		writer = b64w
+		b64Closer = b64w
+	}
+
+	err := enc.Encrypt(in, writer, nil) // nil = no progress callback
+
+	// Must close the base64 encoder to flush any remaining bytes.
+	if b64Closer != nil {
+		if closeErr := b64Closer.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}
 
 	if err == nil {
 		succeeded = true
@@ -232,8 +284,11 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 
 // decryptFile handles I/O setup for decryption and delegates to the Decrypter engine.
 // Stdin decryption is NOT supported (requires seekable input for trailer HMAC).
+// Base64 decryption reads the entire input into memory, decodes it, and wraps
+// the result in a seekable bytes.Reader — suitable for copy/paste workflows
+// with reasonably-sized files.
 // Supports atomic mode: decrypt to temp file, rename on success.
-func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic bool) error {
+func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic, base64 bool) error {
 	if inputFile == "-" {
 		return fmt.Errorf("decrypt from stdin is not supported (seek required for trailer HMAC)")
 	}
@@ -243,6 +298,26 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic bo
 		return err
 	}
 	defer in.Close()
+
+	// If base64, read the entire file, decode it into memory, and wrap in a
+	// seekable Reader so the Decrypter can seek to the trailer.
+	var reader io.ReadSeeker
+	if base64 {
+		raw, err := io.ReadAll(in)
+		if err != nil {
+			return fmt.Errorf("reading base64 input: %w", err)
+		}
+		in.Close() // Done with the file; raw data is in memory.
+
+		decoded := make([]byte, b64.StdEncoding.DecodedLen(len(raw)))
+		n, err := b64.StdEncoding.Decode(decoded, raw)
+		if err != nil {
+			return fmt.Errorf("decoding base64 input: %w", err)
+		}
+		reader = bytes.NewReader(decoded[:n])
+	} else {
+		reader = in
+	}
 
 	// Open output — with special handling for atomic mode.
 	// os.CreateTemp is like Java's Files.createTempFile().
@@ -281,7 +356,7 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic bo
 	}
 
 	dec := cipherforge.NewDecrypter(password)
-	err = dec.Decrypt(in, out, nil)
+	err = dec.Decrypt(reader, out, nil)
 
 	if err == nil {
 		succeeded = true
@@ -382,6 +457,8 @@ func showHelp() {
 	fmt.Println("  -o <file>         Output filename (use - for stdout)")
 	fmt.Println("  -p [pwd]          Supply a password. Without -p, encryption auto-generates one;")
 	fmt.Println("                    decryption prompts interactively")
+	fmt.Println("  -b, --base64      Wrap encrypted output in base64 encoding (encrypt only)")
+	fmt.Println("  -i, --interactive Launch the full-screen terminal UI")
 	fmt.Println("  -q, --quiet       Suppress all non-error output")
 	fmt.Println("  -f, --force       Overwrite output file if it already exists")
 	fmt.Println("  -a, --atomic      Decrypt to a temp file, rename only on success")
@@ -394,8 +471,10 @@ func showHelp() {
 	fmt.Println("  cfo -d document.pdf.cfo            Decrypt (prompts for password)")
 	fmt.Println("  cfo -d *.cfo -p mysecret           Decrypt all .cfo files")
 	fmt.Println("  cfo -e backup.tar -o archive.cfo   Encrypt to a custom output name")
+	fmt.Println("  cfo -e secret.txt --base64         Encrypt to base64-encoded .cfo output")
 	fmt.Println("  echo 'Hello' | cfo -e -o out.cfo   Encrypt from stdin")
 	fmt.Println("  cfo -d file.cfo -o -               Decrypt to stdout")
+	fmt.Println("  cfo                                 Launch the terminal UI (no flags)")
 
 	fmt.Println("\nNotes:")
 	fmt.Println("  The auto-generated password is 44 characters — shown once, cannot be recovered.")
