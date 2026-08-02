@@ -6,3 +6,9 @@ test.txt
 lipsum.txt
 *.cfo
 *.bin
+
+cfo
+cfo.exe
+dist/
+*.test
+
