@@ -155,7 +155,7 @@ func (m *FilePickerModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("↑/↓: navigate  •  type to search  •  enter: open  •  backspace: up  •  esc: back  •  q: quit"))
+	b.WriteString(helpStyle.Render("↑/↓: navigate  •  type to search  •  enter: open  •  backspace: up  •  esc: back"))
 
 	return b.String()
 }

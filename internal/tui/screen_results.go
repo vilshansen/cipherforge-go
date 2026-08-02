@@ -128,7 +128,7 @@ func (m ResultsModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("enter/esc: return to main menu  •  q: quit"))
+	b.WriteString(helpStyle.Render("enter/esc: return to main menu"))
 
 	return b.String()
 }

@@ -108,9 +108,9 @@ func (m PasswordModel) View() string {
 
 	b.WriteString("\n")
 	if m.isCheckboxFocus() {
-		b.WriteString(helpStyle.Render("space/enter: toggle  •  ↑/↓ tab: next  •  esc: back  •  q: quit"))
+		b.WriteString(helpStyle.Render("space/enter: toggle  •  ↑/↓ tab: next  •  esc: back"))
 	} else {
-		b.WriteString(helpStyle.Render("enter: confirm  •  ↑/↓ tab: next  •  esc: back  •  q: quit"))
+		b.WriteString(helpStyle.Render("enter: confirm  •  ↑/↓ tab: next  •  esc: back"))
 	}
 
 	return b.String()

@@ -54,7 +54,7 @@ func (m TextInputModel) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(textAreaStyle.Render(m.area.View()))
 	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render("ctrl+s: confirm  •  esc: back  •  q: quit"))
+	b.WriteString(helpStyle.Render("ctrl+s: confirm  •  esc: back"))
 
 	return b.String()
 }
