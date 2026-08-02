@@ -114,23 +114,27 @@ func (m Model) selectMenuOption() (tea.Model, tea.Cmd) {
 	case 0: // Encrypt file
 		m.operation = "encrypt"
 		m.filePicker = NewFilePickerModel(false)
+		m.filePicker.SetSize(m.width, m.height)
 		m.screen = ScreenFilePicker
 		return m, m.filePicker.Init()
 	case 1: // Decrypt file
 		m.operation = "decrypt"
 		m.filePicker = NewFilePickerModel(true)
+		m.filePicker.SetSize(m.width, m.height)
 		m.screen = ScreenFilePicker
 		return m, m.filePicker.Init()
 	case 2: // Encrypt text
 		m.operation = "encrypt"
 		m.textMode = true
 		m.textInput = NewTextInputModel("Enter text to encrypt:")
+		m.textInput.SetSize(m.width, m.height)
 		m.screen = ScreenTextInput
 		return m, m.textInput.Init()
 	case 3: // Decrypt text
 		m.operation = "decrypt"
 		m.textMode = true
 		m.textInput = NewTextInputModel("Paste base64-encoded ciphertext:")
+		m.textInput.SetSize(m.width, m.height)
 		m.screen = ScreenTextInput
 		return m, m.textInput.Init()
 	case 4: // Quit

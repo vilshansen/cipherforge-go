@@ -21,6 +21,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -216,26 +217,35 @@ func (m Model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the current screen.
 func (m Model) View() string {
+	var content string
 	if m.err != nil {
-		return errorStyle.Render(fmt.Sprintf("Error: %s\n\nPress any key to continue...", m.err.Error()))
+		content = errorStyle.Render(fmt.Sprintf("Error: %s\n\nPress any key to continue...", m.err.Error()))
+	} else {
+		switch m.screen {
+		case ScreenMainMenu:
+			content = m.mainMenu.View()
+		case ScreenFilePicker:
+			content = m.filePicker.View()
+		case ScreenTextInput:
+			content = m.textInput.View()
+		case ScreenPassword:
+			content = m.passwordEntry.View()
+		case ScreenProgress:
+			content = m.progress.View()
+		case ScreenResults:
+			content = m.results.View()
+		default:
+			content = "Unknown screen"
+		}
 	}
-
-	switch m.screen {
-	case ScreenMainMenu:
-		return m.mainMenu.View()
-	case ScreenFilePicker:
-		return m.filePicker.View()
-	case ScreenTextInput:
-		return m.textInput.View()
-	case ScreenPassword:
-		return m.passwordEntry.View()
-	case ScreenProgress:
-		return m.progress.View()
-	case ScreenResults:
-		return m.results.View()
-	default:
-		return "Unknown screen"
+	// Pad to fill the terminal height.
+	if m.height > 0 {
+		n := m.height - strings.Count(content, "\n") - 1
+		if n > 0 {
+			content += strings.Repeat("\n", n)
+		}
 	}
+	return content
 }
 
 // showError temporarily displays an error message, then returns to prevScreen.
