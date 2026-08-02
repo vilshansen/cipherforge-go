@@ -260,6 +260,7 @@ func (m Model) handleProgressTick(msg progressTickMsg) (tea.Model, tea.Cmd) {
 			return m, m.passwordEntry.Init()
 		}
 		m.results = buildResults(m.operation, m.inputFile, m.outputFile, msg.err, m.genPassword, m.outputText, m.textMode)
+		m.results.SetSize(m.width, m.height)
 		m.screen = ScreenResults
 		return m, nil
 	}
@@ -268,6 +269,7 @@ func (m Model) handleProgressTick(msg progressTickMsg) (tea.Model, tea.Cmd) {
 			m.outputText = msg.result
 		}
 		m.results = buildResults(m.operation, m.inputFile, m.outputFile, nil, m.genPassword, m.outputText, m.textMode)
+		m.results.SetSize(m.width, m.height)
 		m.screen = ScreenResults
 		return m, nil
 	}

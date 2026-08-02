@@ -80,10 +80,20 @@ func (m ResultsModel) View() string {
 			}
 			b.WriteString(pwdLabelStyle.Render(label))
 			b.WriteString("\n\n")
+
+			text := m.outputText
+			if m.operation == "encrypt" {
+				text = wrap64(text)
+			}
+			// Truncate long output so the heading stays on screen.
+			if len(text) > 1000 {
+				text = text[:1000] + " [...]"
+			}
+
 			if m.operation == "decrypt" {
-				b.WriteString(outBoxStyle.Render(m.outputText))
+				b.WriteString(outBoxStyle.Render(text))
 			} else {
-				b.WriteString(pwdBoxStyle.Render(wrap64(m.outputText)))
+				b.WriteString(pwdBoxStyle.Render(text))
 			}
 			b.WriteString("\n\n")
 			if m.copiedOut {
@@ -105,7 +115,7 @@ func (m ResultsModel) View() string {
 
 	if m.success && m.genPassword != "" {
 		b.WriteString("\n")
-		b.WriteString(pwdLabelStyle.Render("Auto-generated password (save this!):"))
+		b.WriteString(pwdLabelStyle.Render("Auto-generated password (save this, plaintext is unrecoverable without it):"))
 		b.WriteString("\n\n")
 		b.WriteString(pwdBoxStyle.Render(m.genPassword))
 		b.WriteString("\n\n")

@@ -117,7 +117,7 @@ try {
         $env:GOOS = $targetOs
         $env:GOARCH = $targetArch
         Write-Host "Building $platform -> $outputFile"
-        & go build -ldflags=$ldflags -o $outputFile ./cmd/cfo/
+        & go build -ldflags "$ldflags" -o $outputFile ./cmd/cfo/
         if ($LASTEXITCODE -ne 0) {
             throw "Build failed for $platform"
         }
