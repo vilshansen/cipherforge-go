@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bufio"
 	"bytes"
 	b64 "encoding/base64"
 	"fmt"
@@ -143,10 +144,11 @@ func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 		}
 	}()
 
-	var writer io.Writer = out
+	var writer io.Writer = bufio.NewWriterSize(out, 1024*1024)
+	bufWriter := writer.(*bufio.Writer)
 	var b64Closer io.Closer
 	if base64 {
-		b64w := b64.NewEncoder(b64.StdEncoding, out)
+		b64w := b64.NewEncoder(b64.StdEncoding, writer)
 		writer = b64w
 		b64Closer = b64w
 	}
@@ -160,6 +162,9 @@ func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 		if closeErr := b64Closer.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
+	}
+	if flushErr := bufWriter.Flush(); flushErr != nil && err == nil {
+		err = flushErr
 	}
 
 	if err == nil {

@@ -270,7 +270,7 @@ func (m Model) confirmPassword() (tea.Model, tea.Cmd) {
 	m.progress = NewProgressModel(m.operation, m.inputFile, m.outputFile)
 	m.screen = ScreenProgress
 
-	ch := make(chan progressTickMsg)
+	ch := make(chan progressTickMsg, 256)
 	m.progressCh = ch
 	go runOperation(m, ch)
 
