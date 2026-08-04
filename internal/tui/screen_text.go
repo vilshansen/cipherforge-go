@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-var textAreaStyle = lipgloss.NewStyle().MarginLeft(4)
+var textAreaStyle = lipgloss.NewStyle()
 
 // TextInputModel lets the user type or paste multi-line text.
 type TextInputModel struct {

@@ -49,14 +49,12 @@ var (
 	failStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
 	pwdBoxStyle  = lipgloss.NewStyle().
 			Padding(0, 2).
-			MarginLeft(4).
 			Width(74)
 	outBoxStyle = lipgloss.NewStyle().
-			Padding(0, 2).
-			MarginLeft(4)
-	pwdLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("226")).MarginLeft(4)
-	copiedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).MarginLeft(4)
-	hintIndent    = lipgloss.NewStyle().Foreground(lipgloss.Color("243")).MarginLeft(4)
+			Padding(0, 2)
+	pwdLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("226"))
+	copiedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	hintIndent    = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
 )
 
 func (m ResultsModel) View() string {

@@ -97,22 +97,18 @@ var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("63")).
-			MarginBottom(1).
-			MarginLeft(4)
+			MarginBottom(1)
 
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("241")).
-			MarginTop(1).
-			MarginLeft(4)
+			MarginTop(1)
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("196")).
-			Bold(true).
-			MarginLeft(4)
+			Bold(true)
 
 	subtleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243")).
-			MarginLeft(4)
+			Foreground(lipgloss.Color("243"))
 )
 
 // Run launches the full-screen TUI. It loops until the user quits.
@@ -244,6 +240,11 @@ func (m Model) View() string {
 		if n > 0 {
 			content += strings.Repeat("\n", n)
 		}
+	}
+	// Center the block with a straight left margin.
+	if m.width > 74 {
+		margin := (m.width - 74) / 2
+		content = lipgloss.NewStyle().MarginLeft(margin).Render(content)
 	}
 	return content
 }
