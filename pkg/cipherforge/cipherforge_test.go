@@ -2,6 +2,7 @@ package cipherforge
 
 import (
 	"bytes"
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -610,5 +611,38 @@ func TestCorruptSegmentLength(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "corrupt segment") {
 		t.Errorf("expected 'corrupt segment', got: %v", err)
+	}
+}
+
+func TestBase64RoundTrip(t *testing.T) {
+	password := []byte("test-password")
+	plaintext := []byte("Hello, Cipherforge base64!")
+
+	// Encrypt to binary, then base64-encode.
+	in := bytes.NewReader(plaintext)
+	binaryOut := &bytes.Buffer{}
+	enc := NewEncrypterWithParams(password, fastParams)
+	if err := enc.Encrypt(in, binaryOut, nil); err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+
+	// Base64-encode the binary output.
+	b64Encoded := base64.StdEncoding.EncodeToString(binaryOut.Bytes())
+
+	// Base64-decode, then decrypt.
+	decoded, err := base64.StdEncoding.DecodeString(b64Encoded)
+	if err != nil {
+		t.Fatalf("base64 decode: %v", err)
+	}
+
+	decIn := bytes.NewReader(decoded)
+	decOut := &bytes.Buffer{}
+	dec := NewDecrypter(password)
+	if err := dec.Decrypt(decIn, decOut, nil); err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+
+	if !bytes.Equal(decOut.Bytes(), plaintext) {
+		t.Errorf("base64 round-trip: got %q, want %q", decOut.Bytes(), plaintext)
 	}
 }
