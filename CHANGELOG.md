@@ -1,5 +1,38 @@
 # Changelog
 
+## v4.1.2 (2026-08-04)
+
+### Added
+
+- **Architecture documentation (`ARCHITECTURE.MD`).** Comprehensive reference
+  covering directory layout, layered architecture, data flow diagrams,
+  cryptographic design rationale, TUI screen flow, and dependency
+  justification.
+
+## v4.1.1 (2026-08-02)
+
+### Added
+
+- **TUI unit tests (`internal/tui/tui_test.go`).** Tests for `wrap64`,
+  `buildResults`, and `deriveOutputPath`.
+- **Base64 round-trip test in `pkg/cipherforge`.** Full encrypt → base64 →
+  decode → decrypt cycle.
+
+### Changed
+
+- **Dropped ~70 lines of Java tutorial comments** from `internal/crypto/crypto.go`.
+  Kept memory security caveat and `KeepAlive` explanation.
+- **Corrected character count comment** from 58 to 57 in the character pool.
+
+### Fixed
+
+- **Base64 encrypt performance.** Added `bufio.Writer` with 1 MB buffer;
+  throughput improved from ~1 MB/s to expected speed.
+- **Decrypt failure now allows retry.** Wrong password redirects back to the
+  password screen instead of exiting to the main menu.
+- **Text output truncation on results screen.** Long encrypted/decrypted text
+  now truncated at 100 characters with a copy hint.
+
 ## v4.1.0 (2026-08-01)
 
 ### Added

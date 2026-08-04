@@ -23,7 +23,7 @@ function Show-Usage {
 }
 
 if (-not $Version) {
-    $Version = '4.1.1'
+    $Version = '4.1.2'
 }
 
 if ($Help) {
