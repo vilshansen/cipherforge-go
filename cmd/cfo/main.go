@@ -56,7 +56,7 @@ var GitCommit = "none"
 // passwords. Digits 1-9 (no 0 — confused with O), uppercase A-Z without I/O,
 // lowercase a-z without l. 58 characters total.
 //
-// 44 chars × log₂(58) ≈ 257.7 bits ≥ 256-bit key strength.
+// 44 chars × log₂(57) ≈ 257.7 bits ≥ 256-bit key strength.
 const passwordLength = 44
 
 func main() {

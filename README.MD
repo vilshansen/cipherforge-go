@@ -181,6 +181,25 @@ name. If the input does not end with `.cfo`, `.dec` is appended instead.
 By default, Cipherforge will not overwrite an existing output file — use
 `-f` / `--force` to override this safety check.
 
+### TUI Keyboard Reference
+
+| Key | Context | Action |
+|---|---|---|
+| `↑` `↓` / `j` `k` | Menus, lists | Navigate |
+| `1`–`5` | Main menu | Jump to option |
+| `Enter` | Menus, checkboxes | Select / toggle |
+| `Space` | Checkboxes | Toggle |
+| `Tab` / `Shift+Tab` | Password screen | Cycle fields |
+| `Esc` | Sub-screens | Go back |
+| `q` | Main menu, progress | Quit |
+| `Ctrl+C` | Any screen | Force quit |
+| `c` | Results screen | Copy password to clipboard |
+| `Shift+C` | Results screen | Copy encrypted/decrypted text |
+| `r` | Password screen (generate active) | Regenerate password |
+| `Ctrl+S` | Text input | Confirm and proceed |
+| Type characters | File picker | Type-ahead search |
+| `Backspace` | File picker | Go up one directory |
+
 To control the output filename directly, use the `-o` flag (single file only):
 ```bash
 cfo -e backup.tar -o archive.cfo
