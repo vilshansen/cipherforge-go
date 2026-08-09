@@ -51,11 +51,11 @@ A `.cfo` file consists of three contiguous regions:
 
 ```
 ╔══════════════════════════════╗
-║    HEADER (64 B)             ║  Fixed size. Written first.
+║    HEADER (65 B)             ║  Fixed size. Written first.
 ╠══════════════════════════════╣
 ║    PAYLOAD (variable)        ║  One or more encrypted segments.
 ╠══════════════════════════════╣
-║    TRAILER (40 B)            ║  Fixed size. Written last.
+║    TRAILER (72 B)            ║  Fixed size. Written last.
 ╚══════════════════════════════╝
 ```
 
@@ -83,7 +83,7 @@ done. The cost is that decryption requires a seekable input (to jump to the
 end and read the trailer). This is acceptable for file encryption, where
 inputs are always regular files.
 
-The minimum valid file size is **105 bytes**: 65-byte header plus 40-byte
+The minimum valid file size is **137 bytes**: 65-byte header plus 72-byte
 trailer with no payload segments (the result of encrypting an empty file).
 
 ---
@@ -96,7 +96,7 @@ All multi-byte integer fields use **big-endian** byte order throughout.
 Byte offset   Length    Field
 ───────────   ──────    ─────────────────────────────────────────
 0             9         Magic signature
-9             4         Format version (uint32, = 4)
+9             4         Format version (uint32, = 5)
 13            16        File salt (HKDF salt)
 29            24        Segment Seed (HKDF IKM)
 53            4         Argon2id time (uint32, passes)
@@ -104,8 +104,9 @@ Byte offset   Length    Field
 61            1         Argon2id threads (uint8)
 62            3         Reserved (must be zero)
 65            …         Payload (variable; see below)
-EOF−40        8         Segment count (uint64)
-EOF−32        32        Trailer HMAC-SHA256
+EOF−72        8         Segment count (uint64)
+EOF−64        32        Trailer HMAC-SHA256
+EOF−32        32        Key-commitment tag (HMAC-SHA256)
 ```
 
 Within the payload, each segment has this structure:
@@ -118,7 +119,7 @@ Byte offset   Length           Field
 ```
 
 Segments repeat without gaps or separators until the trailer begins at
-`EOF − 40`.
+`EOF − 72`.
 
 ---
 
@@ -149,7 +150,7 @@ tampered with, the file is rejected at the parsing stage with a clear error.
 
 ### Version (bytes 9–12)
 
-**Value:** `00 00 00 04` — the uint32 value 4, encoded big-endian.
+**Value:** `00 00 00 05` — the uint32 value 5, encoded big-endian.
 
 **Confidentiality required:** No.
 
@@ -313,9 +314,9 @@ it from the loop counter and the measured plaintext length.
 
 ## Trailer
 
-The trailer is the last 40 bytes of the file.
+The trailer is the last 72 bytes of the file.
 
-### Segment Count (EOF−40 to EOF−33)
+### Segment Count (EOF−72 to EOF−65)
 
 **Value:** uint64, big-endian. The total number of segment frames in the
 payload.
@@ -326,14 +327,14 @@ payload.
 HMAC. Any modification invalidates the HMAC, which is verified before any
 decryption.
 
-### Trailer HMAC (EOF−32 to EOF−1)
+### Trailer HMAC (EOF−64 to EOF−33)
 
 **Value:** 32 bytes. HMAC-SHA256 computed as:
 
 ```
 HMAC-SHA256(
     key   = macKey,
-    input = "cipherforge-trailer-hmac-v4"
+    input = "cipherforge-trailer-hmac-v5"
           || salt                          (16 bytes)
           || segmentSeed                   (24 bytes)
           || uint32_be(argon2Time)         (4 bytes)
@@ -357,8 +358,27 @@ separation from earlier format versions.
 | `argon2Time`, `argon2Memory`, `argon2Threads` | Detects KDF parameter downgrade attacks |
 | `segmentCount` | Detects file truncation and segment appending |
 
+### Key-Commitment Tag (EOF−32 to EOF−1)
+
+**Value:** 32 bytes. HMAC-SHA256 computed as:
+
+```
+HMAC-SHA256(
+    key     = encKey,
+    message = "cipherforge-commitment-v1"
+           || fileSalt                         (16 bytes)
+)
+```
+
+This tag proves that the file was encrypted with a specific `encKey`.
+An attacker who wants a file to decrypt under two different passwords
+would need to find a collision in HMAC-SHA256 with different keys on
+the same message — a 2¹²⁸ work factor. The full 32-byte output is used
+(no truncation) to maintain 128-bit post-quantum collision resistance
+under Grover's algorithm.
+
 **Verification uses `hmac.Equal`** — a constant-time comparison that prevents
-timing side-channel attacks on the HMAC verification.
+timing side-channel attacks.
 
 ---
 
@@ -452,23 +472,25 @@ cryptographic operations.
 
 ```
 1.  Read and validate magic (9 bytes).
-2.  Read and validate version (4 bytes) — must be ≥ 3.
+2.  Read and validate version (4 bytes) — must equal 5.
 3.  Read file salt (16 bytes).
 4.  Read Segment Seed (24 bytes).
 5.  Read Argon2id parameters (12 bytes), validate against safety limits.
 6.  Derive masterKey = Argon2id(password, fixedSalt, params).
 7.  Derive encKey, macKey = HKDF-SHA256(masterKey, fileSalt, fileKeyContext).
-8.  Seek to EOF − 40. Read segment count and stored HMAC.
+8.  Seek to EOF − 72. Read segment count, stored HMAC, and
+    key-commitment tag.
 9.  Compute expected HMAC. Compare with hmac.Equal.
-10. If HMAC fails: return "authentication failed" immediately.
-11. Seek to payload start (byte 65). Decrypt segments sequentially.
+10. Compute expected key-commitment tag. Compare with hmac.Equal.
+11. If either check fails: return error immediately.
+12. Seek to payload start (byte 65). Decrypt segments sequentially.
 ```
 
 Steps 1–5 happen before key derivation because magic/version validation is
 cheap — no point spending several seconds on Argon2id if the file is
-obviously not a `.cfo` file. Step 8 catches wrong passwords, corrupt files,
-truncated files, appended files, and header substitution — all before any
-plaintext is written to disk.
+obviously not a `.cfo` file. Steps 8–10 catch wrong passwords, corrupt files,
+truncated files, appended files, header substitution, and key-commitment
+attacks — all before any plaintext is written to disk.
 
 ---
 
@@ -523,9 +545,9 @@ Go-language limitation, not a Cipherforge-specific issue.
   one segment (1 MiB).
 - **Access patterns or usage timing.** The format makes no guarantees about
   when or how often a file is decrypted.
-- **Key commitment.** XChaCha20-Poly1305 does not provide key commitment.
-  In a contrived scenario, a computationally powerful attacker could craft a
-  ciphertext that decrypts under two different keys.
+- **Key commitment.** The key-commitment tag prevents an attacker from
+  crafting a ciphertext that decrypts under two different keys (see
+  Key-Commitment Tag above).
 
 ---
 
