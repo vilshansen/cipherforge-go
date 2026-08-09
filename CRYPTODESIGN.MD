@@ -322,7 +322,7 @@ vice versa — they are computationally independent.
 
 ## Two-Tier Key Architecture
 
-Cipherforge v4 uses a two-tier key derivation design that separates the
+Cipherforge uses a two-tier key derivation design that separates the
 expensive memory-hard KDF from the cheap per-file key derivation:
 
 ```
@@ -487,13 +487,13 @@ These are protected by the file-level HMAC.
 
 ### File-Level Trailer HMAC
 
-The trailer (last 40 bytes of the file) contains an 8-byte segment count and
-a 32-byte HMAC-SHA256 tag computed over all header fields:
+The trailer (last 72 bytes of the file) contains an 8-byte segment count,
+a 32-byte HMAC-SHA256 tag, and a 32-byte key-commitment tag:
 
 ```
 HMAC-SHA256(
     key   = macKey,
-    input = "cipherforge-trailer-hmac-v4"   // domain separation
+    input = "cipherforge-trailer-hmac-v5"   // domain separation
          || fileSalt         (16 bytes)
          || segmentSeed      (24 bytes)
          || uint32_be(time)  (4 bytes)
@@ -516,7 +516,7 @@ any segment is decrypted. The decryption algorithm:
 
 1. Read header (magic, version, salt, seed, KDF params) — cheap, no crypto
 2. Derive keys from password + header fields — expensive (~1 second)
-3. Seek to EOF−40, read trailer HMAC
+3. Seek to EOF−72, read trailer (segment count, HMAC, key-commitment tag)
 4. Compute expected HMAC and compare in constant time (`hmac.Equal`)
 5. **Only if HMAC matches:** seek back to payload and decrypt segments
 
