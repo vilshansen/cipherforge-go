@@ -1,5 +1,16 @@
 # Changelog
 
+## v5.0.1 (2026-08-09)
+
+### Fixed
+
+- **Documentation corrected throughout.** Removed stale v4 references from
+  FILEFORMAT.MD, CRYPTODESIGN.MD, ARCHITECTURE.MD, and README.MD. All
+  documents now consistently describe the v5-only format: 72-byte trailer,
+  137-byte minimum file size, `cipherforge-trailer-hmac-v5` HMAC context,
+  and key commitment in the "Protected" list. The pseudocode decryption
+  algorithm includes the key-commitment verification step.
+
 ## v5.0.0 (2026-08-09)
 
 ### Changed
