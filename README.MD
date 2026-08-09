@@ -447,8 +447,8 @@ the file at a segment boundary, or appending extra segments.
 written, a 40-byte trailer is appended:
 
 ```
-[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v4"
-|| salt || segmentSeed || argon2Params || segmentCount): 32 bytes]
+[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v5"
+|| salt || segmentSeed || argon2Params || segmentCount): 32 bytes]\n[Key-Commitment Tag: 32 bytes]  HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
 ```
 
 The HMAC commits to the salt, the Segment Seed, and the total segment count
@@ -577,18 +577,19 @@ ciphertext and its 16-byte Poly1305 tag. The length field records the combined
 size of ciphertext and tag, not the plaintext size. Maximum segment ciphertext
 size is 1,048,576 + 16 bytes (plaintext + AEAD overhead).
 
-**Trailer** (40 bytes fixed):
+**Trailer** (72 bytes fixed):
 - `Segment Count` (8 bytes): total number of segments written
-- `Trailer HMAC` (32 bytes): version-dependent construction:
-  - v4: `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v4" || salt || segmentSeed || argon2Time || argon2Memory || argon2Threads || zero[3] || segmentCount)`
+- `Trailer HMAC` (32 bytes): `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v5" || salt || segmentSeed || argon2Time || argon2Memory || argon2Threads || zero[3] || segmentCount)`
+- `Key-Commitment Tag` (32 bytes): `HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)`
 
-The trailer is always at `EOF - 40`. The decoder seeks to this offset first,
-verifies the HMAC, then performs a single sequential read of the payload.
+The trailer is always at `EOF - 72`. The decoder seeks to this offset first,
+verifies the HMAC and key-commitment tag, then performs a single sequential
+read of the payload.
 
-**Header size**: 9 + 4 + 16 + 24 + 12 = **65 bytes** (v4)  
-**Minimum valid file size**: 65 (header) + 40 (trailer) = **105 bytes**  
+**Header size**: 9 + 4 + 16 + 24 + 12 = **65 bytes** (v5)  
+**Minimum valid file size**: 65 (header) + 72 (trailer) = **137 bytes**  
 **Overhead per segment**: 8 (length) + 16 (tag) = **24 bytes**  
-**File overhead**: 105 bytes + 24 bytes per segment
+**File overhead**: 137 bytes + 24 bytes per segment
 
 ---
 

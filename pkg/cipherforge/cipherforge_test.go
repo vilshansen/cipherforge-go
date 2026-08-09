@@ -3,13 +3,11 @@ package cipherforge
 import (
 	"bytes"
 	"encoding/base64"
-	"io"
 	"strings"
 	"testing"
 
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"github.com/vilshansen/cipherforge-go/internal/format"
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // fastParams are lightweight Argon2id parameters to keep tests fast.
@@ -130,7 +128,7 @@ func TestTamperDetection(t *testing.T) {
 	enc.Encrypt(in, out, nil)
 
 	data := out.Bytes()
-	// Header is 65 bytes in v4 format. Tamper a byte in the payload region.
+	// Header is 65 bytes in v5 format. Tamper a byte in the payload region.
 	data[80] ^= 0xFF
 
 	decIn := bytes.NewReader(data)
@@ -143,8 +141,8 @@ func TestTamperDetection(t *testing.T) {
 	}
 }
 
-func TestV4RoundTrip(t *testing.T) {
-	// Test v4 format round-trip: encrypt and decrypt a file.
+func TestV5RoundTrip(t *testing.T) {
+	// Test v5 format round-trip: encrypt and decrypt a file.
 
 	password := []byte("test-password")
 	plaintext := []byte("hello")
@@ -166,12 +164,12 @@ func TestV4RoundTrip(t *testing.T) {
 	}
 
 	if !bytes.Equal(decOut.Bytes(), plaintext) {
-		t.Errorf("v4 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
+		t.Errorf("v5 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
 	}
 }
 
 func TestBatchEncryptionWithMasterKey(t *testing.T) {
-	// Test the v4 batch optimisation: derive a master key once, reuse for
+	// Test the v5 batch optimisation: derive a master key once, reuse for
 	// multiple files.
 	password := []byte("test-password")
 	masterKey := crypto.DeriveMasterKey(password, format.DefaultArgon2Params())
@@ -459,73 +457,6 @@ func TestKeyCommitmentTampering(t *testing.T) {
 	}
 	if err.Error() != "key commitment verification failed" {
 		t.Errorf("expected 'key commitment verification failed', got: %v", err)
-	}
-}
-
-func TestV4BackwardCompatibility(t *testing.T) {
-	// Encrypt a file using the v4 format (no key commitment) and verify
-	// that the v5 decoder can still decrypt it.
-	password := []byte("test-password")
-	plaintext := []byte("v4 backward compat test")
-
-	salt, err := crypto.GenerateSalt()
-	if err != nil {
-		t.Fatalf("GenerateSalt failed: %v", err)
-	}
-	segmentSeed := make([]byte, format.XNonceSize)
-	if _, err := io.ReadFull(crypto.RandReader(), segmentSeed); err != nil {
-		t.Fatalf("ReadFull failed: %v", err)
-	}
-
-	masterKey := crypto.DeriveMasterKey(password, fastParams)
-	defer crypto.ZeroBytes(masterKey)
-	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
-	defer crypto.ZeroBytes(encKey)
-	aead, err := chacha20poly1305.NewX(encKey)
-	if err != nil {
-		t.Fatalf("NewX failed: %v", err)
-	}
-
-	var buf bytes.Buffer
-
-	// Write v4 header.
-	buf.Write([]byte(format.Magic))
-	format.WriteUint32(&buf, 4) // version 4
-	buf.Write(salt)
-	buf.Write(segmentSeed)
-	format.WriteArgon2Params(&buf, fastParams)
-
-	// Encrypt one segment.
-	nonce, err := deriveSegmentNonce(segmentSeed, 0)
-	if err != nil {
-		t.Fatalf("deriveSegmentNonce failed: %v", err)
-	}
-	aad := make([]byte, 16)
-	buildAAD(aad, 0, uint64(len(plaintext)))
-	ct := aead.Seal(nil, nonce, plaintext, aad)
-	format.WriteUint64(&buf, uint64(len(ct)))
-	buf.Write(ct)
-
-	// v4 trailer: segmentCount + HMAC (no key commitment).
-	format.WriteUint64(&buf, 1)
-	trailerHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, 1, fastParams, 4)
-	buf.Write(trailerHMAC)
-	crypto.ZeroBytes(macKey)
-
-	// Verify v4 trailer size.
-	if buf.Len() != 65+8+len(ct)+40 {
-		t.Fatalf("unexpected v4 file size: %d", buf.Len())
-	}
-
-	// Decrypt with v5 decoder.
-	decIn := bytes.NewReader(buf.Bytes())
-	decOut := &bytes.Buffer{}
-	dec := NewDecrypter(password)
-	if err := dec.Decrypt(decIn, decOut, nil); err != nil {
-		t.Fatalf("v4 backward compat decryption failed: %v", err)
-	}
-	if !bytes.Equal(decOut.Bytes(), plaintext) {
-		t.Errorf("v4 round-trip: got %q, want %q", decOut.Bytes(), plaintext)
 	}
 }
 

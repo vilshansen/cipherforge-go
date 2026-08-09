@@ -632,31 +632,20 @@ key-commitment tag based on `encKey` and `fileSalt` is sufficient because:
   and `segmentCount`. Tampering with any of these invalidates the HMAC before
   the key-commitment tag is even checked.
 
-#### Backward Compatibility
-
-v5 decoders accept both v4 and v5 files. When reading a v4 file (detected by
-the version field in the header), the decoder uses a 40-byte trailer and skips
-key-commitment verification. When writing, the encoder always produces v5.
-
-v4 decoders presented with a v5 file will fail with an "unsupported version"
-error before attempting any cryptographic operations, since the version field
-is validated before KDF work begins.
-
-The trailer HMAC context string is version-specific (`cipherforge-trailer-hmac-v4`
-vs `cipherforge-trailer-hmac-v5`) to prevent cross-version splicing attacks
-where an attacker takes a v4 trailer and presents it as v5.
-
 #### Verification Order (v5)
 
 ```
 1. Read and validate magic.
-2. Read version (4 or 5).
+2. Read version (must be 5).
 3. Read header fields → derive encKey, macKey.
-4. Seek to trailer. Read segmentCount, storedHMAC, [storedKeyCommit for v5].
+4. Seek to trailer. Read segmentCount, storedHMAC, storedKeyCommit.
 5. Compute expectedHMAC; compare constant-time. Fail → "authentication failed".
-6. For v5: compute expectedKeyCommit; compare constant-time. Fail → "key commitment verification failed".
+6. Compute expectedKeyCommit; compare constant-time. Fail → "key commitment verification failed".
 7. Only if all checks pass: decrypt segments.
 ```
+
+v5 is the only supported format version. v4 files must be re-encrypted with
+a v5 encoder (Cipherforge 5.0.0 or later) before they can be decrypted.
 
 ---
 
@@ -837,10 +826,8 @@ for the full design and security analysis.
   one segment (~1 MiB). There is no padding to hide file size.
 - **Access patterns.** The format provides no guarantees about when or how
   often a file is decrypted. This is orthogonal to file encryption.
-- **Key commitment.** Provided since v5 via a 32-byte HMAC-SHA256 commitment tag
+- **Key commitment.** Provided via a 32-byte HMAC-SHA256 commitment tag
   in the trailer. See [Key Commitment (v5)](#key-commitment-v5).
-  v4 files (which lack this tag) are still accepted for backward compatibility
-  but do not provide this property.
 - **Forward secrecy.** This is file encryption. There is no ephemeral key
   exchange. Compromise of the password compromises all files encrypted with it,
   past and future.

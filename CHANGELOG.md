@@ -1,5 +1,38 @@
 # Changelog
 
+## v5.0.0 (2026-08-09)
+
+### Changed
+
+- **v5 is now the only supported format.** v4 backward compatibility has
+  been removed. The decoder strictly requires v5 files. v4 files must be
+  re-encrypted with Cipherforge 4.2.0 before upgrading.
+
+- **Simplified trailer handling.** The trailer is always 72 bytes: 8 bytes
+  segment count + 32 bytes HMAC-SHA256 + 32 bytes key-commitment tag. The
+  HMAC context string is always `cipherforge-trailer-hmac-v5`.
+
+- **Key commitment is always verified.** The 32-byte key-commitment tag
+  (`HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)`) is
+  computed and verified in constant time on every decrypt. There is no
+  code path that skips this check.
+
+### Removed
+
+- **v4 backward compatibility.** The decoder no longer accepts v4 files.
+  The `V4TrailerSize` constant and the version-switching logic in `Decrypt`
+  have been removed. The `computeTrailerHMAC` function no longer takes a
+  version parameter.
+
+- **`TestV4BackwardCompatibility`** test.
+
+### Documentation
+
+- Updated all documents (FILEFORMAT.MD, CRYPTODESIGN.MD, ARCHITECTURE.MD,
+  README.MD) to reflect v5-only format. Pseudocode decryption algorithm
+  updated to include the key-commitment verification step. Trailer size
+  and minimum file size updated throughout.
+
 ## v4.2.0 (2026-08-09)
 
 ### Added

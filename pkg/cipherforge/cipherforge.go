@@ -153,7 +153,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	// Step 2: Key derivation (two-tier for v4).
+	// Step 2: Key derivation (two-tier for v5).
 	//
 	// If a pre-derived master key was provided (batch mode), use it directly.
 	// Otherwise, derive the master key from the password using Argon2id.
@@ -210,7 +210,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	bufOut := bufio.NewWriterSize(w, format.SegmentSize+aead.Overhead()+8)
 	defer bufOut.Flush() // Flush the buffered writer when done (even on error)
 
-	// Step 4: Write the 65-byte v4 header.
+	// Step 4: Write the 65-byte v5 header.
 	if err := writeHeader(bufOut, salt, segmentSeed, e.params); err != nil {
 		return err
 	}
@@ -226,7 +226,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	trailerHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params, format.FileVersion)
+	trailerHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params)
 	if _, err := bufOut.Write(trailerHMAC); err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	return nil
 }
 
-// writeHeader writes the 65-byte v4 .cfo header to w.
+// writeHeader writes the 65-byte v5 .cfo header to w.
 func writeHeader(w io.Writer, salt, segmentSeed []byte, params format.Argon2Params) error {
 	if _, err := w.Write([]byte(format.Magic)); err != nil {
 		return err
@@ -319,30 +319,31 @@ func NewDecrypter(password []byte) *Decrypter {
 }
 
 // Decrypt reads a .cfo file from r (which MUST be seekable), authenticates
-// it via the trailer HMAC, and if valid, decrypts all segments to w.
+// it via the trailer HMAC and key-commitment tag, and if valid, decrypts
+// all segments to w.
 //
 // Parameters:
 //   - r: io.ReadSeeker — the .cfo file source. Must support seeking because
-//     the trailer HMAC at EOF must be verified BEFORE any plaintext is
-//     written. io.ReadSeeker combines io.Reader + io.Seeker (like Java's
+//     the trailer at EOF must be verified BEFORE any plaintext is written.
+//     io.ReadSeeker combines io.Reader + io.Seeker (like Java's
 //     SeekableByteChannel or RandomAccessFile).
 //   - w: io.Writer — the plaintext destination.
 //   - progress: func(int64) — optional progress callback (plaintext bytes).
 //
-// Accepts both v4 (no key commitment) and v5 (with key commitment) files.
-// v5 adds a 32-byte key-commitment tag after the HMAC in the trailer.
+// Only v5 files are accepted. v5 adds a 32-byte key-commitment tag after
+// the HMAC in the trailer.
 //
 // Verification order:
 //  1. Read and validate magic signature (9 bytes)
-//  2. Read and validate format version (must be v4 or v5)
+//  2. Read and validate format version (must be v5)
 //  3. Read salt, Segment Seed, and Argon2 parameters from header
 //  4. Validate Argon2 parameters against safety limits
 //  5. Derive master key via Argon2id
 //  6. Derive file-specific keys via HKDF
-//  7. Seek to trailer, read segment count + HMAC (+ key commit tag for v5)
+//  7. Seek to trailer, read segment count + HMAC + key-commitment tag
 //  8. Compute expected HMAC and compare in constant time
-//  9. For v5: compute expected key commitment and compare in constant time
-//  10. If any check fails: return "authentication failed" — no plaintext written
+//  9. Compute expected key commitment and compare in constant time
+//  10. If any check fails: return error — no plaintext written
 //  11. Seek back to payload start and decrypt segments
 //
 // This ordering is critical: authentication is verified BEFORE any plaintext
@@ -360,16 +361,13 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return fmt.Errorf("not a valid .cfo file")
 	}
 
-	// Step 2: Read and validate version. Accept v4 and v5.
+	// Step 2: Read and validate version. v5 is the only supported format.
 	version, err := format.ReadUint32(r)
 	if err != nil {
 		return err
 	}
-	switch version {
-	case 4, 5:
-		// Supported.
-	default:
-		return fmt.Errorf("unsupported file version %d (v4 or v5 required)", version)
+	if version != format.FileVersion {
+		return fmt.Errorf("unsupported file version %d (v%d required)", version, format.FileVersion)
 	}
 
 	// Step 3: Read the remaining header fields.
@@ -393,7 +391,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	// Step 5: Key derivation (two-tier v4).
+	// Step 5: Key derivation (two-tier v5).
 	// Derive the master key from the password using the file's embedded
 	// Argon2id parameters. This ensures files remain decryptable if
 	// default parameters change in future versions.
@@ -409,7 +407,8 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	// Step 6: Seek to the trailer and verify the file-level HMAC.
+	// Step 6: Seek to the trailer and verify the file-level HMAC and
+	// key-commitment tag.
 	//
 	// Go's io.ReadSeeker supports:
 	//   - Seek(offset, whence): like Java's RandomAccessFile.seek()
@@ -418,26 +417,18 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	if err != nil {
 		return err
 	}
-
-	// Determine trailer size based on format version.
-	// v4: 40 bytes (segmentCount + HMAC, no key commitment).
-	// v5: 72 bytes (segmentCount + HMAC + keyCommitTag).
-	trailerSz := format.V4TrailerSize
-	if version == 5 {
-		trailerSz = format.TrailerSize
-	}
-	if fileSize < int64(trailerSz) {
+	if fileSize < int64(format.TrailerSize) {
 		return fmt.Errorf("file too small to be a .cfo file")
 	}
 
-	// Seek to trailer start: file_size - trailerSz bytes
-	trailerOffset := fileSize - int64(trailerSz)
+	// Seek to trailer start: file_size - 72 bytes
+	trailerOffset := fileSize - int64(format.TrailerSize)
 	if _, err := r.Seek(trailerOffset, io.SeekStart); err != nil {
 		return err
 	}
 
-	// Read the trailer.
-	trailerBuf := make([]byte, trailerSz)
+	// Read the 72-byte v5 trailer: [segmentCount: 8] [HMAC: 32] [keyCommit: 32]
+	trailerBuf := make([]byte, format.TrailerSize)
 	if _, err := io.ReadFull(r, trailerBuf); err != nil {
 		return err
 	}
@@ -445,23 +436,20 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	// Parse trailer fields.
 	segmentCount := binary.BigEndian.Uint64(trailerBuf[:8])
 	storedHMAC := trailerBuf[8:40]
+	storedKeyCommit := trailerBuf[40:72]
 
 	// Compute the expected HMAC and compare in constant time.
-	// Use the version-specific context string for domain separation.
-	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params, version)
+	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
 		crypto.ZeroBytes(macKey)
 		return ErrAuthenticationFailed
 	}
 
-	// v5 only: verify the key-commitment tag.
-	if version == 5 {
-		storedKeyCommit := trailerBuf[40:72]
-		expectedKeyCommit := computeKeyCommitTag(encKey, salt)
-		if !hmac.Equal(storedKeyCommit, expectedKeyCommit) {
-			crypto.ZeroBytes(macKey)
-			return ErrKeyCommitmentFailed
-		}
+	// Verify the key-commitment tag.
+	expectedKeyCommit := computeKeyCommitTag(encKey, salt)
+	if !hmac.Equal(storedKeyCommit, expectedKeyCommit) {
+		crypto.ZeroBytes(macKey)
+		return ErrKeyCommitmentFailed
 	}
 
 	// MAC key zeroed immediately after use — it's not needed for per-segment
@@ -620,17 +608,11 @@ var ErrAuthenticationFailed = fmt.Errorf("authentication failed")
 var ErrKeyCommitmentFailed = fmt.Errorf("key commitment verification failed")
 
 // computeTrailerHMAC computes the HMAC-SHA256 authentication tag for the
-// .cfo file trailer. The version parameter (4 or 5) selects the domain
-// separation context string to prevent cross-version attacks.
-func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params, version uint32) []byte {
+// .cfo file trailer.
+func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params) []byte {
 	h := hmac.New(sha256.New, macKey)
 
-	// Domain-separate by version: v4 uses "cipherforge-trailer-hmac-v4",
-	// v5 uses "cipherforge-trailer-hmac-v5". An attacker cannot take a v4
-	// trailer and present it as v5 (or vice versa) because the context
-	// string differs and HMAC verification will fail.
-	context := "cipherforge-trailer-hmac-v" + string(rune('0'+version))
-	h.Write([]byte(context))
+	h.Write([]byte(format.TrailerHMACContext))
 	h.Write(salt)
 	h.Write(segmentSeed)
 

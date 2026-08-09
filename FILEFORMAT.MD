@@ -3,7 +3,7 @@
 ## Purpose of This Document
 
 This document is the authoritative specification for the Cipherforge `.cfo`
-binary file format **version 4** (v4). It is written for three audiences: a
+binary file format **version 5** (v5). It is written for three audiences: a
 security reviewer who wants to evaluate whether the cryptographic design is
 sound; a developer who wants to write a compatible decoder without reference to
 the Go source; and a future maintainer who needs to understand why the format
@@ -15,9 +15,9 @@ or authenticity), what an attacker could accomplish if the field were absent
 or modified, and why alternative designs were rejected. Understanding *why*
 the format exists is as important as knowing *what* it contains.
 
-**Note on versions:** v4 is the current and only supported format version.
-Earlier formats (v1, v2, v3) are not supported for decryption by the v4
-binary; use Cipherforge 3.3.2 to decrypt v3 files and re-encrypt them with v4.
+**Note on versions:** v5 is the current and only supported format version.
+Earlier formats (v1, v2, v3, v4) are not supported for decryption by the v5
+binary; use Cipherforge 4.2.0 to decrypt v4 files and re-encrypt them with v5.
 
 ---
 
@@ -156,7 +156,7 @@ tampered with, the file is rejected at the parsing stage with a clear error.
 **Integrity required:** Yes, trivially. Flipping this causes rejection or a
 layout mismatch caught by the trailer HMAC.
 
-**Why it exists:** Enables forward-compatible format detection. v4 decoders
+**Why it exists:** Enables forward-compatible format detection. v5 decoders
 reject files whose version does not equal the expected value exactly.
 
 ---
@@ -170,7 +170,7 @@ reject files whose version does not equal the expected value exactly.
 
 **Integrity required:** Yes. The salt is included in the trailer HMAC.
 
-**What the salt does:** In v4, the salt is used as the **HKDF salt** when
+**What the salt does:** In v5, the salt is used as the **HKDF salt** when
 deriving file-specific keys from the master key (see Key Derivation below).
 Each file gets a unique salt, so two files encrypted with the same password
 produce independent encryption and MAC keys.
@@ -344,7 +344,7 @@ HMAC-SHA256(
 )
 ```
 
-The v4 context string (`cipherforge-trailer-hmac-v4`) provides domain
+The v5 context string (`cipherforge-trailer-hmac-v5`) provides domain
 separation from earlier format versions.
 
 **What the HMAC covers and why:**
@@ -362,11 +362,11 @@ timing side-channel attacks on the HMAC verification.
 
 ---
 
-## Key Derivation (v4)
+## Key Derivation (v5)
 
 ### Two-Tier Architecture
 
-v4 uses a two-tier key derivation design:
+v5 uses a two-tier key derivation design:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -399,7 +399,7 @@ v4 uses a two-tier key derivation design:
 ```
 
 **Why two tiers:** The memory-hard Argon2id derivation is expensive (~several
-seconds). For batch encryption of N files, the v4 design pays this cost
+seconds). For batch encryption of N files, the v5 design pays this cost
 **once** (for the master key) rather than N times. File-specific keys are
 derived via HKDF, which is extremely fast (~microseconds).
 
@@ -529,7 +529,7 @@ Go-language limitation, not a Cipherforge-specific issue.
 
 ---
 
-## Reference: Decryption Algorithm (v4)
+## Reference: Decryption Algorithm (v5)
 
 ```
 function DecryptCFO(file, password) -> plaintext | error:
@@ -538,7 +538,7 @@ function DecryptCFO(file, password) -> plaintext | error:
      Assert bytes equal: C1 50 48 52 46 30 52 47 45
 
   2. Read 4 bytes at offset 9 as uint32 big-endian → version.
-     Assert version == 4
+     Assert version == 5
 
   3. Read 16 bytes at offset 13 → fileSalt.
 
@@ -564,13 +564,14 @@ function DecryptCFO(file, password) -> plaintext | error:
        encKey = raw[0:32]
        macKey = raw[32:64]
 
-  8. Read 8 bytes at file_size - 40 as uint64 big-endian → segmentCount.
-     Read 32 bytes at file_size - 32 → storedHMAC.
+  8. Read 8 bytes at file_size - 72 as uint64 big-endian → segmentCount.
+     Read 32 bytes at file_size - 64 → storedHMAC.
+     Read 32 bytes at file_size - 32 → storedKeyCommit.
 
   9. Compute expectedHMAC:
        expectedHMAC = HMAC-SHA256(
            key   = macKey,
-           input = "cipherforge-trailer-hmac-v4"
+           input = "cipherforge-trailer-hmac-v5"
                 || fileSalt
                 || segmentSeed
                 || uint32_big_endian(argon2Time)
@@ -580,9 +581,16 @@ function DecryptCFO(file, password) -> plaintext | error:
        )
      Assert hmac_equal(storedHMAC, expectedHMAC)  ← constant-time
 
-  10. Seek to payload start (byte 65).
+  10. Compute expectedKeyCommit:
+        expectedKeyCommit = HMAC-SHA256(
+            key     = encKey,
+            message = "cipherforge-commitment-v1" || fileSalt
+        )
+      Assert hmac_equal(storedKeyCommit, expectedKeyCommit)  ← constant-time
 
-  11. For i in 0 .. segmentCount - 1:
+  11. Seek to payload start (byte 65).
+
+  12. For i in 0 .. segmentCount - 1:
 
        a. Read 8 bytes as uint64 big-endian → segmentLen.
 

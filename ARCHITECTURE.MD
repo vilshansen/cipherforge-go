@@ -148,16 +148,18 @@ pkg/cipherforge.Decrypter.Decrypt(reader, writer)
 | Key separation | HKDF-SHA256 (RFC 5869) | Independent enc/mac keys from one master key |
 | Encryption | XChaCha20-Poly1305 (IETF variant) | 192-bit nonce, no nonce-reuse risk |
 | Authentication | Poly1305 per segment + HMAC-SHA256 trailer | Segments independently verified |
+| Key commitment | HMAC-SHA256(encKey, context || salt) | Ciphertext binds to a single key |
 | Randomness | OS CSPRNG (crypto/rand) | /dev/urandom, CNG — not userspace PRNG |
 | Password gen | crypto/rand + rejection sampling | No modulo bias, 256+ bits entropy |
 | Memory | mlock (best-effort) + ZeroBytes | Key material locked; passwords explicitly zeroed |
 
-The trailer HMAC is verified **before** any segment is decrypted. This means a
-wrong password is detected immediately — no plaintext touches disk.
+The trailer HMAC and key-commitment tag are verified **before** any segment is
+decrypted. This means a wrong password is detected immediately — no plaintext
+touches disk.
 
 ## File Format
 
-The `.cfo` format (v4) has three contiguous regions:
+The `.cfo` format (v5) has three contiguous regions:
 
 ```
 ╔══════════════════════╗
@@ -165,7 +167,7 @@ The `.cfo` format (v4) has three contiguous regions:
 ╠══════════════════════╣
 ║ PAYLOAD (variable)   ║  1+ segments: [8-byte len][AEAD ciphertext]
 ╠══════════════════════╣
-║ TRAILER (40 bytes)   ║  segment count + HMAC over header fields
+║ TRAILER (72 bytes)   ║  segment count + HMAC + key-commitment tag
 ╚══════════════════════╝
 ```
 

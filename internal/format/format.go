@@ -55,7 +55,6 @@ const (
 	// FileVersion is the current format version (v5). Stored as uint32
 	// big-endian in the file header. v5 adds a 32-byte key-commitment tag
 	// to the trailer (see KeyCommitSize and KeyCommitContext).
-	// Decoders SHOULD accept v4 files as well for backward compatibility.
 	FileVersion = uint32(5)
 
 	VersionSize = 4  // uint32 = 4 bytes
@@ -80,16 +79,13 @@ const (
 	MaxArgon2Time   = 10               // Max passes
 	MaxArgon2Memory = 16 * 1024 * 1024 // 16 GiB in KiB (generous ceiling)
 
-	// V4TrailerSize is the trailer size for v4 files (no key commitment).
-	V4TrailerSize = 8 + HMACSize // segmentCount (8) + HMAC (32) = 40 bytes
-
 	// TrailerSize is the v5 trailer size: segmentCount (8) + HMAC (32) +
 	// keyCommitTag (32) = 72 bytes.
 	TrailerSize = 8 + HMACSize + KeyCommitSize
 
 	SegmentSize = 1048576 // 1 MiB (2^20 bytes)
 
-	// HeaderSize is the full v4/v5 header size:
+	// HeaderSize is the full v5 header size:
 	//   magic(9) + version(4) + salt(16) + seed(24) + argon2params(12)
 	HeaderSize = MagicSize + VersionSize + SaltSize + XNonceSize + Argon2ParamSize // 65
 

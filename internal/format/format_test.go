@@ -139,10 +139,6 @@ func TestTrailerSize(t *testing.T) {
 	if TrailerSize != 8+HMACSize+KeyCommitSize {
 		t.Errorf("TrailerSize = %d, want %d", TrailerSize, 8+HMACSize+KeyCommitSize)
 	}
-	// v4 trailer is 8 + 32 = 40 bytes (no key commitment)
-	if V4TrailerSize != 8+HMACSize {
-		t.Errorf("V4TrailerSize = %d, want %d", V4TrailerSize, 8+HMACSize)
-	}
 }
 
 func TestReadUint64Truncated(t *testing.T) {
