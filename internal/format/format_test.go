@@ -85,8 +85,8 @@ func TestConstants(t *testing.T) {
 	if MagicSize != 9 {
 		t.Errorf("unexpected MagicSize: %d", MagicSize)
 	}
-	if FileVersion != 4 {
-		t.Errorf("FileVersion = %d, want 4", FileVersion)
+	if FileVersion != 5 {
+		t.Errorf("FileVersion = %d, want 5", FileVersion)
 	}
 	if Argon2ParamSize != 12 {
 		t.Errorf("Argon2ParamSize = %d, want 12", Argon2ParamSize)
@@ -134,9 +134,14 @@ func TestReadArgon2ParamsBoundary(t *testing.T) {
 }
 
 func TestTrailerSize(t *testing.T) {
-	// Trailer is 8 bytes (segment count) + 32 bytes (HMAC-SHA256) = 40 bytes
-	if TrailerSize != 8+HMACSize {
-		t.Errorf("TrailerSize = %d, want %d", TrailerSize, 8+HMACSize)
+	// v5 trailer is 8 bytes (segment count) + 32 bytes (HMAC-SHA256) +
+	// 32 bytes (key commitment) = 72 bytes
+	if TrailerSize != 8+HMACSize+KeyCommitSize {
+		t.Errorf("TrailerSize = %d, want %d", TrailerSize, 8+HMACSize+KeyCommitSize)
+	}
+	// v4 trailer is 8 + 32 = 40 bytes (no key commitment)
+	if V4TrailerSize != 8+HMACSize {
+		t.Errorf("V4TrailerSize = %d, want %d", V4TrailerSize, 8+HMACSize)
 	}
 }
 

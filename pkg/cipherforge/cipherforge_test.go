@@ -3,11 +3,13 @@ package cipherforge
 import (
 	"bytes"
 	"encoding/base64"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"github.com/vilshansen/cipherforge-go/internal/format"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // fastParams are lightweight Argon2id parameters to keep tests fast.
@@ -223,10 +225,13 @@ func TestTrailerTampering(t *testing.T) {
 		t.Fatalf("Encryption failed: %v", err)
 	}
 
-	// Tamper: flip a byte in the trailer HMAC
+	// Tamper: flip a byte in the trailer HMAC (bytes 8–39 of the trailer).
+	// The v5 trailer is: [segmentCount:8] [HMAC:32] [keyCommit:32].
+	// We tamper the HMAC region, not the key-commitment region.
 	data := out.Bytes()
-	lastByte := len(data) - 1
-	data[lastByte] ^= 0xFF
+	trailerStart := len(data) - format.TrailerSize
+	hmacByte := trailerStart + 10 // inside HMAC region
+	data[hmacByte] ^= 0xFF
 
 	decIn := bytes.NewReader(data)
 	decOut := &bytes.Buffer{}
@@ -253,9 +258,10 @@ func TestSegmentCountTampering(t *testing.T) {
 		t.Fatalf("Encryption failed: %v", err)
 	}
 
-	// Tamper: zero the segment count in the trailer
+	// Tamper: zero the segment count in the trailer.
+	// v5 trailer is 72 bytes: segmentCount(8) + HMAC(32) + keyCommit(32).
 	data := out.Bytes()
-	trailerOffset := len(data) - 40
+	trailerOffset := len(data) - format.TrailerSize
 	data[trailerOffset+7] = 0x00
 
 	decIn := bytes.NewReader(data)
@@ -415,6 +421,153 @@ func TestProgressCallback(t *testing.T) {
 			t.Errorf("decryption progress not monotonic: %d after %d",
 				decProgressValues[i], decProgressValues[i-1])
 		}
+	}
+}
+
+func TestKeyCommitmentTampering(t *testing.T) {
+	// Tamper with the key-commitment tag in a v5 file. Decryption should
+	// fail with ErrKeyCommitmentFailed.
+	password := []byte("test-password")
+	plaintext := []byte("data for key commitment tamper test")
+
+	in := bytes.NewReader(plaintext)
+	out := &bytes.Buffer{}
+
+	enc := NewEncrypterWithParams(password, fastParams)
+	if err := enc.Encrypt(in, out, nil); err != nil {
+		t.Fatalf("Encryption failed: %v", err)
+	}
+
+	// Verify output is v5.
+	data := out.Bytes()
+	ver := data[9]<<24 | data[10]<<16 | data[11]<<8 | data[12]
+	if ver != 5 {
+		t.Fatalf("expected v5 output, got version %d", ver)
+	}
+
+	// Tamper: flip a byte in the key-commitment tag (last 32 bytes of trailer).
+	lastByte := len(data) - 1
+	data[lastByte] ^= 0xFF
+
+	decIn := bytes.NewReader(data)
+	decOut := &bytes.Buffer{}
+
+	dec := NewDecrypter(password)
+	err := dec.Decrypt(decIn, decOut, nil)
+	if err == nil {
+		t.Fatal("expected key commitment verification failure")
+	}
+	if err.Error() != "key commitment verification failed" {
+		t.Errorf("expected 'key commitment verification failed', got: %v", err)
+	}
+}
+
+func TestV4BackwardCompatibility(t *testing.T) {
+	// Encrypt a file using the v4 format (no key commitment) and verify
+	// that the v5 decoder can still decrypt it.
+	password := []byte("test-password")
+	plaintext := []byte("v4 backward compat test")
+
+	salt, err := crypto.GenerateSalt()
+	if err != nil {
+		t.Fatalf("GenerateSalt failed: %v", err)
+	}
+	segmentSeed := make([]byte, format.XNonceSize)
+	if _, err := io.ReadFull(crypto.RandReader(), segmentSeed); err != nil {
+		t.Fatalf("ReadFull failed: %v", err)
+	}
+
+	masterKey := crypto.DeriveMasterKey(password, fastParams)
+	defer crypto.ZeroBytes(masterKey)
+	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
+	defer crypto.ZeroBytes(encKey)
+	aead, err := chacha20poly1305.NewX(encKey)
+	if err != nil {
+		t.Fatalf("NewX failed: %v", err)
+	}
+
+	var buf bytes.Buffer
+
+	// Write v4 header.
+	buf.Write([]byte(format.Magic))
+	format.WriteUint32(&buf, 4) // version 4
+	buf.Write(salt)
+	buf.Write(segmentSeed)
+	format.WriteArgon2Params(&buf, fastParams)
+
+	// Encrypt one segment.
+	nonce, err := deriveSegmentNonce(segmentSeed, 0)
+	if err != nil {
+		t.Fatalf("deriveSegmentNonce failed: %v", err)
+	}
+	aad := make([]byte, 16)
+	buildAAD(aad, 0, uint64(len(plaintext)))
+	ct := aead.Seal(nil, nonce, plaintext, aad)
+	format.WriteUint64(&buf, uint64(len(ct)))
+	buf.Write(ct)
+
+	// v4 trailer: segmentCount + HMAC (no key commitment).
+	format.WriteUint64(&buf, 1)
+	trailerHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, 1, fastParams, 4)
+	buf.Write(trailerHMAC)
+	crypto.ZeroBytes(macKey)
+
+	// Verify v4 trailer size.
+	if buf.Len() != 65+8+len(ct)+40 {
+		t.Fatalf("unexpected v4 file size: %d", buf.Len())
+	}
+
+	// Decrypt with v5 decoder.
+	decIn := bytes.NewReader(buf.Bytes())
+	decOut := &bytes.Buffer{}
+	dec := NewDecrypter(password)
+	if err := dec.Decrypt(decIn, decOut, nil); err != nil {
+		t.Fatalf("v4 backward compat decryption failed: %v", err)
+	}
+	if !bytes.Equal(decOut.Bytes(), plaintext) {
+		t.Errorf("v4 round-trip: got %q, want %q", decOut.Bytes(), plaintext)
+	}
+}
+
+func TestV5FileFormat(t *testing.T) {
+	// Verify that Encrypt produces a v5 file with correct sizes.
+	password := []byte("test-password")
+	plaintext := []byte("v5 format test")
+
+	in := bytes.NewReader(plaintext)
+	out := &bytes.Buffer{}
+
+	enc := NewEncrypterWithParams(password, fastParams)
+	if err := enc.Encrypt(in, out, nil); err != nil {
+		t.Fatalf("Encryption failed: %v", err)
+	}
+
+	data := out.Bytes()
+
+	// Check magic.
+	if string(data[:9]) != format.Magic {
+		t.Fatal("bad magic")
+	}
+
+	// Check version = 5.
+	ver := uint32(data[9])<<24 | uint32(data[10])<<16 | uint32(data[11])<<8 | uint32(data[12])
+	if ver != 5 {
+		t.Errorf("version = %d, want 5", ver)
+	}
+
+	// Check that the trailer is 72 bytes (v5).
+	// Minimum file: header(65) + 1 segment(8+ct) + trailer(72)
+	expectedTrailerOffset := len(data) - format.TrailerSize
+	segCount := uint64(data[expectedTrailerOffset])<<56 |
+		uint64(data[expectedTrailerOffset+1])<<48 |
+		uint64(data[expectedTrailerOffset+2])<<40 |
+		uint64(data[expectedTrailerOffset+3])<<32 |
+		uint64(data[expectedTrailerOffset+4])<<24 |
+		uint64(data[expectedTrailerOffset+5])<<16 |
+		uint64(data[expectedTrailerOffset+6])<<8 |
+		uint64(data[expectedTrailerOffset+7])
+	if segCount != 1 {
+		t.Errorf("segment count = %d, want 1", segCount)
 	}
 }
 

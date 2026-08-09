@@ -133,8 +133,8 @@ func NewEncrypterWithMasterKey(password []byte, masterKey []byte) *Encrypter {
 //	[Payload: variable]
 //	  For each segment:
 //	    [segmentLen: 8 bytes] [ciphertext || Poly1305 tag: variable]
-//	[Trailer: 40 bytes]
-//	  [segmentCount: 8 bytes] [HMAC-SHA256: 32 bytes]
+//	[Trailer: 72 bytes]
+//	  [segmentCount: 8 bytes] [HMAC-SHA256: 32 bytes] [KeyCommitTag: 32 bytes]
 func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) error {
 	// Step 1: Generate per-file random values.
 	// crypto.GenerateSalt() returns ([]byte, error) — the salt goes in the
@@ -226,9 +226,22 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	trailer := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params)
+	trailerHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params, format.FileVersion)
+	if _, err := bufOut.Write(trailerHMAC); err != nil {
+		return err
+	}
+
+	// v5: write the key-commitment tag.
+	// HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
+	// This proves that the file was encrypted with a specific encKey,
+	// preventing an attacker from crafting a ciphertext that decrypts
+	// under two different passwords. The tag requires a full 32-byte
+	// HMAC-SHA256 output (no truncation) to maintain 128-bit collision
+	// resistance under Grover's algorithm.
+	keyCommitTag := computeKeyCommitTag(encKey, salt)
+	crypto.ZeroBytes(encKey)
 	crypto.ZeroBytes(macKey)
-	if _, err := bufOut.Write(trailer); err != nil {
+	if _, err := bufOut.Write(keyCommitTag); err != nil {
 		return err
 	}
 
@@ -310,25 +323,29 @@ func NewDecrypter(password []byte) *Decrypter {
 //
 // Parameters:
 //   - r: io.ReadSeeker — the .cfo file source. Must support seeking because
-//     the trailer HMAC at EOF-40 must be verified BEFORE any plaintext is
+//     the trailer HMAC at EOF must be verified BEFORE any plaintext is
 //     written. io.ReadSeeker combines io.Reader + io.Seeker (like Java's
 //     SeekableByteChannel or RandomAccessFile).
 //   - w: io.Writer — the plaintext destination.
 //   - progress: func(int64) — optional progress callback (plaintext bytes).
 //
+// Accepts both v4 (no key commitment) and v5 (with key commitment) files.
+// v5 adds a 32-byte key-commitment tag after the HMAC in the trailer.
+//
 // Verification order:
 //  1. Read and validate magic signature (9 bytes)
-//  2. Read and validate format version (must equal v4)
+//  2. Read and validate format version (must be v4 or v5)
 //  3. Read salt, Segment Seed, and Argon2 parameters from header
 //  4. Validate Argon2 parameters against safety limits
 //  5. Derive master key via Argon2id
 //  6. Derive file-specific keys via HKDF
-//  7. Seek to EOF-40, read trailer (segment count + HMAC)
+//  7. Seek to trailer, read segment count + HMAC (+ key commit tag for v5)
 //  8. Compute expected HMAC and compare in constant time
-//  9. If HMAC matches: seek back to payload start and decrypt segments
-//  10. If HMAC fails: return "authentication failed" — no plaintext written
+//  9. For v5: compute expected key commitment and compare in constant time
+//  10. If any check fails: return "authentication failed" — no plaintext written
+//  11. Seek back to payload start and decrypt segments
 //
-// This ordering is critical: the HMAC is verified BEFORE any plaintext
+// This ordering is critical: authentication is verified BEFORE any plaintext
 // touches disk. A wrong password, tampered header, or truncated file is
 // detected immediately, not after writing gigabytes of garbage.
 func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) error {
@@ -343,13 +360,16 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return fmt.Errorf("not a valid .cfo file")
 	}
 
-	// Step 2: Read and validate version. v4 is the only supported format.
+	// Step 2: Read and validate version. Accept v4 and v5.
 	version, err := format.ReadUint32(r)
 	if err != nil {
 		return err
 	}
-	if version != format.FileVersion {
-		return fmt.Errorf("unsupported file version %d (v%d required)", version, format.FileVersion)
+	switch version {
+	case 4, 5:
+		// Supported.
+	default:
+		return fmt.Errorf("unsupported file version %d (v4 or v5 required)", version)
 	}
 
 	// Step 3: Read the remaining header fields.
@@ -398,37 +418,52 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	if err != nil {
 		return err
 	}
-	if fileSize < int64(format.TrailerSize) {
+
+	// Determine trailer size based on format version.
+	// v4: 40 bytes (segmentCount + HMAC, no key commitment).
+	// v5: 72 bytes (segmentCount + HMAC + keyCommitTag).
+	trailerSz := format.V4TrailerSize
+	if version == 5 {
+		trailerSz = format.TrailerSize
+	}
+	if fileSize < int64(trailerSz) {
 		return fmt.Errorf("file too small to be a .cfo file")
 	}
 
-	// Seek to trailer start: file_size - 40 bytes
-	trailerOffset := fileSize - int64(format.TrailerSize)
+	// Seek to trailer start: file_size - trailerSz bytes
+	trailerOffset := fileSize - int64(trailerSz)
 	if _, err := r.Seek(trailerOffset, io.SeekStart); err != nil {
 		return err
 	}
 
-	// Read the 40-byte trailer: [segmentCount: 8] [HMAC: 32]
-	trailerBuf := make([]byte, format.TrailerSize)
+	// Read the trailer.
+	trailerBuf := make([]byte, trailerSz)
 	if _, err := io.ReadFull(r, trailerBuf); err != nil {
 		return err
 	}
 
 	// Parse trailer fields.
-	// `binary.BigEndian.Uint64` is like Java's ByteBuffer.getLong().
-	// `trailerBuf[:8]` gets the first 8 bytes as a slice.
-	// `trailerBuf[8:]` gets bytes 8 through end.
 	segmentCount := binary.BigEndian.Uint64(trailerBuf[:8])
-	storedHMAC := trailerBuf[8:]
+	storedHMAC := trailerBuf[8:40]
 
 	// Compute the expected HMAC and compare in constant time.
-	// hmac.Equal is like Java's MessageDigest.isEqual() — no early exit
-	// on first mismatched byte, preventing timing side-channel attacks.
-	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params)
+	// Use the version-specific context string for domain separation.
+	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params, version)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
 		crypto.ZeroBytes(macKey)
 		return ErrAuthenticationFailed
 	}
+
+	// v5 only: verify the key-commitment tag.
+	if version == 5 {
+		storedKeyCommit := trailerBuf[40:72]
+		expectedKeyCommit := computeKeyCommitTag(encKey, salt)
+		if !hmac.Equal(storedKeyCommit, expectedKeyCommit) {
+			crypto.ZeroBytes(macKey)
+			return ErrKeyCommitmentFailed
+		}
+	}
+
 	// MAC key zeroed immediately after use — it's not needed for per-segment
 	// decryption (per-segment authentication uses Poly1305 tags from the AEAD).
 	crypto.ZeroBytes(macKey)
@@ -578,12 +613,24 @@ func deriveSegmentNonce(segmentSeed []byte, segmentCounter uint64) ([]byte, erro
 // indicating wrong password, tampered header, or corrupted file.
 var ErrAuthenticationFailed = fmt.Errorf("authentication failed")
 
+// ErrKeyCommitmentFailed is returned when the key-commitment tag does not
+// match. This indicates a v5 file whose trailer HMAC passed (correct
+// password) but whose key-commitment tag is inconsistent — typically a
+// crafted file attempting to exploit the lack of key commitment.
+var ErrKeyCommitmentFailed = fmt.Errorf("key commitment verification failed")
+
 // computeTrailerHMAC computes the HMAC-SHA256 authentication tag for the
-// .cfo file trailer.
-func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params) []byte {
+// .cfo file trailer. The version parameter (4 or 5) selects the domain
+// separation context string to prevent cross-version attacks.
+func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params, version uint32) []byte {
 	h := hmac.New(sha256.New, macKey)
 
-	h.Write([]byte(format.TrailerHMACContext))
+	// Domain-separate by version: v4 uses "cipherforge-trailer-hmac-v4",
+	// v5 uses "cipherforge-trailer-hmac-v5". An attacker cannot take a v4
+	// trailer and present it as v5 (or vice versa) because the context
+	// string differs and HMAC verification will fail.
+	context := "cipherforge-trailer-hmac-v" + string(rune('0'+version))
+	h.Write([]byte(context))
 	h.Write(salt)
 	h.Write(segmentSeed)
 
@@ -597,5 +644,23 @@ func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, p
 	binary.BigEndian.PutUint64(countBuf[:], segmentCount)
 	h.Write(countBuf[:])
 
+	return h.Sum(nil)
+}
+
+// computeKeyCommitTag computes the v5 key-commitment tag:
+//
+//	HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
+//
+// This tag proves that the file was encrypted with a specific encKey.
+// An attacker who wants a file to decrypt under two different passwords
+// would need to find a collision in HMAC-SHA256 with different keys on
+// the same message — a 2^128 work factor.
+//
+// The full 32-byte output is used (no truncation) to maintain 128-bit
+// post-quantum collision resistance under Grover's algorithm.
+func computeKeyCommitTag(encKey, fileSalt []byte) []byte {
+	h := hmac.New(sha256.New, encKey)
+	h.Write([]byte(format.KeyCommitContext))
+	h.Write(fileSalt)
 	return h.Sum(nil)
 }

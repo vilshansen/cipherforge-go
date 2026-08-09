@@ -49,7 +49,7 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "dev"
+var Version = "4.2.0"
 var GitCommit = "none"
 
 // characterPool is the set of unambiguous characters used for auto-generated

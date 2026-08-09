@@ -1,5 +1,37 @@
 # Changelog
 
+## v4.2.0 (2026-08-09)
+
+### Added
+
+- **Key commitment (file format v5).** A 32-byte HMAC-SHA256 key-commitment
+  tag is appended to the trailer, computed as
+  `HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)`. This proves
+  that a file was encrypted with a specific key, preventing an attacker from
+  crafting a ciphertext that decrypts under two different passwords. The
+  trailer HMAC context string is now version-specific
+  (`cipherforge-trailer-hmac-v4` / `cipherforge-trailer-hmac-v5`) to prevent
+  cross-version splicing attacks.
+
+- **Backward compatibility.** v5 decoders accept both v4 (40-byte trailer,
+  no key commitment) and v5 (72-byte trailer, with key commitment) files.
+  Encryption always produces v5 output.
+
+- **Cryptographic design documentation (`CRYPTODESIGN.MD`).** Comprehensive
+  reference covering algorithm selection rationale, parameter choices,
+  two-tier KDF architecture, nonce management, authentication design,
+  memory safety, post-quantum considerations, and key commitment analysis.
+  Includes links to all relevant RFCs and standards.
+
+- **Documentation overview in README.** New documentation section with a
+  summary of all project documents and suggested reading order.
+
+### Changed
+
+- **File format version bumped to v5.** The on-disk format is unchanged
+  except for the 32-byte key-commitment tag appended to the trailer.
+  Header layout (65 bytes) and payload format are identical to v4.
+
 ## v4.1.2 (2026-08-04)
 
 ### Added

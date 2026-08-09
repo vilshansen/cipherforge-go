@@ -18,8 +18,39 @@ personal preference.
 
 ---
 
+## Documentation
+
+Cipherforge ships with four documents, each written for a different audience:
+
+| Document | Audience | Purpose |
+|---|---|---|
+| **[README.MD](README.MD)** (this file) | All users | Installation, quick start, usage, and a high-level "How It Works" overview |
+| **[CRYPTODESIGN.MD](CRYPTODESIGN.MD)** | Developers, security reviewers | Rationale behind every cryptographic choice: why XChaCha20 over AES-GCM, why Argon2id parameters were chosen, how the two-tier KDF works, nonce management, and post-quantum assessment. Includes links to relevant RFCs and standards |
+| **[FILEFORMAT.MD](FILEFORMAT.MD)** | Developers implementing a decoder, maintainers | Authoritative `.cfo` binary format specification. Byte-level layout, field-by-field security analysis, pseudocode for the decryption algorithm, and what each field protects against |
+| **[ARCHITECTURE.MD](ARCHITECTURE.MD)** | Contributors, new developers | Codebase structure, layered architecture, data flow diagrams, TUI design, build system, and rationale for Go as the implementation language |
+
+### Suggested Reading Order
+
+1. **Start here** (README.MD) — install the tool, encrypt a test file, get
+   comfortable with the CLI and TUI. The "How It Works" section gives a
+   high-level tour of the cryptography without diving into specifics.
+
+2. **CRYPTODESIGN.MD** — once you want to understand *why* each algorithm was
+   chosen. This is the document to read before relying on Cipherforge for
+   sensitive data. It assumes you have some cryptography background.
+
+3. **FILEFORMAT.MD** — if you need to write a compatible decoder in another
+   language, audit the format for security, or understand what happens at the
+   byte level. This is the specification; everything else is commentary.
+
+4. **ARCHITECTURE.MD** — if you plan to contribute to the codebase or want to
+   understand how the Go packages are organized before reading the source.
+
+---
+
 ## Table of Contents
 
+- [Documentation](#documentation)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Usage](#usage)

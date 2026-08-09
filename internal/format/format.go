@@ -52,14 +52,20 @@ const (
 	Magic     = "\xC1\x50\x48\x52\x46\x30\x52\x47\x45"
 	MagicSize = 9
 
-	// FileVersion is the current format version (v4). Stored as uint32
-	// big-endian in the file header.
-	FileVersion = uint32(4)
+	// FileVersion is the current format version (v5). Stored as uint32
+	// big-endian in the file header. v5 adds a 32-byte key-commitment tag
+	// to the trailer (see KeyCommitSize and KeyCommitContext).
+	// Decoders SHOULD accept v4 files as well for backward compatibility.
+	FileVersion = uint32(5)
 
 	VersionSize = 4  // uint32 = 4 bytes
 	XNonceSize  = 24 // XChaCha20 nonce = 192 bits
 	SaltSize    = 16 // HKDF salt = 128 bits
 	HMACSize    = 32 // HMAC-SHA256 output = 256 bits
+
+	// KeyCommitSize is the size of the key-commitment tag appended to the
+	// trailer in v5. The tag is HMAC-SHA256(encKey, context || fileSalt).
+	KeyCommitSize = 32
 
 	// Argon2ParamSize is the on-disk size of the serialised Argon2Params struct:
 	// 4 (time) + 4 (memory) + 1 (threads) + 3 (reserved).
@@ -74,10 +80,16 @@ const (
 	MaxArgon2Time   = 10               // Max passes
 	MaxArgon2Memory = 16 * 1024 * 1024 // 16 GiB in KiB (generous ceiling)
 
-	TrailerSize = 8 + HMACSize // segmentCount (8) + HMAC (32) = 40 bytes
-	SegmentSize = 1048576      // 1 MiB (2^20 bytes)
+	// V4TrailerSize is the trailer size for v4 files (no key commitment).
+	V4TrailerSize = 8 + HMACSize // segmentCount (8) + HMAC (32) = 40 bytes
 
-	// HeaderSize is the full v4 header size:
+	// TrailerSize is the v5 trailer size: segmentCount (8) + HMAC (32) +
+	// keyCommitTag (32) = 72 bytes.
+	TrailerSize = 8 + HMACSize + KeyCommitSize
+
+	SegmentSize = 1048576 // 1 MiB (2^20 bytes)
+
+	// HeaderSize is the full v4/v5 header size:
 	//   magic(9) + version(4) + salt(16) + seed(24) + argon2params(12)
 	HeaderSize = MagicSize + VersionSize + SaltSize + XNonceSize + Argon2ParamSize // 65
 
@@ -88,9 +100,10 @@ const (
 	// Java note: Go strings are UTF-8 encoded and immutable (like Java strings).
 	// Converting a string to []byte allocates a new byte slice.
 	SegmentNonceContext = "cipherforge-segment-nonce-v1"
-	TrailerHMACContext  = "cipherforge-trailer-hmac-v4"
+	TrailerHMACContext  = "cipherforge-trailer-hmac-v5"
 	MasterKeySalt       = "cipherforge-master-key-v1"
 	FileKeyContext      = "cipherforge-file-key-v1"
+	KeyCommitContext    = "cipherforge-commitment-v1"
 )
 
 // Argon2Params holds the tunable parameters for the Argon2id KDF.
