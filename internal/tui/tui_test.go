@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestWrap64(t *testing.T) {
@@ -74,5 +77,80 @@ func TestDeriveOutputPathTUI(t *testing.T) {
 				t.Errorf("deriveOutputPathTUI(%q, %q) = %q, want %q", tt.op, tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPasswordEscReturnsToTextInput(t *testing.T) {
+	m := Model{
+		screen:        ScreenPassword,
+		operation:     "encrypt",
+		textMode:      true,
+		passwordEntry: NewPasswordModel("encrypt", "text input"),
+		textInput:     NewTextInputModel("Enter text to encrypt:"),
+	}
+	m.passwordEntry.textMode = true
+
+	got, cmd := m.updatePassword(tea.KeyMsg{Type: tea.KeyEsc})
+	nm := got.(Model)
+	if nm.screen != ScreenTextInput {
+		t.Errorf("esc in text mode: screen = %v, want ScreenTextInput", nm.screen)
+	}
+	if cmd == nil {
+		t.Error("esc in text mode: expected non-nil init command to restart cursor blink")
+	}
+}
+
+func TestPasswordEscReturnsToFilePicker(t *testing.T) {
+	m := Model{
+		screen:        ScreenPassword,
+		operation:     "decrypt",
+		textMode:      false,
+		passwordEntry: NewPasswordModel("decrypt", "/tmp/doc.cfo"),
+		filePicker:    NewFilePickerModel(true),
+	}
+
+	got, _ := m.updatePassword(tea.KeyMsg{Type: tea.KeyEsc})
+	nm := got.(Model)
+	if nm.screen != ScreenFilePicker {
+		t.Errorf("esc in file mode: screen = %v, want ScreenFilePicker", nm.screen)
+	}
+}
+
+func TestErrorDismissReturnsToPreviousScreen(t *testing.T) {
+	m := Model{
+		screen:     ScreenMainMenu, // placeholder set by showError
+		prevScreen: ScreenTextInput,
+		err:        errors.New("input cannot be empty"),
+		textInput:  NewTextInputModel("Enter text to encrypt:"),
+	}
+
+	got, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	nm := got.(Model)
+	if nm.screen != ScreenTextInput {
+		t.Errorf("screen = %v, want ScreenTextInput", nm.screen)
+	}
+	if nm.err != nil {
+		t.Errorf("err should be cleared, got %v", nm.err)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil init command after error dismissal")
+	}
+}
+
+func TestErrorDismissDoesNotQuitOnQ(t *testing.T) {
+	m := Model{
+		screen:     ScreenMainMenu, // placeholder set by showError
+		prevScreen: ScreenTextInput,
+		err:        errors.New("input cannot be empty"),
+		textInput:  NewTextInputModel("Enter text to encrypt:"),
+	}
+
+	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	nm := got.(Model)
+	if nm.screen != ScreenTextInput {
+		t.Errorf("screen = %v, want ScreenTextInput (q should dismiss error, not quit)", nm.screen)
+	}
+	if nm.quitting {
+		t.Error("q on error screen should not quit")
 	}
 }

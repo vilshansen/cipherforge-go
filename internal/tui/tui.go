@@ -167,21 +167,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		if msg.String() == "ctrl+c" {
 			m.quitting = true
 			return m, tea.Quit
-		case "q":
-			if m.screen == ScreenMainMenu {
-				m.quitting = true
-				return m, tea.Quit
-			}
 		}
 
 		if m.err != nil {
 			m.screen = m.prevScreen
 			m.err = nil
-			return m, nil
+			return m, m.initForScreen()
+		}
+
+		if msg.String() == "q" && m.screen == ScreenMainMenu {
+			m.quitting = true
+			return m, tea.Quit
 		}
 
 	case progressTickMsg:

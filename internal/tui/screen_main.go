@@ -113,12 +113,14 @@ func (m Model) selectMenuOption() (tea.Model, tea.Cmd) {
 	switch m.mainMenu.cursor {
 	case 0: // Encrypt file
 		m.operation = "encrypt"
+		m.textMode = false
 		m.filePicker = NewFilePickerModel(false)
 		m.filePicker.SetSize(m.width, m.height)
 		m.screen = ScreenFilePicker
 		return m, m.filePicker.Init()
 	case 1: // Decrypt file
 		m.operation = "decrypt"
+		m.textMode = false
 		m.filePicker = NewFilePickerModel(true)
 		m.filePicker.SetSize(m.width, m.height)
 		m.screen = ScreenFilePicker

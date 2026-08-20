@@ -145,6 +145,10 @@ func (m Model) updatePassword(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch key.String() {
 	case "esc":
+		if m.textMode {
+			m.screen = ScreenTextInput
+			return m, m.textInput.Init()
+		}
 		m.screen = ScreenFilePicker
 		return m, nil
 
