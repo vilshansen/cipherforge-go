@@ -1,5 +1,20 @@
 # Changelog
 
+## v5.0.3 (2026-08-20)
+
+### Fixed
+
+- **Esc after confirming text input returned to the file picker.** Pressing Esc
+  on the password screen in text mode (encrypt/decrypt text) now returns to the
+  text input screen instead of the file picker. `textMode` is also reset
+  correctly when starting file operations, preventing stale state from
+  leaking between menu selections.
+
+- **Error screen left the text input unresponsive.** After dismissing an error
+  (for example, confirming an empty input), the text input screen is now
+  re-initialized so the cursor blinks and accepts input again. Pressing `q` on
+  the error screen now dismisses the error instead of quitting the app.
+
 ## v5.0.2 (2026-08-20)
 
 ### Changed
