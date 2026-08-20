@@ -7,8 +7,22 @@ if [[ "${1:-}" == "--powershell" ]]; then
     exec pwsh -NoProfile -File "$(dirname "$0")/build-all.ps1" "${@:2}"
 fi
 
-GIT_COMMIT=$(git rev-parse --short HEAD)
-VERSION="${VERSION:-4.1.2}"
+# ---------------------------------------------------------------------
+# Never auto-download a Go toolchain: always use the one that is installed.
+# Module fetching (vendored vs network) is decided later based on vendor/.
+# ---------------------------------------------------------------------
+export GOTOOLCHAIN=local
+
+# The git commit stamp is optional: fall back to 'unknown' when git is missing
+# or the source tree is a plain tarball (no .git directory) — this keeps the
+# build working fully offline from the released source archive.
+if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    GIT_COMMIT=$(git rev-parse --short HEAD)
+else
+    GIT_COMMIT="unknown"
+fi
+
+VERSION="${VERSION:-5.0.1}"
 
 SOURCE_FILE="./cmd/cfo/"
 
@@ -41,10 +55,13 @@ section() { echo ""; echo "${SEP}"; echo "  $*"; echo "${SEP}"; }
 divider() { echo "${DASH}"; }
 
 usage() {
-    echo "Usage: $0 [--platforms os/arch,...]"
+    echo "Usage: $0 [--platforms os/arch,...] [--vendor]"
     echo ""
     echo "  --platforms  Comma-separated list of targets (default: all)."
     echo "               Example: --platforms linux/amd64,darwin/arm64"
+    echo ""
+    echo "  --vendor     Run 'go mod vendor' first to create the local vendor/"
+    echo "               directory (requires network), then build fully offline."
     echo ""
     echo "  VERSION env var overrides the version string (default: ${VERSION})."
     exit 0
@@ -65,6 +82,10 @@ while [[ $# -gt 0 ]]; do
             fi
             IFS=',' read -ra PLATFORMS <<< "$2"
             shift 2
+            ;;
+        --vendor)
+            VENDOR=true
+            shift
             ;;
         -h|--help)
             usage
@@ -96,19 +117,41 @@ done
 
 section "Prerequisites"
 
-for cmd in go git; do
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        fail "$cmd is required but not found in PATH"
-        exit 1
-    fi
-done
+if ! command -v go >/dev/null 2>&1; then
+    fail "go is required but not found in PATH"
+    exit 1
+fi
 ok "go $(go version | cut -d' ' -f3)"
-ok "git $(git version | cut -d' ' -f3)"
+
+if command -v git >/dev/null 2>&1; then
+    ok "git $(git version | cut -d' ' -f3)"
+else
+    warn "git not found — commit stamp and git source archive will be skipped"
+fi
 
 if command -v upx >/dev/null 2>&1; then
     ok "upx $(upx --version 2>/dev/null | head -1 || echo 'found')"
 else
     warn "upx not found — compression step will be skipped"
+fi
+
+# -------------------------------------------------------
+# Vendor dependencies (optional, on demand)
+# -------------------------------------------------------
+
+if [[ "${VENDOR:-false}" == "true" ]]; then
+    info "Running 'go mod vendor' (requires network access)..."
+    go mod vendor
+    ok "vendor/ created."
+fi
+
+if [[ -f vendor/modules.txt ]]; then
+    export GOFLAGS=-mod=vendor
+    export GOPROXY=off
+    info "Using vendored dependencies (offline)."
+else
+    warn "vendor/ not found — modules will be fetched on demand (network)."
+    info "Tip: run with --vendor once to snapshot dependencies locally."
 fi
 
 # -------------------------------------------------------
@@ -204,7 +247,13 @@ for PLATFORM in "${PLATFORMS[@]}"; do
 
     LDFLAGS="-s -w -X main.GitCommit=${GIT_COMMIT} -X main.Version=${VERSION}"
 
-    if GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
+    BUILD_FLAGS=(-trimpath -buildvcs=false)
+    if [[ -f vendor/modules.txt ]]; then
+        BUILD_FLAGS+=(-mod=vendor)
+    fi
+
+    if CGO_ENABLED=0 GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
+            "${BUILD_FLAGS[@]}" \
             -ldflags="${LDFLAGS}" \
             -o "${DIST_OUTPUT_FILE}" \
             "${SOURCE_FILE}" 2>&1; then
@@ -250,8 +299,20 @@ info "SHA256 checksums written to ${DIST_DIR}/checksums.txt"
 
 section "Source Archive"
 
-git archive --format=tar.gz --output="${DIST_DIR}/cipherforge_source.tar.gz" HEAD
-ok "Source archive -> ${DIST_DIR}/cipherforge_source.tar.gz"
+if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    git archive --format=tar.gz --output="${DIST_DIR}/cipherforge_source.tar.gz" HEAD
+    ok "Source archive -> ${DIST_DIR}/cipherforge_source.tar.gz (git archive, source only)"
+else
+    tar -czf "${DIST_DIR}/cipherforge_source.tar.gz" \
+        --exclude='.git' \
+        --exclude='dist' \
+        --exclude='vendor' \
+        --exclude='test/test_data' \
+        --exclude='*.test' \
+        --exclude='test_bin' \
+        .
+    ok "Source archive -> ${DIST_DIR}/cipherforge_source.tar.gz (tar, source only)"
+fi
 
 # -------------------------------------------------------
 # Compression (UPX)

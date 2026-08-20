@@ -10,5 +10,6 @@ lipsum.txt
 cfo
 cfo.exe
 dist/
+vendor/
 *.test
 

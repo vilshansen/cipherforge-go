@@ -666,10 +666,27 @@ even if they cannot read the contents.
 
 Requires Go 1.25 or later.
 
+**Static, reproducible binaries.** Binaries are built with `CGO_ENABLED=0`,
+`-trimpath`, and `-buildvcs=false`, producing fully static executables with no
+libc/CGo runtime dependency. `git` is never required to compile.
+
+**Vendored (offline) builds on demand.** The `vendor/` directory is *not*
+committed to the repository (it is git-ignored). To snapshot every dependency
+locally and build with no network access afterwards, pass `--vendor` (Unix) or
+`-Vendor` (PowerShell) once while online:
+
 ```bash
-git clone https://github.com/vilshansen/cipherforge-go
-cd cipherforge-go
-go build -o cfo ./cmd/cfo/
+./build-all.sh --vendor
+```
+
+After that, a plain `./build-all.sh` detects `vendor/` and builds fully offline
+(`GOTOOLCHAIN=local`, `GOPROXY=off`, `-mod=vendor`). Without `vendor/`, the
+scripts fall back to normal module resolution (which requires network).
+
+For a single binary built against the vendored tree:
+```bash
+go mod vendor                      # once, with network access
+go build -mod=vendor -trimpath -buildvcs=false -o cfo ./cmd/cfo/
 ```
 
 To build for all supported platforms on Unix-like shells:
@@ -695,11 +712,13 @@ pwsh -File .\build-all.ps1 -Platforms linux/amd64,darwin/arm64
 The build script runs the full test suite before compiling and aborts on any failure.
 Compiled binaries are written to `dist/originals/` with SHA256 checksums in
 `dist/checksums.txt`. UPX-compressed versions (where supported) are written to
-`dist/compressed/`.
+`dist/compressed/`; the uncompressed binaries in `dist/originals/` are the
+fully static, future-proof artifacts.
 
-To run the tests manually:
+To run the tests manually (against the vendored tree — create it first with
+`go mod vendor`):
 ```bash
-go test -race -cover ./...
+go test -mod=vendor -cover ./...
 ```
 
 ---
