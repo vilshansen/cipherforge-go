@@ -81,18 +81,13 @@ func (m ProgressModel) View() string {
 	b.WriteString(fmt.Sprintf("    [%s]  %.0f%%\n", bar, float64(filled)*100/float64(barWidth)))
 	b.WriteString(fmt.Sprintf("    %.2f MB  |  %s  |  %s\n", mb, speed, elapsed))
 	b.WriteString("\n")
-	b.WriteString(subtleStyle.Render("Processing... press q to abort."))
+	b.WriteString(subtleStyle.Render("Processing..."))
 
 	return b.String()
 }
 
 // updateProgress: all real work is driven by progressTickMsg, handled in Model.Update.
 func (m Model) updateProgress(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
-	if ok && key.String() == "q" {
-		m.quitting = true
-		return m, tea.Quit
-	}
 	return m, nil
 }
 

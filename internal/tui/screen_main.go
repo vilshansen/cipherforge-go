@@ -128,14 +128,14 @@ func (m Model) selectMenuOption() (tea.Model, tea.Cmd) {
 	case 2: // Encrypt text
 		m.operation = "encrypt"
 		m.textMode = true
-		m.textInput = NewTextInputModel("Enter text to encrypt:")
+		m.textInput = NewTextInputModel("Enter Text to Encrypt")
 		m.textInput.SetSize(m.width, m.height)
 		m.screen = ScreenTextInput
 		return m, m.textInput.Init()
 	case 3: // Decrypt text
 		m.operation = "decrypt"
 		m.textMode = true
-		m.textInput = NewTextInputModel("Paste base64-encoded ciphertext:")
+		m.textInput = NewTextInputModel("Paste Base64-Encoded Ciphertext")
 		m.textInput.SetSize(m.width, m.height)
 		m.screen = ScreenTextInput
 		return m, m.textInput.Init()

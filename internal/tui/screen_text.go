@@ -48,9 +48,7 @@ func (m TextInputModel) Init() tea.Cmd {
 func (m TextInputModel) View() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render(fmt.Sprintf("%s — Text Input", strings.Title(m.prompt))))
-	b.WriteString("\n\n")
-	b.WriteString(subtleStyle.Render(m.prompt))
+	b.WriteString(titleStyle.Render(m.prompt))
 	b.WriteString("\n\n")
 	b.WriteString(textAreaStyle.Render(m.area.View()))
 	b.WriteString("\n\n")

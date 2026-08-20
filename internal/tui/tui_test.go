@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestWrap64(t *testing.T) {
@@ -142,7 +143,7 @@ func TestErrorDismissDoesNotQuitOnQ(t *testing.T) {
 		screen:     ScreenMainMenu, // placeholder set by showError
 		prevScreen: ScreenTextInput,
 		err:        errors.New("input cannot be empty"),
-		textInput:  NewTextInputModel("Enter text to encrypt:"),
+		textInput:  NewTextInputModel("Enter Text to Encrypt"),
 	}
 
 	got, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
@@ -152,5 +153,21 @@ func TestErrorDismissDoesNotQuitOnQ(t *testing.T) {
 	}
 	if nm.quitting {
 		t.Error("q on error screen should not quit")
+	}
+}
+
+func TestDecryptedTextWraps(t *testing.T) {
+	long := strings.Repeat("word ", 60) // 300 chars, single line
+	m := buildResults("decrypt", "", "", nil, "", long, true)
+
+	maxWidth := 0
+	for _, ln := range strings.Split(m.View(), "\n") {
+		if w := lipgloss.Width(ln); w > maxWidth {
+			maxWidth = w
+		}
+	}
+
+	if maxWidth > 78 {
+		t.Errorf("decrypted text not wrapped: max line width = %d, want <= 78", maxWidth)
 	}
 }

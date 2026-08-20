@@ -167,10 +167,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		if msg.String() == "ctrl+c" {
-			m.quitting = true
-			return m, tea.Quit
-		}
+		// Ctrl+C is intentionally disabled: it must not quit the application.
+		// The key is ignored here and by every screen handler.
 
 		if m.err != nil {
 			m.screen = m.prevScreen

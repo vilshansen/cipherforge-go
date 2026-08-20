@@ -51,7 +51,8 @@ var (
 			Padding(0, 2).
 			Width(74)
 	outBoxStyle = lipgloss.NewStyle().
-			Padding(0, 2)
+			Padding(0, 2).
+			Width(74)
 	pwdLabelStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("226"))
 	copiedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	hintIndent    = lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
@@ -113,7 +114,7 @@ func (m ResultsModel) View() string {
 
 	if m.success && m.genPassword != "" {
 		b.WriteString("\n")
-		b.WriteString(pwdLabelStyle.Render("Auto-generated password (save this, plaintext is unrecoverable without it):"))
+		b.WriteString(pwdLabelStyle.Render("Generated password (save it; unrecoverable if lost):"))
 		b.WriteString("\n\n")
 		b.WriteString(pwdBoxStyle.Render(m.genPassword))
 		b.WriteString("\n\n")
@@ -163,10 +164,6 @@ func (m Model) updateResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mainMenu = NewMainMenuModel(m.version, m.gitCommit)
 		m.resetWorkflow()
 		return m, nil
-
-	case "q":
-		m.quitting = true
-		return m, tea.Quit
 
 	case "c":
 		if m.results.genPassword != "" {
