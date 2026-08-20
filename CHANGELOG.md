@@ -1,5 +1,23 @@
 # Changelog
 
+## v5.0.4 (2026-08-20)
+
+### Changed
+
+- **Text input screens show a single clean title.** Removed the duplicate prompt
+  line and the colon/em-dash suffix; headings are now title-cased
+  ("Enter Text to Encrypt" / "Paste Base64-Encoded Ciphertext").
+
+- **Ctrl+C no longer quits the application.** It is ignored on every screen.
+
+- **`q` quits only from the main menu.** On the progress and results screens,
+  `q` no longer exits; use Esc/Enter to return to the menu first.
+
+- **Decrypted text wraps to a fixed width.** The decrypted output box now
+  matches the encrypted output width, so left and right margins align.
+
+- **Shortened the generated-password reminder label.**
+
 ## v5.0.3 (2026-08-20)
 
 ### Fixed
