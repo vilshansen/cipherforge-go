@@ -1,5 +1,38 @@
 # Changelog
 
+## v5.0.2 (2026-08-20)
+
+### Changed
+
+- **Reproducible, fully static release binaries.** The build scripts now
+  compile every platform with `CGO_ENABLED=0`, `-trimpath`, and
+  `-buildvcs=false`, producing self-contained executables with no libc/CGo
+  runtime dependency.
+
+- **Offline vendoring on demand.** The build scripts gained a `--vendor`
+  (Unix) / `-Vendor` (PowerShell) flag that runs `go mod vendor` to snapshot
+  dependencies into a local, git-ignored `vendor/` directory. When `vendor/`
+  is present the build runs fully offline (`GOTOOLCHAIN=local`,
+  `GOPROXY=off`, `-mod=vendor`); otherwise it falls back to normal module
+  resolution. The `vendor/` tree is intentionally not committed to the
+  repository.
+
+### Fixed
+
+- **`build-all.ps1` no longer leaks Go environment variables.** The script now
+  restores `GOOS`/`GOARCH`/`CGO_ENABLED`/`GOPROXY`/`GOTOOLCHAIN`/`GOFLAGS` on
+  exit, so running it no longer leaves the shell targeting the last platform
+  built.
+
+- **`git` is no longer required to build.** The commit stamp falls back to
+  `unknown` and the source archive falls back to `tar` when git is not
+  available.
+
+### Documentation
+
+- README.MD build instructions updated to describe the static, reproducible
+  build and the optional offline vendoring workflow.
+
 ## v5.0.1 (2026-08-09)
 
 ### Fixed
