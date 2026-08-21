@@ -154,7 +154,7 @@ func runCLI(cfg params) {
 		if outputFile == "" {
 			outputFile = deriveOutputPath(cfg.Operation, inputFile)
 		}
-		if err := processFile(cfg.Operation, inputFile, outputFile, password, masterKey, cfg.Quiet, cfg.Force, cfg.Atomic, cfg.Base64); err != nil {
+		if err := processFile(cfg.Operation, inputFile, outputFile, password, masterKey, cfg.Quiet, cfg.Force, cfg.Base64); err != nil {
 			ui.PrintError(fmt.Sprintf("Failed to process %s: %v", inputFile, err))
 			hasErrors = true
 		}
@@ -184,7 +184,7 @@ func deriveOutputPath(operation, inputFile string) string {
 
 // processFile dispatches to encryptFile or decryptFile based on the operation.
 // Also performs path validation and checks for existing output files.
-func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force, atomic, base64 bool) error {
+func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force, base64 bool) error {
 	// os.Stat returns (FileInfo, error). If err == nil, the file exists.
 	if outputFile != "-" && !force {
 		if _, err := os.Stat(outputFile); err == nil {
@@ -194,7 +194,7 @@ func processFile(operation, inputFile, outputFile string, password, masterKey []
 	if operation == "encrypt" {
 		return encryptFile(inputFile, outputFile, password, masterKey, quiet, base64)
 	}
-	return decryptFile(inputFile, outputFile, password, quiet, atomic, base64)
+	return decryptFile(inputFile, outputFile, password, quiet, base64)
 }
 
 // encryptFile handles I/O setup for encryption and delegates to the Encrypter engine.
@@ -215,28 +215,31 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 		defer in.Close()
 	}
 
-	// Open output. os.O_WRONLY|os.O_CREATE|os.O_TRUNC are bit flags.
-	// 0600 is Unix permission: owner read+write only.
+	// Always write to a temporary file in the destination directory and
+	// atomically rename it into place on success, so a failed or interrupted
+	// encryption never leaves a partial output file at the final path.
 	var out *os.File
+	writePath := outputFile
 	if outputFile == "-" {
 		out = os.Stdout
 	} else {
 		var err error
-		out, err = os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+		out, err = os.CreateTemp(filepath.Dir(outputFile), ".cfo-encrypt-*")
 		if err != nil {
-			return err
+			return fmt.Errorf("cannot create temp file for encryption: %w", err)
 		}
+		writePath = out.Name()
 	}
 
 	// Automatic cleanup on failure: the closure captures `succeeded` and
-	// `outputFile` by reference. If we return with an error, the defer
-	// removes the partial output file.
+	// `writePath` by reference. If we return with an error, the defer
+	// removes the temporary file.
 	succeeded := false
 	defer func() {
 		if outputFile != "-" {
 			out.Close()
 			if !succeeded {
-				os.Remove(outputFile)
+				os.Remove(writePath)
 			}
 		}
 	}()
@@ -278,6 +281,15 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 
 	if err == nil {
 		succeeded = true
+		// Atomically rename the temp file to the final output path.
+		// os.Rename is atomic when src and dst are on the same filesystem.
+		if outputFile != "-" {
+			out.Close() // Must close before rename on Windows
+			if rerr := os.Rename(writePath, outputFile); rerr != nil {
+				os.Remove(writePath)
+				return fmt.Errorf("atomic rename failed: %w", rerr)
+			}
+		}
 	}
 	return err
 }
@@ -288,7 +300,7 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 // the result in a seekable bytes.Reader — suitable for copy/paste workflows
 // with reasonably-sized files.
 // Supports atomic mode: decrypt to temp file, rename on success.
-func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic, base64 bool) error {
+func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bool) error {
 	if inputFile == "-" {
 		return fmt.Errorf("decrypt from stdin is not supported (seek required for trailer HMAC)")
 	}
@@ -319,25 +331,22 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic, b
 		reader = in
 	}
 
-	// Open output — with special handling for atomic mode.
-	// os.CreateTemp is like Java's Files.createTempFile().
-	// The temp file is in the same directory as the final output to ensure
-	// atomic rename (rename across filesystems is not atomic).
+	// Always write to a temporary file in the destination directory and
+	// atomically rename it into place on success, so a failed or interrupted
+	// decryption never leaves partial plaintext at the final path.
+	// os.CreateTemp is like Java's Files.createTempFile(). The temp file is
+	// in the same directory as the final output to ensure an atomic rename
+	// (rename across filesystems is not atomic).
 	var out *os.File
 	writePath := outputFile
 	if outputFile == "-" {
 		out = os.Stdout
-	} else if atomic {
+	} else {
 		out, err = os.CreateTemp(filepath.Dir(outputFile), ".cfo-decrypt-*")
 		if err != nil {
 			return fmt.Errorf("cannot create temp file for atomic decrypt: %w", err)
 		}
 		writePath = out.Name()
-	} else {
-		out, err = os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			return err
-		}
 	}
 
 	// Automatic cleanup on failure.
@@ -364,7 +373,7 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, atomic, b
 
 	// Atomically rename the temp file to the final output path.
 	// os.Rename is atomic when src and dst are on the same filesystem.
-	if atomic && succeeded && outputFile != "-" {
+	if succeeded && outputFile != "-" {
 		out.Close() // Must close before rename on Windows
 		if err := os.Rename(writePath, outputFile); err != nil {
 			os.Remove(writePath)
@@ -442,7 +451,13 @@ func expandInputPaths(inputs []string, op string) ([]string, error) {
 
 // showHelp prints the help text to stdout.
 func showHelp() {
-	fmt.Printf("cfo %s — encrypt and decrypt files with XChaCha20-Poly1305 and Argon2id.\n\n", Version)
+	// Mirror the TUI menu header: "cfo <version> (<commit>) — ...".
+	verLine := fmt.Sprintf("cfo %s", Version)
+	if GitCommit != "none" && GitCommit != "" {
+		verLine += fmt.Sprintf(" (%s)", GitCommit)
+	}
+	verLine += " — encrypt and decrypt files with XChaCha20-Poly1305 and Argon2id."
+	fmt.Printf("%s\n\n", verLine)
 
 	fmt.Println("Usage: cfo -e <file...>")
 	fmt.Println("       cfo -d <file...>")
@@ -461,7 +476,6 @@ func showHelp() {
 	fmt.Println("  -i, --interactive Launch the full-screen terminal UI")
 	fmt.Println("  -q, --quiet       Suppress all non-error output")
 	fmt.Println("  -f, --force       Overwrite output file if it already exists")
-	fmt.Println("  -a, --atomic      Decrypt to a temp file, rename only on success")
 	fmt.Println("  -h, --help        Show this help text")
 	fmt.Println("  -v, --version     Show version information")
 

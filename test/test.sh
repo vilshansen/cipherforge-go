@@ -349,7 +349,7 @@ test_stdin_stdout() {
     fi
 }
 
-# --- atomic mode (-a) --------------------------------------------------------
+# --- atomic decrypt (default) -------------------------------------------------
 test_atomic_decrypt() {
     local file="$TEST_DIR/atomic.bin"
     local orig="$TEST_DIR/atomic.orig"
@@ -364,16 +364,16 @@ test_atomic_decrypt() {
 
     rm -f "$file"
 
-    # Decrypt with -a (atomic) — output should appear atomically.
-    if ! timeout "$TIMEOUT_SECS" "$CFO_BIN" -d "${file}.cfo" -p "$TEST_PASSWORD" -a >/dev/null 2>&1; then
-        report_fail "Atomic decrypt" "decrypt failed"
+    # Decryption is atomic by default — output should appear atomically.
+    if ! timeout "$TIMEOUT_SECS" "$CFO_BIN" -d "${file}.cfo" -p "$TEST_PASSWORD" >/dev/null 2>&1; then
+        report_fail "Atomic decrypt (default)" "decrypt failed"
         return 1
     fi
 
     if [[ -f "$file" ]] && sha256_check <(echo "$(sha256 "$orig")  $file"); then
-        report_ok "Atomic decrypt (-a)"
+        report_ok "Atomic decrypt (default)"
     else
-        report_fail "Atomic decrypt (-a)" "output mismatch or missing"
+        report_fail "Atomic decrypt (default)" "output mismatch or missing"
         return 1
     fi
 }

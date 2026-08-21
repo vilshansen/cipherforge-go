@@ -19,7 +19,6 @@ type params struct {
 	Output      string   // -o override, or ""
 	Quiet       bool
 	Force       bool
-	Atomic      bool
 	Base64      bool // wrap I/O in base64 transport encoding
 	Interactive bool // launch TUI instead of CLI mode
 }
@@ -43,8 +42,6 @@ func getParameters() (params, error) {
 			p.Quiet = true
 		case "-f", "--force":
 			p.Force = true
-		case "-a", "--atomic":
-			p.Atomic = true
 		case "-b", "--base64":
 			p.Base64 = true
 		case "-i", "--interactive":

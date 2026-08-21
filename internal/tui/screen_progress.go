@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -127,15 +128,19 @@ func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 	}
 	defer in.Close()
 
+	// Always write to a temporary file in the destination directory and
+	// atomically rename it into place on success, so a failed or interrupted
+	// encryption never leaves a partial output file at the final path.
 	succeeded := false
-	out, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	out, err := os.CreateTemp(filepath.Dir(outputFile), ".cfo-encrypt-*")
 	if err != nil {
-		return fmt.Errorf("open output: %w", err)
+		return fmt.Errorf("create temp output: %w", err)
 	}
+	writePath := out.Name()
 	defer func() {
 		out.Close()
 		if !succeeded {
-			os.Remove(outputFile)
+			os.Remove(writePath)
 		}
 	}()
 
@@ -164,6 +169,12 @@ func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 
 	if err == nil {
 		succeeded = true
+		// Atomically rename the temp file to the final output path.
+		out.Close() // Must close before rename on Windows
+		if rerr := os.Rename(writePath, outputFile); rerr != nil {
+			os.Remove(writePath)
+			return fmt.Errorf("atomic rename failed: %w", rerr)
+		}
 	}
 	return err
 }
@@ -191,15 +202,19 @@ func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 		defer in.Close()
 	}
 
+	// Always write to a temporary file in the destination directory and
+	// atomically rename it into place on success, so a failed or interrupted
+	// decryption never leaves partial plaintext at the final path.
 	succeeded := false
-	out, err := os.OpenFile(outputFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	out, err := os.CreateTemp(filepath.Dir(outputFile), ".cfo-decrypt-*")
 	if err != nil {
-		return fmt.Errorf("open output: %w", err)
+		return fmt.Errorf("create temp output: %w", err)
 	}
+	writePath := out.Name()
 	defer func() {
 		out.Close()
 		if !succeeded {
-			os.Remove(outputFile)
+			os.Remove(writePath)
 		}
 	}()
 
@@ -210,6 +225,12 @@ func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 
 	if err == nil {
 		succeeded = true
+		// Atomically rename the temp file to the final output path.
+		out.Close() // Must close before rename on Windows
+		if rerr := os.Rename(writePath, outputFile); rerr != nil {
+			os.Remove(writePath)
+			return fmt.Errorf("atomic rename failed: %w", rerr)
+		}
 	}
 	return err
 }

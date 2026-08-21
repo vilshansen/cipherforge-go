@@ -143,8 +143,6 @@ Options:
   -i, --interactive Launch the full-screen terminal UI
   -q, --quiet       Suppress all non-error output
   -f, --force       Overwrite output file if it already exists
-  -a, --atomic      Decrypt to a temp file, rename only on success
-                    (prevents partial plaintext on disk)
   -h, --help        Show help text
   -v, --version     Show version information
 ```
