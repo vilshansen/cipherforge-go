@@ -1,5 +1,17 @@
 # Changelog
 
+## v5.0.5 (2026-08-21)
+
+### Changed
+
+- **Atomic writes are now the default** for both encryption and decryption (CLI
+  and TUI). Output is written to a temporary file and atomically renamed into
+  place, so a failed or interrupted operation never leaves partial output at
+  the final path. The `-a`/`--atomic` flag has been removed.
+
+- **CLI help header now shows the git commit hash** after the version number,
+  matching the TUI menu.
+
 ## v5.0.4 (2026-08-20)
 
 ### Changed
