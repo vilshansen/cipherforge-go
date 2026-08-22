@@ -3,7 +3,6 @@ package tui
 import (
 	"bufio"
 	"bytes"
-	b64 "encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/vilshansen/cipherforge-go/internal/armor"
 	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
 )
 
@@ -146,11 +146,10 @@ func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 
 	var writer io.Writer = bufio.NewWriterSize(out, 1024*1024)
 	bufWriter := writer.(*bufio.Writer)
-	var b64Closer io.Closer
+	var armorCloser io.WriteCloser
 	if base64 {
-		b64w := b64.NewEncoder(b64.StdEncoding, writer)
-		writer = b64w
-		b64Closer = b64w
+		armorCloser = armor.EncodeWriter(bufWriter)
+		writer = armorCloser
 	}
 
 	enc := cipherforge.NewEncrypter(password)
@@ -158,8 +157,8 @@ func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 		sendProgress(ch, bytes)
 	})
 
-	if b64Closer != nil {
-		if closeErr := b64Closer.Close(); closeErr != nil && err == nil {
+	if armorCloser != nil {
+		if closeErr := armorCloser.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
 	}
@@ -192,12 +191,11 @@ func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 		if err != nil {
 			return fmt.Errorf("read base64 input: %w", err)
 		}
-		decoded := make([]byte, b64.StdEncoding.DecodedLen(len(raw)))
-		n, err := b64.StdEncoding.Decode(decoded, raw)
+		decoded, err := armor.DecodeBytes(raw)
 		if err != nil {
 			return fmt.Errorf("decode base64: %w", err)
 		}
-		reader = strings.NewReader(string(decoded[:n]))
+		reader = bytes.NewReader(decoded)
 	} else {
 		defer in.Close()
 	}
@@ -241,7 +239,7 @@ func sendProgress(ch chan<- progressTickMsg, bytes int64) {
 	ch <- progressTickMsg{bytes: bytes}
 }
 
-// runTextEncrypt encrypts plaintext in memory and writes base64 output to out.
+// runTextEncrypt encrypts plaintext in memory and writes armored base64 output to out.
 func runTextEncrypt(plaintext string, password []byte, ch chan<- progressTickMsg) (string, error) {
 	in := strings.NewReader(plaintext)
 	var buf bytes.Buffer
@@ -251,17 +249,11 @@ func runTextEncrypt(plaintext string, password []byte, ch chan<- progressTickMsg
 		return "", err
 	}
 
-	var b64buf bytes.Buffer
-	b64w := b64.NewEncoder(b64.StdEncoding, &b64buf)
-	if _, err := b64w.Write(buf.Bytes()); err != nil {
-		return "", err
-	}
-	b64w.Close()
-	return b64buf.String(), nil
+	return armor.EncodeBytes(buf.Bytes())
 }
 
 func runTextDecrypt(b64input string, password []byte, ch chan<- progressTickMsg) (string, error) {
-	raw, err := b64.StdEncoding.DecodeString(b64input)
+	raw, err := armor.DecodeString(b64input)
 	if err != nil {
 		return "", fmt.Errorf("invalid base64 input: %w", err)
 	}

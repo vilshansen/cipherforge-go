@@ -92,7 +92,7 @@ func TestMlockBytes(t *testing.T) {
 
 func TestDeriveMasterKey(t *testing.T) {
 	password := []byte("test-password")
-	params := format.DefaultArgon2Params()
+	params := fastParams
 
 	mk := DeriveMasterKey(password, params)
 	if len(mk) != 32 {
@@ -112,8 +112,8 @@ func TestDeriveMasterKey(t *testing.T) {
 	}
 
 	// Different params = different master key
-	fastParams := format.Argon2Params{Time: 1, Memory: 64 * 1024, Threads: 1}
-	mk4 := DeriveMasterKey(password, fastParams)
+	diffParams := format.Argon2Params{Time: 2, Memory: 64 * 1024, Threads: 1}
+	mk4 := DeriveMasterKey(password, diffParams)
 	if bytes.Equal(mk, mk4) {
 		t.Error("Different Argon2 params should produce different master keys")
 	}
@@ -121,7 +121,7 @@ func TestDeriveMasterKey(t *testing.T) {
 
 func TestDeriveKeysFromMaster(t *testing.T) {
 	password := []byte("test-password")
-	params := format.DefaultArgon2Params()
+	params := fastParams
 	masterKey := DeriveMasterKey(password, params)
 
 	salt := []byte("test-salt-12345678")
@@ -160,7 +160,7 @@ func TestV4KeyDerivationRoundTrip(t *testing.T) {
 	// + per-file keys, then decrypt side independently does the same and
 	// should arrive at identical keys.
 	password := []byte("test-password")
-	params := format.DefaultArgon2Params()
+	params := fastParams
 	salt := []byte("0123456789abcdef") // 16 bytes
 
 	// Encrypt side

@@ -94,7 +94,7 @@ func (m PasswordModel) View() string {
 		b.WriteString("\n\n")
 	} else if !m.textMode {
 		// File decrypt: base64 checkbox.
-		b.WriteString(m.checkbox("Input is base64-encoded", m.base64Enabled, m.focus == 1))
+		b.WriteString(m.checkbox("Input is armored base64", m.base64Enabled, m.focus == 1))
 		b.WriteString("\n\n")
 	}
 
@@ -108,9 +108,9 @@ func (m PasswordModel) View() string {
 
 	b.WriteString("\n")
 	if m.isCheckboxFocus() {
-		b.WriteString(helpStyle.Render("space/enter: toggle  •  ↑/↓ tab: next  •  esc: back"))
+		b.WriteString(helpStyle.Render("space/enter: toggle  •  ↑/↓ or tab: next  •  esc: back"))
 	} else {
-		b.WriteString(helpStyle.Render("enter: confirm  •  ↑/↓ tab: next  •  esc: back"))
+		b.WriteString(helpStyle.Render("enter: confirm  •  ↑/↓ or tab: next  •  esc: back"))
 	}
 
 	return b.String()

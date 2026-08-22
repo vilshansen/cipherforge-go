@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -223,6 +227,133 @@ func TestDeriveOutputPath(t *testing.T) {
 			got := deriveOutputPath(tt.op, tt.inputFile)
 			if got != tt.want {
 				t.Errorf("deriveOutputPath(%q, %q) = %q, want %q", tt.op, tt.inputFile, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBooleanFlags verifies every boolean CLI flag is parsed and applied.
+func TestBooleanFlags(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+
+	tests := []struct {
+		name string
+		args []string
+		get  func(p params) bool
+	}{
+		{"-q", []string{"cfo", "-e", "f1", "-q"}, func(p params) bool { return p.Quiet }},
+		{"--quiet", []string{"cfo", "-e", "f1", "--quiet"}, func(p params) bool { return p.Quiet }},
+		{"-f", []string{"cfo", "-d", "f.cfo", "-f"}, func(p params) bool { return p.Force }},
+		{"--force", []string{"cfo", "-d", "f.cfo", "--force"}, func(p params) bool { return p.Force }},
+		{"-b", []string{"cfo", "-e", "f1", "-b"}, func(p params) bool { return p.Base64 }},
+		{"--base64", []string{"cfo", "-e", "f1", "--base64"}, func(p params) bool { return p.Base64 }},
+		{"-i", []string{"cfo", "-i"}, func(p params) bool { return p.Interactive }},
+		{"--interactive", []string{"cfo", "--interactive"}, func(p params) bool { return p.Interactive }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Args = tt.args
+			p, err := getParameters()
+			if err != nil {
+				t.Fatalf("getParameters() error = %v", err)
+			}
+			if !tt.get(p) {
+				t.Errorf("flag not applied for args %v", tt.args)
+			}
+		})
+	}
+}
+
+// TestShowHelp verifies the -h/--help output includes every documented option.
+func TestShowHelp(t *testing.T) {
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	showHelp()
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"cfo " + Version,
+		"Usage: cfo",
+		"-e ",
+		"-d ",
+		"-o ",
+		"-p ",
+		"-b, --base64",
+		"-i, --interactive",
+		"-q, --quiet",
+		"-f, --force",
+		"-h, --help",
+		"-v, --version",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help output missing %q", want)
+		}
+	}
+}
+
+// TestMain lets us re-exec the test binary to exercise os.Exit paths
+// (the -h/--help and -v/--version flags).
+func TestMain(m *testing.M) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		sep := -1
+		for i, a := range os.Args {
+			if a == "--" {
+				sep = i
+				break
+			}
+		}
+		if sep < 0 || sep+1 >= len(os.Args) {
+			os.Exit(2)
+		}
+		os.Args = append([]string{"cfo"}, os.Args[sep+1:]...)
+		main()
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// TestHelperProcess is the subprocess entry point selected via
+// -test.run=TestHelperProcess; the actual work happens in TestMain.
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+	t.Fatal("TestMain should have handled the helper invocation")
+}
+
+// TestHelpVersionFlags runs the real binary for -h/--help and -v/--version,
+// which call os.Exit, verifying they succeed and print the expected output.
+func TestHelpVersionFlags(t *testing.T) {
+	for _, tc := range []struct {
+		flag    string
+		wantOut string
+	}{
+		{"-h", "Usage: cfo"},
+		{"--help", "Usage: cfo"},
+		{"-v", "cfo " + Version},
+		{"--version", "cfo " + Version},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", tc.flag)
+			cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s: exit error: %v (output %q)", tc.flag, err, out)
+			}
+			if !strings.Contains(string(out), tc.wantOut) {
+				t.Errorf("%s: output %q missing %q", tc.flag, out, tc.wantOut)
 			}
 		})
 	}

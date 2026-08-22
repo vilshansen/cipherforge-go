@@ -73,7 +73,7 @@ func (m ResultsModel) View() string {
 
 	if m.textMode {
 		if m.success && m.outputText != "" {
-			label := "Encrypted (base64):"
+			label := "Encrypted (armored):"
 			if m.operation == "decrypt" {
 				label = "Decrypted text:"
 			}
@@ -81,9 +81,6 @@ func (m ResultsModel) View() string {
 			b.WriteString("\n\n")
 
 			text := m.outputText
-			if m.operation == "encrypt" {
-				text = wrap64(text)
-			}
 			// Truncate long output so the heading stays on screen.
 			if len(text) > 1000 {
 				text = text[:1000] + " [...]"
@@ -98,7 +95,7 @@ func (m ResultsModel) View() string {
 			if m.copiedOut {
 				b.WriteString(copiedStyle.Render("✓ Output copied to clipboard"))
 			} else {
-				b.WriteString(hintIndent.Render("Press Shift+c to copy output to clipboard"))
+				b.WriteString(hintIndent.Render("Press Shift+C to copy output to clipboard"))
 			}
 			b.WriteString("\n")
 		}
@@ -129,26 +126,6 @@ func (m ResultsModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("enter/esc: return to main menu"))
 
-	return b.String()
-}
-
-// wrap64 inserts a newline every 68 characters.
-func wrap64(s string) string {
-	const w = 68
-	if len(s) <= w {
-		return s
-	}
-	var b strings.Builder
-	for i := 0; i < len(s); i += w {
-		end := i + w
-		if end > len(s) {
-			end = len(s)
-		}
-		b.WriteString(s[i:end])
-		if end < len(s) {
-			b.WriteString("\n")
-		}
-	}
 	return b.String()
 }
 

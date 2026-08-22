@@ -103,9 +103,17 @@ func NewEncrypterWithParams(password []byte, params format.Argon2Params) *Encryp
 // master key with a per-file random salt to derive file-specific keys.
 // The master key itself must have been derived via crypto.DeriveMasterKey().
 func NewEncrypterWithMasterKey(password []byte, masterKey []byte) *Encrypter {
+	return NewEncrypterWithMasterKeyParams(password, masterKey, format.DefaultArgon2Params())
+}
+
+// NewEncrypterWithMasterKeyParams is like NewEncrypterWithMasterKey but
+// records the Argon2id parameters the master key was derived with, so a
+// decrypter reading the output header reproduces the same master key. This is
+// primarily used in tests (with fastParams) to keep the KDF cheap.
+func NewEncrypterWithMasterKeyParams(password []byte, masterKey []byte, params format.Argon2Params) *Encrypter {
 	return &Encrypter{
 		password:  password,
-		params:    format.DefaultArgon2Params(),
+		params:    params,
 		masterKey: masterKey,
 	}
 }

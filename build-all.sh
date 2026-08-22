@@ -55,13 +55,14 @@ section() { echo ""; echo "${SEP}"; echo "  $*"; echo "${SEP}"; }
 divider() { echo "${DASH}"; }
 
 usage() {
-    echo "Usage: $0 [--platforms os/arch,...] [--vendor]"
+    echo "Usage: $0 [--platforms os/arch,...] [--vendor] [--race]"
     echo ""
     echo "  --platforms  Comma-separated list of targets (default: all)."
     echo "               Example: --platforms linux/amd64,darwin/arm64"
     echo ""
     echo "  --vendor     Run 'go mod vendor' first to create the local vendor/"
     echo "               directory (requires network), then build fully offline."
+    echo "  --race       Run unit tests with the Go race detector (requires CGO)"
     echo ""
     echo "  VERSION env var overrides the version string (default: ${VERSION})."
     exit 0
@@ -85,6 +86,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --vendor)
             VENDOR=true
+            shift
+            ;;
+        --race)
+            RACE=true
             shift
             ;;
         -h|--help)
@@ -169,17 +174,21 @@ info "Targets  : ${#PLATFORMS[@]}"
 
 section "Unit Tests"
 
-# The race detector requires CGO_ENABLED=1 and a C toolchain.
-# Check whether CGO is available before using -race.
-if go env CGO_ENABLED | grep -q "1"; then
+# The race detector requires CGO_ENABLED=1 and a C toolchain, and is opt-in
+# (--race) because it roughly doubles test time for release builds.
+if [[ "${RACE:-false}" == "true" ]] && go env CGO_ENABLED | grep -q "1"; then
     TEST_FLAGS="-race"
     info "Race detector enabled (CGO is available)"
 else
     TEST_FLAGS=""
-    warn "Race detector disabled — CGO not available (install gcc/mingw-w64 to enable)"
+    if [[ "${RACE:-false}" == "true" ]]; then
+        warn "--race requested but CGO is not available — running tests without the race detector"
+    else
+        info "Running tests without the race detector (pass --race to enable)"
+    fi
 fi
 
-go test ${TEST_FLAGS} -v ./... 2>&1 | tee test_output.log
+go test ${TEST_FLAGS} ./... 2>&1 | tee test_output.log
 test_rc=$?
 
 if [ $test_rc -ne 0 ]; then
@@ -230,8 +239,37 @@ if [ -z "${DIST_DIR}" ] || [ "${DIST_DIR}" = "/" ] || [ "${DIST_DIR}" = "." ] ||
 fi
 rm -rf "${DIST_DIR}"
 
+# Run the cross-compilations in parallel (capped at MAX_JOBS) to cut build
+# time. GOOS/GOARCH are set per-command, so the background builds do not
+# interfere with one another.
+if command -v nproc >/dev/null 2>&1; then
+    DEFAULT_JOBS="$(nproc)"
+else
+    DEFAULT_JOBS=4
+fi
+MAX_JOBS="${MAX_JOBS:-${DEFAULT_JOBS}}"
+if [ "${MAX_JOBS}" -gt "${#PLATFORMS[@]}" ]; then
+    MAX_JOBS="${#PLATFORMS[@]}"
+fi
+if [ "${MAX_JOBS}" -lt 1 ]; then
+    MAX_JOBS=1
+fi
+
 PASS=0
 FAIL=0
+build_pids=()
+
+wait_batch() {
+    local pid
+    for pid in "${build_pids[@]}"; do
+        if wait "$pid"; then
+            PASS=$((PASS + 1))
+        else
+            FAIL=$((FAIL + 1))
+        fi
+    done
+    build_pids=()
+}
 
 for PLATFORM in "${PLATFORMS[@]}"; do
     TARGET_OS="${PLATFORM%%/*}"
@@ -252,20 +290,28 @@ for PLATFORM in "${PLATFORMS[@]}"; do
         BUILD_FLAGS+=(-mod=vendor)
     fi
 
-    if CGO_ENABLED=0 GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
-            "${BUILD_FLAGS[@]}" \
-            -ldflags="${LDFLAGS}" \
-            -o "${DIST_OUTPUT_FILE}" \
-            "${SOURCE_FILE}" 2>&1; then
-        ok "Built  ${TARGET_OS}/${TARGET_ARCH} -> ${DIST_OUTPUT_FILE}"
-        mkdir -p "${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}"
-        cp "${DIST_OUTPUT_FILE}" "${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}"
-        PASS=$((PASS + 1))
-    else
-        fail "Failed ${TARGET_OS}/${TARGET_ARCH}"
-        FAIL=$((FAIL + 1))
+    (
+        if CGO_ENABLED=0 GOOS=${TARGET_OS} GOARCH=${TARGET_ARCH} go build \
+                "${BUILD_FLAGS[@]}" \
+                -ldflags="${LDFLAGS}" \
+                -o "${DIST_OUTPUT_FILE}" \
+                "${SOURCE_FILE}" 2>&1; then
+            mkdir -p "${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}"
+            cp "${DIST_OUTPUT_FILE}" "${DIST_DIR}/compressed/${TARGET_OS}/${TARGET_ARCH}"
+            ok "Built  ${TARGET_OS}/${TARGET_ARCH} -> ${DIST_OUTPUT_FILE}"
+            exit 0
+        else
+            fail "Failed ${TARGET_OS}/${TARGET_ARCH}"
+            exit 1
+        fi
+    ) &
+    build_pids+=("$!")
+
+    if [ "${#build_pids[@]}" -ge "${MAX_JOBS}" ]; then
+        wait_batch
     fi
 done
+wait_batch
 
 divider
 info "Compiled: ${PASS} succeeded, ${FAIL} failed."

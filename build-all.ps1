@@ -10,6 +10,9 @@ param(
     [switch]$Vendor,
 
     [Parameter()]
+    [switch]$Race,
+
+    [Parameter()]
     [switch]$Help
 )
 
@@ -43,6 +46,7 @@ function Show-Usage {
     Write-Host ''
     Write-Host '  -Vendor     Run "go mod vendor" first to create the local vendor/'
     Write-Host '              directory (requires network), then build fully offline.'
+    Write-Host '  -Race       Run unit tests with the Go race detector (requires CGO)'
 }
 
 if (-not $Version) {
@@ -128,13 +132,18 @@ try {
     Write-Host ''
     Write-Host 'Running unit tests...'
 
+    # The race detector is opt-in (-Race) because it roughly doubles test time.
     $cgoEnabled = (go env CGO_ENABLED) -eq '1'
-    if ($cgoEnabled) {
+    if ($Race -and $cgoEnabled) {
         Write-Host '[INFO]  Race detector enabled (CGO is available)'
-        $testResult = & go test -race -v ./... 2>&1
+        $testResult = & go test -race ./... 2>&1
     } else {
-        Write-Host '[WARN]  Race detector disabled - CGO not available (install gcc/mingw-w64 to enable)'
-        $testResult = & go test -v ./... 2>&1
+        if ($Race) {
+            Write-Host '[WARN]  -Race requested but CGO not available - running tests without the race detector'
+        } else {
+            Write-Host '[INFO]  Running tests without the race detector (pass -Race to enable)'
+        }
+        $testResult = & go test ./... 2>&1
     }
 
     if ($LASTEXITCODE -ne 0) {
@@ -158,6 +167,34 @@ try {
         Remove-Item $distDir -Recurse -Force
     }
 
+    # Build each target in a separate background process so GOOS/GOARCH are
+    # isolated per target and the cross-compilations run in parallel. Each job
+    # reports exactly one line: "OK <os>/<arch>" or "FAIL <os>/<arch> :: ...".
+    $buildScript = {
+        param($os, $arch, $outFile, $ldf, $useVend, $root)
+        Push-Location $root
+        try {
+            $env:CGO_ENABLED = '0'   # fully static binary: no libc/CGo runtime dependency
+            $env:GOOS = $os
+            $env:GOARCH = $arch
+            $goArgs = @('-trimpath', '-buildvcs=false')
+            if ($useVend) { $goArgs += '-mod=vendor' }
+            $goArgs += '-ldflags', $ldf, '-o', $outFile, './cmd/cfo/'
+            $buildOut = & go build @goArgs 2>&1
+            $code = $LASTEXITCODE
+            if ($code -ne 0) {
+                Write-Output "FAIL $os/$arch :: $($buildOut -join ' ')"
+            }
+            else {
+                Write-Output "OK $os/$arch"
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+
+    $jobs = @()
     foreach ($platform in $selectedPlatforms) {
         $parts = $platform -split '/'
         $targetOs = $parts[0]
@@ -173,17 +210,25 @@ try {
         }
 
         $ldflags = "-s -w -X main.GitCommit=$gitCommit -X main.Version=$Version"
-        $env:CGO_ENABLED = '0'   # fully static binary: no libc/CGo runtime dependency
-        $env:GOOS = $targetOs
-        $env:GOARCH = $targetArch
         Write-Host "Building $platform -> $outputFile"
-        $buildArgs = @('-trimpath', '-buildvcs=false')
-        if ($useVendor) { $buildArgs += '-mod=vendor' }
-        $buildArgs += '-ldflags', $ldflags, '-o', $outputFile, './cmd/cfo/'
-        & go build @buildArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Build failed for $platform"
+        $jobs += Start-Job -ArgumentList $targetOs, $targetArch, $outputFile, $ldflags, $useVendor, $scriptRoot -ScriptBlock $buildScript
+    }
+
+    $failed = @()
+    foreach ($job in $jobs) {
+        $null = Wait-Job $job
+        $result = (Receive-Job $job | Out-String).Trim()
+        if ($result -like 'OK *') {
+            Write-Host "Built  $($result.Substring(3))"
         }
+        else {
+            Write-Host "FAILED: $result"
+            $failed += $result
+        }
+        Remove-Job $job
+    }
+    if ($failed.Count -gt 0) {
+        throw "Build failed:`n$($failed -join "`n")"
     }
 }
 finally {

@@ -139,7 +139,8 @@ Options:
   -p [pwd]     Supply a password (optional argument — prompts if omitted).
                Without -p, encryption auto-generates a password and
                decryption prompts interactively.
-  -b, --base64      Wrap encrypted output in base64 encoding (encrypt only)
+  -b, --base64      Wrap encrypted output in base64 armor (BEGIN/END markers,
+                    68-char lines) for easy copy/paste (encrypt only)
   -i, --interactive Launch the full-screen terminal UI
   -q, --quiet       Suppress all non-error output
   -f, --force       Overwrite output file if it already exists
@@ -190,11 +191,13 @@ cfo -e report.pdf -p mysecret
 cfo -d report.pdf.cfo -p mysecret
 ```
 
-Encrypt to base64-encoded output (easy copy/paste):
+Encrypt to armored base64 output (easy copy/paste, GPG-style):
 ```bash
 cfo -e secret.txt --base64
 cfo -d secret.txt.cfo --base64 -o -
 ```
+Decrypting with `--base64` requires GPG-style armored input (bare base64 is
+not accepted).
 
 Use interactive password entry (useful when the shell history is a concern):
 ```bash
@@ -220,11 +223,9 @@ By default, Cipherforge will not overwrite an existing output file — use
 | `Space` | Checkboxes | Toggle |
 | `Tab` / `Shift+Tab` | Password screen | Cycle fields |
 | `Esc` | Sub-screens | Go back |
-| `q` | Main menu, progress | Quit |
-| `Ctrl+C` | Any screen | Force quit |
+| `q` | Main menu | Quit |
 | `c` | Results screen | Copy password to clipboard |
 | `Shift+C` | Results screen | Copy encrypted/decrypted text |
-| `r` | Password screen (generate active) | Regenerate password |
 | `Ctrl+S` | Text input | Confirm and proceed |
 | Type characters | File picker | Type-ahead search |
 | `Backspace` | File picker | Go up one directory |
@@ -686,6 +687,46 @@ For a single binary built against the vendored tree:
 go mod vendor                      # once, with network access
 go build -mod=vendor -trimpath -buildvcs=false -o cfo ./cmd/cfo/
 ```
+
+### Manual builds for specific platforms
+
+To build a single binary for a specific platform yourself (without the build
+scripts), set `GOOS` and `GOARCH`, keep `CGO_ENABLED=0` for a fully static
+binary, and run `go build`:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o cfo-linux-amd64 ./cmd/cfo/
+```
+
+Supported platforms:
+
+| OS      | Architectures      | Output name |
+|---------|--------------------|-------------|
+| Linux   | amd64, arm64, 386  | `cfo`       |
+| Windows | amd64, 386         | `cfo.exe`   |
+| macOS   | amd64, arm64       | `cfo`       |
+| FreeBSD | amd64              | `cfo`       |
+
+Recommended flags for a reproducible, static release build:
+
+```bash
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
+  -mod=vendor -trimpath -buildvcs=false \
+  -ldflags "-s -w -X main.Version=5.0.5 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
+  -o cfo-darwin-arm64 ./cmd/cfo/
+```
+
+Notes:
+
+- `GOOS`/`GOARCH` follow Go's naming: `darwin/arm64` (Apple Silicon),
+  `windows/amd64`, `freebsd/amd64`, `linux/386`, and so on.
+- On Windows the output is `cfo.exe`; on all other platforms it is `cfo`.
+- `CGO_ENABLED=0` produces a fully static binary (no libc), so it runs on any
+  matching OS/arch without shared libraries.
+- `-mod=vendor` builds against the local `vendor/` tree (create it first with
+  `go mod vendor`); omit it to use normal module resolution instead.
+- `-X main.Version` / `-X main.GitCommit` stamp the version and commit into the
+  binary (defaults: `5.0.5` and `none`).
 
 To build for all supported platforms on Unix-like shells:
 ```bash

@@ -28,13 +28,13 @@ package main
 
 import (
 	"bytes"
-	b64 "encoding/base64"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/vilshansen/cipherforge-go/internal/armor"
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"github.com/vilshansen/cipherforge-go/internal/format"
 	"github.com/vilshansen/cipherforge-go/internal/tui"
@@ -134,7 +134,7 @@ func runCLI(cfg params) {
 	// Security warning: short user-supplied password + multiple files.
 	if cfg.Operation == "encrypt" && cfg.Password != nil && len(cfg.Password) < 20 && len(inputFiles) > 1 {
 		ui.PrintWarning(fmt.Sprintf(
-			"Short password (%d chars) with %d files. The v4 batch optimisation derives\n"+
+			"Short password (%d chars) with %d files. The batch optimisation derives\n"+
 				"                all file keys from one Argon2id run — a weak password puts every\n"+
 				"                output file at risk. Consider a longer password or encrypting\n"+
 				"                files separately with different passwords.",
@@ -198,9 +198,9 @@ func processFile(operation, inputFile, outputFile string, password, masterKey []
 }
 
 // encryptFile handles I/O setup for encryption and delegates to the Encrypter engine.
-// When base64 is true, the output is wrapped in RFC 4648 base64 encoding
-// (no line breaks) for easy copy/paste. On failure, the output file is
-// automatically removed.
+// When base64 is true, the output is wrapped in GPG-style base64 armor
+// (BEGIN/END markers, 68-char lines) for easy copy/paste. On failure, the
+// output file is automatically removed.
 func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet, base64 bool) error {
 	// Open input. os.Stdin is a global *os.File for standard input (like System.in).
 	var in *os.File
@@ -261,20 +261,20 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 		enc = cipherforge.NewEncrypter(password)
 	}
 
-	// Wrap output with base64 encoder if requested.
+	// Wrap output in ASCII armor if requested: base64 wrapped at 68 cols
+	// with BEGIN/END markers (GPG-style).
 	var writer io.Writer = out
-	var b64Closer io.Closer
+	var armorCloser io.WriteCloser
 	if base64 {
-		b64w := b64.NewEncoder(b64.StdEncoding, out)
-		writer = b64w
-		b64Closer = b64w
+		armorCloser = armor.EncodeWriter(out)
+		writer = armorCloser
 	}
 
 	err := enc.Encrypt(in, writer, nil) // nil = no progress callback
 
-	// Must close the base64 encoder to flush any remaining bytes.
-	if b64Closer != nil {
-		if closeErr := b64Closer.Close(); closeErr != nil && err == nil {
+	// Must close the armor writer to flush remaining bytes and emit the footer.
+	if armorCloser != nil {
+		if closeErr := armorCloser.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
 	}
@@ -321,12 +321,11 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 		}
 		in.Close() // Done with the file; raw data is in memory.
 
-		decoded := make([]byte, b64.StdEncoding.DecodedLen(len(raw)))
-		n, err := b64.StdEncoding.Decode(decoded, raw)
+		decoded, err := armor.DecodeBytes(raw)
 		if err != nil {
 			return fmt.Errorf("decoding base64 input: %w", err)
 		}
-		reader = bytes.NewReader(decoded[:n])
+		reader = bytes.NewReader(decoded)
 	} else {
 		reader = in
 	}
@@ -472,7 +471,9 @@ func showHelp() {
 	fmt.Println("  -o <file>         Output filename (use - for stdout)")
 	fmt.Println("  -p [pwd]          Supply a password. Without -p, encryption auto-generates one;")
 	fmt.Println("                    decryption prompts interactively")
-	fmt.Println("  -b, --base64      Wrap encrypted output in base64 encoding (encrypt only)")
+	fmt.Println("  -b, --base64      Wrap encrypted output in base64 armor (BEGIN/END markers,")
+	fmt.Println("                    68-char lines) for easy copy/paste; also accepts armored")
+	fmt.Println("                    input for decryption")
 	fmt.Println("  -i, --interactive Launch the full-screen terminal UI")
 	fmt.Println("  -q, --quiet       Suppress all non-error output")
 	fmt.Println("  -f, --force       Overwrite output file if it already exists")
@@ -485,7 +486,7 @@ func showHelp() {
 	fmt.Println("  cfo -d document.pdf.cfo            Decrypt (prompts for password)")
 	fmt.Println("  cfo -d *.cfo -p mysecret           Decrypt all .cfo files")
 	fmt.Println("  cfo -e backup.tar -o archive.cfo   Encrypt to a custom output name")
-	fmt.Println("  cfo -e secret.txt --base64         Encrypt to base64-encoded .cfo output")
+	fmt.Println("  cfo -e secret.txt --base64         Encrypt to armored base64 .cfo output")
 	fmt.Println("  echo 'Hello' | cfo -e -o out.cfo   Encrypt from stdin")
 	fmt.Println("  cfo -d file.cfo -o -               Decrypt to stdout")
 	fmt.Println("  cfo                                 Launch the terminal UI (no flags)")

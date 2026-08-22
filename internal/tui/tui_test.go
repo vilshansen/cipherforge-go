@@ -9,29 +9,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func TestWrap64(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{"short", "hello", "hello"},
-		{"exact wrap", strings.Repeat("A", 68), strings.Repeat("A", 68)},
-		{"one wrap", strings.Repeat("A", 100), strings.Repeat("A", 68) + "\n" + strings.Repeat("A", 32)},
-		{"two wraps", strings.Repeat("A", 150), strings.Repeat("A", 68) + "\n" + strings.Repeat("A", 68) + "\n" + strings.Repeat("A", 14)},
-		{"empty", "", ""},
-		{"multibyte", "héllo世界", "héllo世界"}, // no wrapping needed
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := wrap64(tt.input)
-			if got != tt.want {
-				t.Errorf("wrap64(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestBuildResults(t *testing.T) {
 	r := buildResults("encrypt", "in.txt", "out.cfo", nil, "pwd123", "base64out", true)
 	if !r.success {

@@ -172,7 +172,7 @@ func TestBatchEncryptionWithMasterKey(t *testing.T) {
 	// Test the v5 batch optimisation: derive a master key once, reuse for
 	// multiple files.
 	password := []byte("test-password")
-	masterKey := crypto.DeriveMasterKey(password, format.DefaultArgon2Params())
+	masterKey := crypto.DeriveMasterKey(password, fastParams)
 
 	plaintexts := [][]byte{
 		[]byte("first file"),
@@ -184,7 +184,7 @@ func TestBatchEncryptionWithMasterKey(t *testing.T) {
 		in := bytes.NewReader(pt)
 		out := &bytes.Buffer{}
 
-		enc := NewEncrypterWithMasterKey(password, masterKey)
+		enc := NewEncrypterWithMasterKeyParams(password, masterKey, fastParams)
 		if err := enc.Encrypt(in, out, nil); err != nil {
 			t.Fatalf("File %d encryption failed: %v", i, err)
 		}
