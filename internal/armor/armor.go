@@ -23,10 +23,12 @@ const (
 	// Header and Footer delimit the armored body.
 	Header = "-----BEGIN CIPHERFORGE MESSAGE-----"
 	Footer = "-----END CIPHERFORGE MESSAGE-----"
-
-	// Version is a GPG-style header line identifying the armor emitter.
-	Version = "Version: Cipherforge 1"
 )
+
+// Version is a GPG-style header line identifying the armor emitter. The
+// application sets this at startup to include its own version, e.g.
+// "Version: Cipherforge 5.0.5". The default identifies the armor format v1.
+var Version = "Version: Cipherforge 1"
 
 // CRC-24 (OpenPGP) parameters.
 const (

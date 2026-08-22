@@ -8,7 +8,18 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/vilshansen/cipherforge-go/internal/armor"
 )
+
+// TestArmorVersionMatchesApp verifies the init() wiring that stamps the app
+// version into the ASCII-armor Version header.
+func TestArmorVersionMatchesApp(t *testing.T) {
+	want := "Version: Cipherforge " + Version
+	if armor.Version != want {
+		t.Errorf("armor.Version = %q, want %q", armor.Version, want)
+	}
+}
 
 func TestGetParameters(t *testing.T) {
 	origArgs := os.Args

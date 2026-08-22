@@ -92,6 +92,9 @@ type Model struct {
 	quitting bool
 }
 
+// screenTopPad is the number of blank lines rendered above every screen.
+const screenTopPad = 2
+
 // shared styles used across all screens.
 var (
 	titleStyle = lipgloss.NewStyle().
@@ -231,6 +234,17 @@ func (m Model) View() string {
 			content = "Unknown screen"
 		}
 	}
+	// Blank lines of padding at the top of every screen, shrinking to fit so
+	// content is never clipped on very short terminals.
+	pad := screenTopPad
+	if m.height > 0 {
+		pad = min(screenTopPad, m.height-strings.Count(content, "\n")-1)
+		if pad < 0 {
+			pad = 0
+		}
+	}
+	content = strings.Repeat("\n", pad) + content
+
 	// Pad to fill the terminal height.
 	if m.height > 0 {
 		n := m.height - strings.Count(content, "\n") - 1

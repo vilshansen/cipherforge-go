@@ -49,8 +49,14 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "5.0.5"
+var Version = "5.1.0"
 var GitCommit = "none"
+
+// init wires the application version into the ASCII-armor Version header so
+// armored output identifies the emitting app version, mirroring GPG's armor.
+func init() {
+	armor.Version = "Version: Cipherforge " + Version
+}
 
 // characterPool is the set of unambiguous characters used for auto-generated
 // passwords. Digits 1-9 (no 0 — confused with O), uppercase A-Z without I/O,

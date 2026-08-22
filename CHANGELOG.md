@@ -1,5 +1,43 @@
 # Changelog
 
+## v5.1.0 (2026-08-22)
+
+### Added
+
+- **Scrollable results text view.** Long encrypted/decrypted output is shown in
+  a box with a scrollbar in the right gutter; the box hugs its content so short
+  output stays compact. Scroll with `↑`/`↓`, `Enter`, `j`/`k`, `PgUp`/`PgDn`,
+  `Home`, or `End`.
+
+- **Input screen scrollbar and paging.** The text input shows the same
+  scrollbar once the text overflows the visible area, and `PgUp`/`PgDn` page
+  through long input.
+
+- **Discard confirmation on text input.** Pressing `Esc` with text typed now
+  asks for confirmation (`y` discards, `n`/`Esc` keeps editing); an empty input
+  still returns to the menu immediately.
+
+- **Maximum message length notice.** Text input is capped at 100,000
+  characters; a notice appears at the bottom of the screen when the limit is
+  reached.
+
+### Changed
+
+- **Left margins aligned on the results screen.** The output and password boxes
+  now start at the same column as their labels.
+
+- **Consistent spacing on the results screen.** The output box has breathing
+  room above and below, a blank line separates the screen title from the
+  heading, and two blank lines of padding sit at the top of every screen.
+
+- **Paste performance.** The scroll/geometry calculations no longer re-wrap the
+  whole input with an expensive word-wrap render, so pasting long text is
+  noticeably faster.
+
+- **Armor `Version:` header reflects the app version.** Encrypted armor now
+  emits `Version: Cipherforge 5.1.0` instead of the hard-coded format marker,
+  matching GPG's armor convention.
+
 ## v5.0.5 (2026-08-21)
 
 ### Changed
