@@ -23,6 +23,8 @@ const (
 	// Header and Footer delimit the armored body.
 	Header = "-----BEGIN CIPHERFORGE MESSAGE-----"
 	Footer = "-----END CIPHERFORGE MESSAGE-----"
+
+	GithubUrl = "Download: https://github.com/vilshansen/cipherforge-go"
 )
 
 // Version is a GPG-style header line identifying the armor emitter. The
@@ -126,7 +128,10 @@ func (ew *encodeWriter) init() error {
 	if _, err := io.WriteString(ew.w, Header+"\n"); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(ew.w, Version+"\n\n"); err != nil {
+	if _, err := io.WriteString(ew.w, Version+"\n"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(ew.w, GithubUrl+"\n\n"); err != nil {
 		return err
 	}
 	ew.lw = &lineWriter{w: ew.w, width: BlockWidth}

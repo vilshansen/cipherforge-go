@@ -20,7 +20,7 @@ personal preference.
 
 ## Documentation
 
-Cipherforge ships with four documents, each written for a different audience:
+Cipherforge ships with five documents, each written for a different audience:
 
 | Document | Audience | Purpose |
 |---|---|---|
@@ -28,6 +28,7 @@ Cipherforge ships with four documents, each written for a different audience:
 | **[CRYPTODESIGN.MD](CRYPTODESIGN.MD)** | Developers, security reviewers | Rationale behind every cryptographic choice: why XChaCha20 over AES-GCM, why Argon2id parameters were chosen, how the two-tier KDF works, nonce management, and post-quantum assessment. Includes links to relevant RFCs and standards |
 | **[FILEFORMAT.MD](FILEFORMAT.MD)** | Developers implementing a decoder, maintainers | Authoritative `.cfo` binary format specification. Byte-level layout, field-by-field security analysis, pseudocode for the decryption algorithm, and what each field protects against |
 | **[ARCHITECTURE.MD](ARCHITECTURE.MD)** | Contributors, new developers | Codebase structure, layered architecture, data flow diagrams, TUI design, build system, and rationale for Go as the implementation language |
+| **[RELEASE.MD](RELEASE.MD)** | Maintainers, release managers | Step-by-step runbook for bumping the version, building all platforms, and publishing a tagged release to GitHub |
 
 ### Suggested Reading Order
 
@@ -45,6 +46,9 @@ Cipherforge ships with four documents, each written for a different audience:
 
 4. **ARCHITECTURE.MD** — if you plan to contribute to the codebase or want to
    understand how the Go packages are organized before reading the source.
+
+5. **RELEASE.MD** — if you are releasing a new version: the exact steps to
+   bump the version, run the build, and publish the GitHub release.
 
 ---
 

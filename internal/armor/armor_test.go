@@ -59,6 +59,9 @@ func TestArmorIncludesVersionAndChecksum(t *testing.T) {
 	if !strings.Contains(armored, "\n"+Version+"\n") {
 		t.Errorf("missing Version header line:\n%s", armored)
 	}
+	if !strings.Contains(armored, "\n"+GithubUrl+"\n") {
+		t.Errorf("missing GithubUrl line:\n%s", armored)
+	}
 	foundChecksum := false
 	for _, line := range strings.Split(armored, "\n") {
 		if strings.HasPrefix(line, "=") {
