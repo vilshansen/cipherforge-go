@@ -179,8 +179,21 @@ func WriteArgon2Params(w io.Writer, p Argon2Params) error {
 	return nil
 }
 
+// ValidateArgon2Params validates parameters before KDF use or serialization.
+func ValidateArgon2Params(p Argon2Params) error {
+	if p.Time == 0 || p.Memory == 0 || p.Threads == 0 {
+		return fmt.Errorf("argon2 params must be non-zero: time=%d memory=%d threads=%d",
+			p.Time, p.Memory, p.Threads)
+	}
+	if p.Time > MaxArgon2Time || p.Memory > MaxArgon2Memory {
+		return fmt.Errorf("argon2 params exceed safety limits: time=%d (max %d) memory=%d KiB (max %d KiB)",
+			p.Time, MaxArgon2Time, p.Memory, MaxArgon2Memory)
+	}
+	return nil
+}
+
 // ReadArgon2Params deserialises an Argon2Params from r. The three
-// reserved bytes are read and discarded.
+// reserved bytes must be zero.
 //
 // Validation rules enforced:
 //  1. Time, Memory, Threads must all be non-zero (prevents degenerate KDF)
@@ -212,6 +225,9 @@ func ReadArgon2Params(r io.Reader) (Argon2Params, error) {
 	p.Time = time
 	p.Memory = mem
 	p.Threads = tail[0]
+	if tail[1] != 0 || tail[2] != 0 || tail[3] != 0 {
+		return p, fmt.Errorf("argon2 params reserved bytes must be zero")
+	}
 	// Validation — must happen before any KDF work.
 	if p.Time == 0 || p.Memory == 0 || p.Threads == 0 {
 		return p, fmt.Errorf("argon2 params must be non-zero: time=%d memory=%d threads=%d",

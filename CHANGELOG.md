@@ -1,5 +1,12 @@
 # Changelog
 
+## v6.0.1 (2026-09-12)
+
+- **Reject nonzero reserved header bytes.** Reserved Argon2 fields are now
+  validated as canonical format bytes instead of being silently ignored.
+- **Validate custom KDF parameters before encryption.** Invalid parameters no
+  longer produce files that the decoder cannot read.
+
 ## v6.0.0 (2026-09-12)
 
 - Replaced XChaCha20-Poly1305 with AES-256-GCM using the Go standard library.

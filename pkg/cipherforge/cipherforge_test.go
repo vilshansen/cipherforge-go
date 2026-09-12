@@ -637,6 +637,17 @@ func TestUnsupportedFlags(t *testing.T) {
 	}
 }
 
+func TestInvalidEncryptionParamsRejectedBeforeOutput(t *testing.T) {
+	out := &bytes.Buffer{}
+	enc := NewEncrypterWithParams([]byte("test-password"), format.Argon2Params{Time: 0, Memory: 1, Threads: 1})
+	if err := enc.Encrypt(bytes.NewReader([]byte("params test")), out, nil); err == nil {
+		t.Fatal("expected invalid Argon2 parameters to be rejected")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("invalid parameters wrote %d bytes", out.Len())
+	}
+}
+
 func encryptTestData(t *testing.T, plaintext []byte) []byte {
 	t.Helper()
 	out := &bytes.Buffer{}

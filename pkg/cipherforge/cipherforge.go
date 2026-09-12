@@ -144,6 +144,10 @@ func NewEncrypterWithMasterKeyParams(password []byte, masterKey []byte, params f
 //	[Trailer: 72 bytes]
 //	  [segmentCount: 8 bytes] [HMAC-SHA256: 32 bytes] [KeyCommitTag: 32 bytes]
 func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) error {
+	if err := format.ValidateArgon2Params(e.params); err != nil {
+		return err
+	}
+
 	// Step 1: Generate per-file random values.
 	// crypto.GenerateSalt() returns ([]byte, error) — the salt goes in the
 	// file header and is used as the HKDF salt for file-specific key derivation.

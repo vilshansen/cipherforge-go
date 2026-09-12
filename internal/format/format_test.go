@@ -218,9 +218,8 @@ func TestHMACSizeConstant(t *testing.T) {
 	}
 }
 
-func TestReadArgon2ParamsReservedBytesIgnored(t *testing.T) {
-	// The 3 reserved bytes after threads should be read and ignored,
-	// regardless of their values. Write non-zero reserved bytes.
+func TestReadArgon2ParamsReservedBytesRejected(t *testing.T) {
+	// Non-zero reserved bytes are not part of the canonical format.
 	params := Argon2Params{Time: 3, Memory: 1024, Threads: 2}
 	buf := &bytes.Buffer{}
 	WriteUint32(buf, params.Time)
@@ -229,10 +228,7 @@ func TestReadArgon2ParamsReservedBytesIgnored(t *testing.T) {
 	buf.Write([]byte{params.Threads, 0xFF, 0xEE, 0xDD})
 
 	got, err := ReadArgon2Params(buf)
-	if err != nil {
-		t.Fatalf("ReadArgon2Params failed: %v", err)
-	}
-	if got.Time != params.Time || got.Memory != params.Memory || got.Threads != params.Threads {
-		t.Error("reserved bytes affected param reading")
+	if err == nil {
+		t.Fatalf("expected reserved-byte validation error, got params %+v", got)
 	}
 }
