@@ -32,8 +32,7 @@ func RandReader() io.Reader {
 }
 
 const (
-	SaltSize   = 16 // 128-bit salt
-	XNonceSize = 24 // 192-bit nonce for XChaCha20
+	SaltSize = 16 // 128-bit salt
 
 	// CharacterPool is the set of unambiguous characters for password generation:
 	// digits 1-9 (no 0), uppercase A-Z minus I/L/O, lowercase a-z minus l.

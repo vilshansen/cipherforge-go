@@ -1,5 +1,5 @@
 // Command cfo is the Cipherforge CLI — a tool for encrypting and decrypting
-// files using XChaCha20-Poly1305 and Argon2id.
+// files using AES-256-GCM and Argon2id.
 //
 // # Go Language Notes for Java Developers (Entry Point & CLI)
 //
@@ -49,7 +49,7 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "5.1.0"
+var Version = "6.0.0"
 var GitCommit = "none"
 
 // init wires the application version into the ASCII-armor Version header so
@@ -59,11 +59,12 @@ func init() {
 }
 
 // characterPool is the set of unambiguous characters used for auto-generated
-// passwords. Digits 1-9 (no 0 — confused with O), uppercase A-Z without I/O,
+// secrets. Digits 1-9 (no 0 — confused with O), uppercase A-Z without I/O,
 // lowercase a-z without l. 58 characters total.
 //
-// 44 chars × log₂(57) ≈ 257.7 bits ≥ 256-bit key strength.
-const passwordLength = 44
+// 64 chars × log₂(57) ≈ 366 bits of entropy, which is appropriate when the
+// secret is machine-generated and shown once to the operator.
+const passwordLength = 64
 
 func main() {
 	// Always show help for -h/--help, version for -v/--version.
@@ -395,10 +396,8 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 		if len(userPassword) == 0 {
 			return nil, fmt.Errorf("password must not be empty")
 		}
-		if len(userPassword) < 12 {
-			ui.PrintWarning(fmt.Sprintf("Short password (%d chars). Consider a longer one.", len(userPassword)))
-		}
-		return userPassword, nil
+		ui.PrintWarning("Enterprise mode: user-supplied passwords are not recommended. Generating a high-entropy secret instead.")
+		userPassword = nil
 	}
 
 	if operation == "encrypt" {
@@ -407,19 +406,19 @@ func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
 			return nil, err
 		}
 		fmt.Printf("%s\n", p)
-		fmt.Fprintf(os.Stderr, "cfo: Save this password — it cannot be recovered.\n")
+		fmt.Fprintf(os.Stderr, "cfo: Save this generated secret — it cannot be recovered.\n")
 		return p, nil
 	}
 
 	for {
-		p, err := ui.ReadPasswordStarred("Enter password for decryption: ")
+		p, err := ui.ReadPasswordStarred("Enter generated secret for decryption: ")
 		if err != nil {
 			return nil, err
 		}
 		if len(p) > 0 {
 			return p, nil
 		}
-		ui.PrintError("Password cannot be empty")
+		ui.PrintError("Generated secret cannot be empty")
 	}
 }
 
@@ -461,7 +460,7 @@ func showHelp() {
 	if GitCommit != "none" && GitCommit != "" {
 		verLine += fmt.Sprintf(" (%s)", GitCommit)
 	}
-	verLine += " — encrypt and decrypt files with XChaCha20-Poly1305 and Argon2id."
+	verLine += " — encrypt and decrypt files with AES-256-GCM and Argon2id."
 	fmt.Printf("%s\n\n", verLine)
 
 	fmt.Println("Usage: cfo -e <file...>")

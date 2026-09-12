@@ -7,7 +7,7 @@ design decisions, and the rationale behind dependencies.
 ## Overview
 
 Cipherforge is a file encryption tool built with long-term archival in mind.
-It encrypts files of any size using XChaCha20-Poly1305 and Argon2id, writing
+It encrypts files of any size using AES-256-GCM and Argon2id, writing
 them in a self-describing `.cfo` format designed to be decodable decades from
 now. It doubles as a terminal application (TUI) and a traditional CLI tool,
 both from the same binary.
@@ -108,7 +108,7 @@ pkg/cipherforge.Encrypter.Encrypt(reader, writer)
     ├── format.WriteHeader(writer, salt, params)
     │
     ├── for each 1 MiB segment:
-    │     ├── deriveSegmentNonce(seed, segmentNum)     → 24-byte nonce
+    │     ├── deriveSegmentNonce(prefix, segmentNum)   → 12-byte nonce
     │     ├── buildAAD(segmentNum, plaintextLen)        → 16-byte AAD
     │     ├── AEAD.Seal(plaintext, nonce, aad)          → ciphertext + tag
     │     └── write segment length + ciphertext to output
@@ -146,8 +146,8 @@ pkg/cipherforge.Decrypter.Decrypt(reader, writer)
 |---|---|---|
 | Key derivation | Argon2id (5 passes, 256 MiB, 4 threads) | Memory-hard, ASIC-resistant, OWASP recommended |
 | Key separation | HKDF-SHA256 (RFC 5869) | Independent enc/mac keys from one master key |
-| Encryption | XChaCha20-Poly1305 (IETF variant) | 192-bit nonce, no nonce-reuse risk |
-| Authentication | Poly1305 per segment + HMAC-SHA256 trailer | Segments independently verified |
+| Encryption | AES-256-GCM | 12-byte prefix/counter nonce, 16-byte tag |
+| Authentication | GCM per segment + HMAC-SHA256 trailer | Segments independently verified |
 | Key commitment | HMAC-SHA256(encKey, context || salt) | Ciphertext binds to a single key |
 | Randomness | OS CSPRNG (crypto/rand) | /dev/urandom, CNG — not userspace PRNG |
 | Password gen | crypto/rand + rejection sampling | No modulo bias, 256+ bits entropy |
@@ -159,11 +159,11 @@ touches disk.
 
 ## File Format
 
-The `.cfo` format (v5) has three contiguous regions:
+The `.cfo` format (v6) has three contiguous regions:
 
 ```
 ╔══════════════════════╗
-║ HEADER  (65 bytes)   ║  magic, version, salt, KDF params
+║ HEADER  (47 bytes)   ║  magic, version, suite, salt, nonce prefix, KDF params
 ╠══════════════════════╣
 ║ PAYLOAD (variable)   ║  1+ segments: [8-byte len][AEAD ciphertext]
 ╠══════════════════════╣
@@ -236,7 +236,7 @@ The `-i` flag forces TUI mode.
 
 | Dependency | Purpose | Why |
 |---|---|---|
-| `golang.org/x/crypto` | Argon2id, HKDF, XChaCha20-Poly1305 | Official Go extended library, well-audited |
+| `golang.org/x/crypto` | Argon2id, HKDF | Official Go extended library, well-audited |
 | `golang.org/x/term` | Terminal detection, raw mode, ReadPassword | Official Go extended library |
 | `golang.org/x/sys` | mlock, Windows syscalls | Official Go extended library |
 | `github.com/charmbracelet/bubbletea` | TUI framework (Elm Architecture) | Pure Go, 30k+ stars, no CGo |
@@ -275,12 +275,14 @@ OWASP recommendation. It is memory-hard (256 MiB default), making GPU/ASIC
 attacks expensive. bcrypt is limited to 4 KiB memory; PBKDF2 has no memory
 hardness.
 
-### Why XChaCha20-Poly1305 and not AES-GCM?
+### Why AES-256-GCM?
 
-XChaCha20-Poly1305 uses a 192-bit nonce (vs AES-GCM's 96-bit), eliminating
-nonce-reuse risk for random nonces. It's also constant-time in software and
-doesn't require AES-NI hardware. For long-term archival, algorithm simplicity
-matters more than hardware acceleration.
+AES-256-GCM is available in Go's standard library, is widely standardized, and
+benefits from AES acceleration on common CPUs. Cipherforge does not rely on
+random 96-bit nonces: each file stores a random 4-byte prefix and combines it
+with the 8-byte segment counter to form a unique 12-byte nonce. Nonce reuse is
+catastrophic for GCM, so the prefix/counter construction is part of the file
+format and is covered by the trailer HMAC.
 
 ### Why 1 MiB segments?
 

@@ -25,7 +25,7 @@ Cipherforge ships with five documents, each written for a different audience:
 | Document | Audience | Purpose |
 |---|---|---|
 | **[README.MD](README.MD)** (this file) | All users | Installation, quick start, usage, and a high-level "How It Works" overview |
-| **[CRYPTODESIGN.MD](CRYPTODESIGN.MD)** | Developers, security reviewers | Rationale behind every cryptographic choice: why XChaCha20 over AES-GCM, why Argon2id parameters were chosen, how the two-tier KDF works, nonce management, and post-quantum assessment. Includes links to relevant RFCs and standards |
+| **[CRYPTODESIGN.MD](CRYPTODESIGN.MD)** | Developers, security reviewers | Rationale behind AES-256-GCM, Argon2id parameters, two-tier key derivation, nonce management, authentication, and post-quantum considerations |
 | **[FILEFORMAT.MD](FILEFORMAT.MD)** | Developers implementing a decoder, maintainers | Authoritative `.cfo` binary format specification. Byte-level layout, field-by-field security analysis, pseudocode for the decryption algorithm, and what each field protects against |
 | **[ARCHITECTURE.MD](ARCHITECTURE.MD)** | Contributors, new developers | Codebase structure, layered architecture, data flow diagrams, TUI design, build system, and rationale for Go as the implementation language |
 | **[RELEASE.MD](RELEASE.MD)** | Maintainers, release managers | Step-by-step runbook for bumping the version, building all platforms, and publishing a tagged release to GitHub |
@@ -352,7 +352,7 @@ expensive Argon2id operations.
 The HKDF-SHA256 expansion produces 64 bytes of key material per file, which is
 split into two non-overlapping keys:
 
-- **Bytes 0–31** → `encKey`: the XChaCha20-Poly1305 encryption key
+- **Bytes 0–31** → `encKey`: the AES-256-GCM encryption key
 - **Bytes 32–63** → `macKey`: the HMAC-SHA256 key used to authenticate the
   file trailer
 
@@ -363,26 +363,22 @@ separation — they are independent 256-bit outputs of the same PRF.
 ### Encryption
 
 Files are split into segments of up to **1 MiB (1,048,576 bytes)**. Each
-segment is individually encrypted with XChaCha20-Poly1305.
+segment is individually encrypted with AES-256-GCM.
 
-**XChaCha20-Poly1305** is an Authenticated Encryption with Associated Data
+**AES-256-GCM** is an Authenticated Encryption with Associated Data
 (AEAD) construction. It provides both:
 
-- **Confidentiality** — via the XChaCha20 stream cipher, a variant of the
-  ChaCha20 cipher designed by Daniel Bernstein and standardised in RFC 8439
-- **Integrity** — via a Poly1305 authentication tag appended to each segment
+- **Confidentiality** — via AES-256 in Galois/Counter Mode
+- **Integrity** — via a 16-byte GCM authentication tag appended to each segment
 
-The 'X' prefix denotes the extended-nonce variant with a 192-bit (24-byte)
-nonce, versus the 96-bit nonce of standard ChaCha20-Poly1305. The larger nonce
-makes it safe to generate a fresh random nonce per segment without risk of
-collision — at 192 bits the birthday bound is so far away as to be irrelevant
-in practice. (Standard ChaCha20-Poly1305's 96-bit nonce requires careful
-counter management for exactly this reason.)
+Each segment uses a 12-byte nonce formed from a random 4-byte per-file prefix
+and an 8-byte big-endian segment counter. This guarantees uniqueness within
+the file key without relying on random 96-bit nonce collision resistance.
 
 The write structure for each segment is:
 
 ```
-[Segment Length: 8 bytes] [Ciphertext + Poly1305 Tag]
+[Segment Length: 8 bytes] [Ciphertext + GCM Tag]
 ```
 
 The 8-byte length prefix allows the decoder to read exactly the right number of
@@ -391,44 +387,32 @@ in advance.
 
 ### Nonce Management
 
-A 24-byte **Segment Seed** is generated randomly and stored once in the file
-header. Individual per-segment nonces are derived from the Segment Seed using
-**HKDF-SHA256** (RFC 5869, NIST SP 800-56C):
+A 4-byte **Nonce Prefix** is generated randomly and stored once in the file
+header. Individual per-segment nonces are constructed from it and the segment
+counter:
 
 ```
-segment_nonce[i] = HKDF-SHA256(ikm=segmentSeed, salt=nil, 
-info="cipherforge-segment-nonce-v1" || uint64_big_endian(i))
+segment_nonce[i] = noncePrefix || uint64_big_endian(i)
 ```
 
 Where `i` is the 64-bit segment counter encoded as an 8-byte big-endian value.
+Nonce reuse under AES-GCM is catastrophic, so the counter must never reset for
+a given file key.
 
 This is preferable to simpler approaches for two reasons:
 
-**Why not store a full nonce per segment?** A 24-byte nonce stored with every
-1 MiB segment adds 24 bytes of overhead per MiB (~0.002%). It's not a
-meaningful cost, but the HKDF approach has better properties: it stores only
-the 24-byte Segment Seed once in the header regardless of how many segments the
-file has.
+The prefix/counter construction stores only four random bytes once in the
+header and makes nonce uniqueness mechanically auditable.
 
-**Why not XOR the counter into the Segment Seed?** XOR-based derivation
-(`nonce[i] = segmentSeed XOR i`) has two weaknesses:
-
-1. **Identity at zero** — when `i == 0`, XOR is a no-op, so the Segment Seed
-   itself becomes a live encryption nonce. This is a subtle but real exposure.
-2. **Linear structure** — knowing any two `(counter, nonce)` pairs immediately
-   reveals the Segment Seed via XOR, leaking the root secret.
-
-HKDF is a one-way pseudorandom function. Given any number of derived nonces and
-their counters, the Segment Seed remains computationally hidden. It also has no
-identity-at-zero property: `counter=0` does not yield the raw Segment Seed.
-HKDF is standardised by NIST SP 800-56C for exactly this purpose (deriving
-independent, domain-separated values from a shared secret).
+The counter is encoded in a fixed-width big-endian field, so each segment has a
+distinct nonce for the file's encryption key. The random prefix prevents nonce
+reuse across independently keyed files in normal operation.
 
 ### Authentication and Integrity
 
 Cipherforge provides authentication at two levels.
 
-**Per-segment authentication** via Poly1305 tags. Each segment includes a
+**Per-segment authentication** via GCM tags. Each segment includes a
 16-byte tag that authenticates the ciphertext. Decryption of any segment
 fails immediately if the ciphertext has been modified. The
 **Additional Authenticated Data (AAD)** passed to the AEAD on each segment
@@ -448,17 +432,19 @@ whole, such as swapping the header from one ciphertext to another, truncating
 the file at a segment boundary, or appending extra segments.
 
 **File-level authentication** via HMAC-SHA256 trailer. After all segments are
-written, a 40-byte trailer is appended:
+written, a 72-byte trailer is appended:
 
 ```
-[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v5"
-|| salt || segmentSeed || argon2Params || segmentCount): 32 bytes]\n[Key-Commitment Tag: 32 bytes]  HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
+[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v6-aes256-gcm"
+|| suite || flags || salt || noncePrefix || argon2Params || segmentCount): 32 bytes]
+[Key-Commitment Tag: 32 bytes] HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
 ```
 
-The HMAC commits to the salt, the Segment Seed, and the total segment count
+The HMAC commits to the suite, flags, salt, nonce prefix, KDF parameters, and
+the total segment count
 in a single tag. This closes the gap left by per-segment AEAD:
 
-- **Header substitution** — swapping the salt or Segment Seed from another
+- **Header substitution** — swapping the salt or nonce prefix from another
   file (even one encrypted with the same password) invalidates the HMAC
 - **File truncation** — removing segments changes the segment count, invalidating
   the HMAC
@@ -522,7 +508,7 @@ than O(N), effectively halving the security level of symmetric primitives. A
 Grover — which NIST SP 800-57 considers sufficient for the foreseeable future
 (NIST's "Category 1" post-quantum security target is 128 bits).
 
-XChaCha20-Poly1305, HMAC-SHA256, Argon2id, and HKDF-SHA256 are all unaffected
+AES-256-GCM, HMAC-SHA256, Argon2id, and HKDF-SHA256 are all unaffected
 by Shor's algorithm. The symmetric design of Cipherforge makes it
 post-quantum-ready without any special configuration.
 
@@ -539,9 +525,11 @@ All multi-byte integer values are stored in **big-endian** byte order.
 | Field Name        | Data Type           | Length    | Value            |
 +-------------------+---------------------+-----------+------------------+
 | Magic             | byte array          | 9 bytes   | 0xC1PHRF0RGE     |
-| Version           | uint32 (big-endian) | 4 bytes   | 0x00000004       |
+| Version           | uint32 (big-endian) | 4 bytes   | 0x00000006       |
+| Suite             | uint8               | 1 byte    | AES-256-GCM      |
+| Flags             | uint8               | 1 byte    | 0x00             |
 | Salt              | byte array          | 16 bytes  | Argon2id Salt    |
-| Segment Seed      | byte array          | 24 bytes  | HKDF IKM         |
+| Nonce Prefix      | byte array          | 4 bytes   | GCM nonce prefix |
 | Argon2 Time       | uint32 (big-endian) | 4 bytes   | KDF passes       |
 | Argon2 Memory     | uint32 (big-endian) | 4 bytes   | KDF memory (KiB) |
 | Argon2 Threads    | uint8               | 1 byte    | KDF parallelism  |
@@ -553,7 +541,7 @@ All multi-byte integer values are stored in **big-endian** byte order.
 +-------------------+---------------------+-----------+------------------+
 | Segment Length    | uint64              | 8 bytes   | Ciphertext+Tag   |
 | Ciphertext        | byte array          | <= 1 MiB  | Encrypted data   |
-| Poly1305 Tag      | byte array          | 16 bytes  | Auth tag         |
+| GCM Tag           | byte array          | 16 bytes  | Auth tag         |
 +-------------------+---------------------+-----------+------------------+
 |                          FILE TRAILER (ONCE)                           |
 +-------------------+---------------------+-----------+------------------+
@@ -564,12 +552,14 @@ All multi-byte integer values are stored in **big-endian** byte order.
 +-------------------+---------------------+-----------+------------------+
 ```
 
-**Header** (65 bytes fixed):
+**Header** (47 bytes fixed):
 - `Magic` (8 bytes): `0xC1 0x50 0x48 0x52 0x46 0x30 0x52 0x47` — allows fast
   rejection of non-`.cfo` files before any key derivation is attempted
-- `Version` (4 bytes): format version, currently `0x00000004`
+- `Version` (4 bytes): format version, currently `0x00000006`
+- `Suite` (1 byte): `0x01` for AES-256-GCM
+- `Flags` (1 byte): reserved and must be zero
 - `Salt` (16 bytes): random HKDF salt, unique per file
-- `Segment Seed` (24 bytes): random HKDF IKM, unique per file
+- `Nonce Prefix` (4 bytes): random prefix for the 12-byte GCM nonce
 - `Argon2 Time` (4 bytes): number of passes over memory
 - `Argon2 Memory` (4 bytes): KiB of RAM for the KDF (262,144 = 256 MiB)
 - `Argon2 Threads` (1 byte): degree of parallelism
@@ -577,21 +567,21 @@ All multi-byte integer values are stored in **big-endian** byte order.
 
 **Payload** (repeating):
 Each segment is prefixed with an 8-byte big-endian length, followed by the
-ciphertext and its 16-byte Poly1305 tag. The length field records the combined
+ciphertext and its 16-byte GCM tag. The length field records the combined
 size of ciphertext and tag, not the plaintext size. Maximum segment ciphertext
 size is 1,048,576 + 16 bytes (plaintext + AEAD overhead).
 
 **Trailer** (72 bytes fixed):
 - `Segment Count` (8 bytes): total number of segments written
-- `Trailer HMAC` (32 bytes): `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v5" || salt || segmentSeed || argon2Time || argon2Memory || argon2Threads || zero[3] || segmentCount)`
+- `Trailer HMAC` (32 bytes): `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v6-aes256-gcm" || suite || flags || salt || noncePrefix || argon2Time || argon2Memory || argon2Threads || zero[3] || segmentCount)`
 - `Key-Commitment Tag` (32 bytes): `HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)`
 
 The trailer is always at `EOF - 72`. The decoder seeks to this offset first,
 verifies the HMAC and key-commitment tag, then performs a single sequential
 read of the payload.
 
-**Header size**: 9 + 4 + 16 + 24 + 12 = **65 bytes** (v5)  
-**Minimum valid file size**: 65 (header) + 72 (trailer) = **137 bytes**  
+**Header size**: 9 + 4 + 1 + 1 + 16 + 4 + 12 = **47 bytes** (v6)
+**Minimum valid file size**: 47 (header) + 72 (trailer) = **119 bytes**
 **Overhead per segment**: 8 (length) + 16 (tag) = **24 bytes**  
 **File overhead**: 137 bytes + 24 bytes per segment
 
@@ -613,7 +603,7 @@ standard:
 
 | Primitive | Standard |
 |-----------|----------|
-| XChaCha20-Poly1305 | RFC 8439 + IETF draft |
+| AES-256-GCM | NIST SP 800-38D |
 | Argon2id | RFC 9106 |
 | HMAC-SHA256 | RFC 2104, FIPS 198-1 |
 | HKDF-SHA256 | RFC 5869, NIST SP 800-56C |
@@ -717,7 +707,7 @@ Recommended flags for a reproducible, static release build:
 ```bash
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
   -mod=vendor -trimpath -buildvcs=false \
-  -ldflags "-s -w -X main.Version=5.1.0 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
+  -ldflags "-s -w -X main.Version=6.0.0 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
   -o cfo-darwin-arm64 ./cmd/cfo/
 ```
 
@@ -731,7 +721,7 @@ Notes:
 - `-mod=vendor` builds against the local `vendor/` tree (create it first with
   `go mod vendor`); omit it to use normal module resolution instead.
 - `-X main.Version` / `-X main.GitCommit` stamp the version and commit into the
-  binary (defaults: `5.1.0` and `none`).
+  binary (defaults: `6.0.0` and `none`).
 
 To build for all supported platforms on Unix-like shells:
 ```bash

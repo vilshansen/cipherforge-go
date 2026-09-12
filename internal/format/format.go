@@ -52,18 +52,21 @@ const (
 	Magic     = "\xC1\x50\x48\x52\x46\x30\x52\x47\x45"
 	MagicSize = 9
 
-	// FileVersion is the current format version (v5). Stored as uint32
-	// big-endian in the file header. v5 adds a 32-byte key-commitment tag
-	// to the trailer (see KeyCommitSize and KeyCommitContext).
-	FileVersion = uint32(5)
+	// FileVersion is the current format version (v6). Stored as uint32
+	// big-endian in the file header.
+	FileVersion = uint32(6)
 
-	VersionSize = 4  // uint32 = 4 bytes
-	XNonceSize  = 24 // XChaCha20 nonce = 192 bits
-	SaltSize    = 16 // HKDF salt = 128 bits
-	HMACSize    = 32 // HMAC-SHA256 output = 256 bits
+	VersionSize     = 4  // uint32 = 4 bytes
+	SuiteSize       = 1  // algorithm suite identifier
+	FlagsSize       = 1  // reserved flags; must be zero
+	SaltSize        = 16 // HKDF salt = 128 bits
+	NoncePrefixSize = 4  // random prefix for the 12-byte AES-GCM nonce
+	HMACSize        = 32 // HMAC-SHA256 output = 256 bits
+
+	AESGCM256Suite = byte(1)
 
 	// KeyCommitSize is the size of the key-commitment tag appended to the
-	// trailer in v5. The tag is HMAC-SHA256(encKey, context || fileSalt).
+	// trailer in v6. The tag is HMAC-SHA256(encKey, context || fileSalt).
 	KeyCommitSize = 32
 
 	// Argon2ParamSize is the on-disk size of the serialised Argon2Params struct:
@@ -76,18 +79,21 @@ const (
 	// (because the HMAC key itself is derived from the KDF), so the HMAC
 	// cannot protect against parameter inflation — these safety limits are
 	// the ONLY defense against resource-exhaustion attacks.
-	MaxArgon2Time   = 10               // Max passes
-	MaxArgon2Memory = 16 * 1024 * 1024 // 16 GiB in KiB (generous ceiling)
+	// For enterprise-grade generated secrets we keep the ceiling strict enough
+	// to prevent abuse without allowing absurdly expensive parameters.
+	MaxArgon2Time   = 24              // Max passes
+	MaxArgon2Memory = 2 * 1024 * 1024 // 2 GiB in KiB (strict but realistic)
 
-	// TrailerSize is the v5 trailer size: segmentCount (8) + HMAC (32) +
+	// TrailerSize is the v6 trailer size: segmentCount (8) + HMAC (32) +
 	// keyCommitTag (32) = 72 bytes.
 	TrailerSize = 8 + HMACSize + KeyCommitSize
 
 	SegmentSize = 1048576 // 1 MiB (2^20 bytes)
 
-	// HeaderSize is the full v5 header size:
-	//   magic(9) + version(4) + salt(16) + seed(24) + argon2params(12)
-	HeaderSize = MagicSize + VersionSize + SaltSize + XNonceSize + Argon2ParamSize // 65
+	// HeaderSize is the full v6 header size:
+	//   magic(9) + version(4) + suite(1) + flags(1) + salt(16) +
+	//   nonce prefix(4) + argon2params(12) = 47
+	HeaderSize = MagicSize + VersionSize + SuiteSize + FlagsSize + SaltSize + NoncePrefixSize + Argon2ParamSize
 
 	// HKDF and HMAC context strings for domain separation.
 	// These are ASCII strings used as info/salt parameters in HKDF and as
@@ -95,11 +101,10 @@ const (
 	//
 	// Java note: Go strings are UTF-8 encoded and immutable (like Java strings).
 	// Converting a string to []byte allocates a new byte slice.
-	SegmentNonceContext = "cipherforge-segment-nonce-v1"
-	TrailerHMACContext  = "cipherforge-trailer-hmac-v5"
-	MasterKeySalt       = "cipherforge-master-key-v1"
-	FileKeyContext      = "cipherforge-file-key-v1"
-	KeyCommitContext    = "cipherforge-commitment-v1"
+	TrailerHMACContext = "cipherforge-trailer-hmac-v6-aes256-gcm"
+	MasterKeySalt      = "cipherforge-master-key-v1"
+	FileKeyContext     = "cipherforge-file-key-v1"
+	KeyCommitContext   = "cipherforge-commitment-v1"
 )
 
 // Argon2Params holds the tunable parameters for the Argon2id KDF.
@@ -118,13 +123,14 @@ type Argon2Params struct {
 	Threads uint8  // Parallelism degree (lanes)
 }
 
-// DefaultArgon2Params returns the production-hardened defaults (5 passes,
-// 256 MiB memory, 4 threads). These are used when decrypting v1 files that
-// carry no embedded parameters.
+// DefaultArgon2Params returns the enterprise-grade defaults for generated
+// secrets. These values are intentionally harder than the previous production
+// defaults to protect offline guessing against a strong attacker while keeping
+// desktop usage practical.
 func DefaultArgon2Params() Argon2Params {
 	return Argon2Params{
-		Time:    5,
-		Memory:  256 * 1024, // 256 MiB in KiB
+		Time:    12,
+		Memory:  1024 * 1024, // 1 GiB in KiB
 		Threads: 4,
 	}
 }

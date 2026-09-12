@@ -43,6 +43,7 @@ package cipherforge
 
 import (
 	"bufio"
+	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -52,8 +53,6 @@ import (
 
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"github.com/vilshansen/cipherforge-go/internal/format"
-	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/crypto/hkdf"
 )
 
 // Encrypter handles the encryption of a stream into .cfo format segments.
@@ -119,7 +118,7 @@ func NewEncrypterWithMasterKeyParams(password []byte, masterKey []byte, params f
 }
 
 // Encrypt reads plaintext from r, encrypts it in 1 MiB segments using
-// XChaCha20-Poly1305, and writes the complete .cfo file (header + segments
+// AES-256-GCM, and writes the complete .cfo file (header + segments
 // + trailer) to w.
 //
 // Parameters:
@@ -136,11 +135,12 @@ func NewEncrypterWithMasterKeyParams(password []byte, masterKey []byte, params f
 //
 // File layout produced:
 //
-//	[Header: 65 bytes]
-//	  Magic (9) | Version (4) | Salt (16) | SegmentSeed (24) | Argon2Params (12)
+//	[Header: 47 bytes]
+//	  Magic (9) | Version (4) | Suite (1) | Flags (1) | Salt (16) |
+//	  NoncePrefix (4) | Argon2Params (12)
 //	[Payload: variable]
 //	  For each segment:
-//	    [segmentLen: 8 bytes] [ciphertext || Poly1305 tag: variable]
+//	    [segmentLen: 8 bytes] [ciphertext || GCM tag: variable]
 //	[Trailer: 72 bytes]
 //	  [segmentCount: 8 bytes] [HMAC-SHA256: 32 bytes] [KeyCommitTag: 32 bytes]
 func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) error {
@@ -152,16 +152,14 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	// segmentSeed is the HKDF IKM for per-segment nonce derivation.
-	// 24 bytes = 192 bits, the same size as an XChaCha20 nonce.
-	// It's stored in plaintext in the header, but since nonces are not secret,
-	// this is fine. An attacker who reads it still can't decrypt without the key.
-	segmentSeed := make([]byte, format.XNonceSize)
-	if _, err := io.ReadFull(crypto.RandReader(), segmentSeed); err != nil {
+	// noncePrefix is public nonce material. Each segment nonce is this prefix
+	// followed by its unique big-endian segment counter.
+	noncePrefix := make([]byte, format.NoncePrefixSize)
+	if _, err := io.ReadFull(crypto.RandReader(), noncePrefix); err != nil {
 		return err
 	}
 
-	// Step 2: Key derivation (two-tier for v5).
+	// Step 2: Key derivation.
 	//
 	// If a pre-derived master key was provided (batch mode), use it directly.
 	// Otherwise, derive the master key from the password using Argon2id.
@@ -191,15 +189,16 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	}
 
 	// Derive file-specific keys from the master key + per-file salt.
-	// encKey: 32 bytes for XChaCha20-Poly1305 encryption
+	// encKey: 32 bytes for AES-256-GCM encryption
 	// macKey: 32 bytes for HMAC-SHA256 trailer authentication
 	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
 	defer crypto.ZeroBytes(encKey) // encKey is always locally derived, always zeroed
 
-	// Create the AEAD cipher. XChaCha20-Poly1305 uses a 192-bit nonce.
-	// `aead` is an interface with Seal() and Open() methods.
-	// NewX returns (AEAD, error) — the X variant is the extended-nonce version.
-	aead, err := chacha20poly1305.NewX(encKey)
+	block, err := aes.NewCipher(encKey)
+	if err != nil {
+		return err
+	}
+	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return err
 	}
@@ -218,13 +217,13 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	bufOut := bufio.NewWriterSize(w, format.SegmentSize+aead.Overhead()+8)
 	defer bufOut.Flush() // Flush the buffered writer when done (even on error)
 
-	// Step 4: Write the 65-byte v5 header.
-	if err := writeHeader(bufOut, salt, segmentSeed, e.params); err != nil {
+	// Step 4: Write the v6 header.
+	if err := writeHeader(bufOut, salt, noncePrefix, e.params); err != nil {
 		return err
 	}
 
 	// Step 5: Encrypt segments.
-	segmentCount, err := encryptSegments(bufIn, bufOut, aead, segmentSeed, progress)
+	segmentCount, err := encryptSegments(bufIn, bufOut, aead, noncePrefix, progress)
 	if err != nil {
 		return err
 	}
@@ -234,12 +233,12 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	trailerHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, e.params)
+	trailerHMAC := computeTrailerHMAC(macKey, salt, noncePrefix, segmentCount, e.params)
 	if _, err := bufOut.Write(trailerHMAC); err != nil {
 		return err
 	}
 
-	// v5: write the key-commitment tag.
+	// v6: write the key-commitment tag.
 	// HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
 	// This proves that the file was encrypted with a specific encKey,
 	// preventing an attacker from crafting a ciphertext that decrypts
@@ -256,18 +255,21 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	return nil
 }
 
-// writeHeader writes the 65-byte v5 .cfo header to w.
-func writeHeader(w io.Writer, salt, segmentSeed []byte, params format.Argon2Params) error {
+// writeHeader writes the 47-byte v6 .cfo header to w.
+func writeHeader(w io.Writer, salt, noncePrefix []byte, params format.Argon2Params) error {
 	if _, err := w.Write([]byte(format.Magic)); err != nil {
 		return err
 	}
 	if err := format.WriteUint32(w, format.FileVersion); err != nil {
 		return err
 	}
+	if _, err := w.Write([]byte{format.AESGCM256Suite, 0}); err != nil {
+		return err
+	}
 	if _, err := w.Write(salt); err != nil {
 		return err
 	}
-	if _, err := w.Write(segmentSeed); err != nil {
+	if _, err := w.Write(noncePrefix); err != nil {
 		return err
 	}
 	return format.WriteArgon2Params(w, params)
@@ -275,7 +277,7 @@ func writeHeader(w io.Writer, salt, segmentSeed []byte, params format.Argon2Para
 
 // encryptSegments reads plaintext from r, encrypts it in 1 MiB segments,
 // and writes the payload to w. Returns the total segment count.
-func encryptSegments(r io.Reader, w io.Writer, aead cipher.AEAD, segmentSeed []byte, progress func(int64)) (uint64, error) {
+func encryptSegments(r io.Reader, w io.Writer, aead cipher.AEAD, noncePrefix []byte, progress func(int64)) (uint64, error) {
 	plaintextBuf := make([]byte, format.SegmentSize)
 	ciphertextBuf := make([]byte, 0, format.SegmentSize+aead.Overhead())
 	aad := make([]byte, 16)
@@ -285,10 +287,7 @@ func encryptSegments(r io.Reader, w io.Writer, aead cipher.AEAD, segmentSeed []b
 	for {
 		n, err := io.ReadFull(r, plaintextBuf)
 		if n > 0 {
-			nonce, derr := deriveSegmentNonce(segmentSeed, segmentCount)
-			if derr != nil {
-				return 0, derr
-			}
+			nonce := deriveSegmentNonce(noncePrefix, segmentCount)
 			buildAAD(aad, segmentCount, uint64(n))
 			ciphertextBuf = aead.Seal(ciphertextBuf[:0], nonce, plaintextBuf[:n], aad)
 			if werr := format.WriteUint64(w, uint64(len(ciphertextBuf))); werr != nil {
@@ -338,13 +337,14 @@ func NewDecrypter(password []byte) *Decrypter {
 //   - w: io.Writer — the plaintext destination.
 //   - progress: func(int64) — optional progress callback (plaintext bytes).
 //
-// Only v5 files are accepted. v5 adds a 32-byte key-commitment tag after
+// Only v6 AES-GCM files are accepted. v6 adds a suite identifier and a
+// 32-byte key-commitment tag after
 // the HMAC in the trailer.
 //
 // Verification order:
 //  1. Read and validate magic signature (9 bytes)
-//  2. Read and validate format version (must be v5)
-//  3. Read salt, Segment Seed, and Argon2 parameters from header
+//  2. Read and validate format version and encryption suite
+//  3. Read salt, nonce prefix, and Argon2 parameters from header
 //  4. Validate Argon2 parameters against safety limits
 //  5. Derive master key via Argon2id
 //  6. Derive file-specific keys via HKDF
@@ -369,13 +369,27 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return fmt.Errorf("not a valid .cfo file")
 	}
 
-	// Step 2: Read and validate version. v5 is the only supported format.
+	// Step 2: Read and validate version and suite.
 	version, err := format.ReadUint32(r)
 	if err != nil {
 		return err
 	}
 	if version != format.FileVersion {
 		return fmt.Errorf("unsupported file version %d (v%d required)", version, format.FileVersion)
+	}
+	suite := make([]byte, format.SuiteSize)
+	if _, err := io.ReadFull(r, suite); err != nil {
+		return err
+	}
+	if suite[0] != format.AESGCM256Suite {
+		return fmt.Errorf("unsupported encryption suite %d", suite[0])
+	}
+	flags := make([]byte, format.FlagsSize)
+	if _, err := io.ReadFull(r, flags); err != nil {
+		return err
+	}
+	if flags[0] != 0 {
+		return fmt.Errorf("unsupported format flags 0x%02x", flags[0])
 	}
 
 	// Step 3: Read the remaining header fields.
@@ -384,8 +398,8 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	segmentSeed := make([]byte, format.XNonceSize)
-	if _, err := io.ReadFull(r, segmentSeed); err != nil {
+	noncePrefix := make([]byte, format.NoncePrefixSize)
+	if _, err := io.ReadFull(r, noncePrefix); err != nil {
 		return err
 	}
 
@@ -399,7 +413,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	// Step 5: Key derivation (two-tier v5).
+	// Step 5: Key derivation.
 	// Derive the master key from the password using the file's embedded
 	// Argon2id parameters. This ensures files remain decryptable if
 	// default parameters change in future versions.
@@ -410,7 +424,11 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
 	defer crypto.ZeroBytes(encKey)
 
-	aead, err := chacha20poly1305.NewX(encKey)
+	block, err := aes.NewCipher(encKey)
+	if err != nil {
+		return err
+	}
+	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return err
 	}
@@ -435,7 +453,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	// Read the 72-byte v5 trailer: [segmentCount: 8] [HMAC: 32] [keyCommit: 32]
+	// Read the 72-byte v6 trailer: [segmentCount: 8] [HMAC: 32] [keyCommit: 32]
 	trailerBuf := make([]byte, format.TrailerSize)
 	if _, err := io.ReadFull(r, trailerBuf); err != nil {
 		return err
@@ -447,7 +465,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	storedKeyCommit := trailerBuf[40:72]
 
 	// Compute the expected HMAC and compare in constant time.
-	expectedHMAC := computeTrailerHMAC(macKey, salt, segmentSeed, segmentCount, params)
+	expectedHMAC := computeTrailerHMAC(macKey, salt, noncePrefix, segmentCount, params)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
 		crypto.ZeroBytes(macKey)
 		return ErrAuthenticationFailed
@@ -461,7 +479,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	}
 
 	// MAC key zeroed immediately after use — it's not needed for per-segment
-	// decryption (per-segment authentication uses Poly1305 tags from the AEAD).
+	// decryption (per-segment authentication uses GCM tags from the AEAD).
 	crypto.ZeroBytes(macKey)
 
 	// Step 7: Seek back to payload start and decrypt segments.
@@ -470,9 +488,17 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
+	// Limit the payload reader to the authenticated trailer boundary. This
+	// rejects extra payload bytes and segment counts that stop early.
+	payloadLen := trailerOffset - int64(format.HeaderSize)
+	if payloadLen < 0 {
+		return fmt.Errorf("file too small to be a .cfo file")
+	}
+	limitedPayload := io.LimitReader(r, payloadLen)
+
 	// Buffered I/O for segment-by-segment reading.
 	// bufIn buffer sized for one segment + overhead (length field + AEAD tag).
-	bufIn := bufio.NewReaderSize(r, format.SegmentSize+aead.Overhead()+8)
+	bufIn := bufio.NewReaderSize(limitedPayload, format.SegmentSize+aead.Overhead()+8)
 	bufOut := bufio.NewWriterSize(w, format.SegmentSize)
 	defer bufOut.Flush()
 
@@ -497,25 +523,22 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 			return fmt.Errorf("corrupt segment")
 		}
 
-		// Read the ciphertext + Poly1305 tag for this segment.
+		// Read the ciphertext + GCM tag for this segment.
 		// ciphertextBuf[:segmentLen] creates a slice view of exactly the
 		// right size.
 		if _, err := io.ReadFull(bufIn, ciphertextBuf[:segmentLen]); err != nil {
 			return err
 		}
 
-		// Derive this segment's nonce from the Segment Seed + segment index.
-		// This is the same HKDF-SHA256 construction used during encryption.
-		nonce, err := deriveSegmentNonce(segmentSeed, i)
-		if err != nil {
-			return err
-		}
+		// Derive this segment's unique nonce from the per-file prefix and
+		// segment index.
+		nonce := deriveSegmentNonce(noncePrefix, i)
 
 		// Lower bound: segment must contain at least the AEAD tag (16 bytes).
 		if segmentLen < uint64(aead.Overhead()) {
 			return fmt.Errorf("corrupt segment")
 		}
-		// Compute plaintext length (total segment minus the Poly1305 tag).
+		// Compute plaintext length (total segment minus the GCM tag).
 		plaintextLen := segmentLen - uint64(aead.Overhead())
 
 		// Build AAD identically to encryption: [segmentIndex || plaintextLength].
@@ -525,7 +548,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 
 		// aead.Open decrypts and authenticates in one step.
 		// `ciphertextBuf[:0]` reuses the buffer for the plaintext output.
-		// Returns an error if the Poly1305 tag doesn't verify (tampered data).
+		// Returns an error if the GCM tag doesn't verify (tampered data).
 		plaintext, err := aead.Open(ciphertextBuf[:0], nonce, ciphertextBuf[:segmentLen], aad)
 		if err != nil {
 			return err
@@ -540,6 +563,9 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		if progress != nil {
 			progress(bytesRead)
 		}
+	}
+	if _, err := bufIn.ReadByte(); err != io.EOF {
+		return fmt.Errorf("corrupt payload")
 	}
 
 	return nil
@@ -564,45 +590,13 @@ func buildAAD(dst []byte, segmentIndex, plaintextLen uint64) {
 	binary.BigEndian.PutUint64(dst[8:], plaintextLen)
 }
 
-// deriveSegmentNonce derives a 24-byte XChaCha20 nonce from the Segment Seed
-// and the segment counter using HKDF-SHA256 (RFC 5869).
-//
-// Construction:
-//
-//	nonce = HKDF-SHA256(
-//	    ikm  = segmentSeed,                         // 24-byte random seed
-//	    salt = nil,                                  // safe: IKM is uniformly random
-//	    info = "cipherforge-segment-nonce-v1" || uint64_be(counter)
-//	)
-//
-// Why HKDF rather than simpler approaches:
-//
-//   - XOR-based (seed XOR counter): "identity at zero" — nonce[0] == seed.
-//     Knowing any two (counter, nonce) pairs reveals the seed via XOR.
-//
-//   - HKDF: one-way pseudorandom function. Given derived nonces, the seed
-//     remains computationally hidden. No identity at zero. Domain-separated
-//     via the info string + counter.
-//
-// The `nil` HKDF salt is safe because the IKM (segmentSeed) is already
-// uniformly random from crypto/rand. RFC 5869 permits this.
-func deriveSegmentNonce(segmentSeed []byte, segmentCounter uint64) ([]byte, error) {
-	contextBytes := []byte(format.SegmentNonceContext)
-	// info = context string || big-endian segment counter
-	// This construction avoids boundary ambiguity: the context string is
-	// fixed-length (28 bytes), and the counter is fixed-length (8 bytes).
-	info := make([]byte, len(contextBytes)+8)
-	copy(info, contextBytes)
-	binary.BigEndian.PutUint64(info[len(contextBytes):], segmentCounter)
-
-	// hkdf.New creates an io.Reader that produces key material.
-	// Read exactly 24 bytes (192 bits) for the XChaCha20 nonce.
-	r := hkdf.New(sha256.New, segmentSeed, nil, info)
-	nonce := make([]byte, format.XNonceSize)
-	if _, err := io.ReadFull(r, nonce); err != nil {
-		return nil, err
-	}
-	return nonce, nil
+// deriveSegmentNonce constructs the 12-byte AES-GCM nonce from a random
+// per-file prefix and the unique big-endian segment counter.
+func deriveSegmentNonce(noncePrefix []byte, segmentCounter uint64) []byte {
+	nonce := make([]byte, format.NoncePrefixSize+8)
+	copy(nonce, noncePrefix)
+	binary.BigEndian.PutUint64(nonce[format.NoncePrefixSize:], segmentCounter)
+	return nonce
 }
 
 // ErrAuthenticationFailed is returned when the trailer HMAC does not match,
@@ -610,19 +604,20 @@ func deriveSegmentNonce(segmentSeed []byte, segmentCounter uint64) ([]byte, erro
 var ErrAuthenticationFailed = fmt.Errorf("authentication failed")
 
 // ErrKeyCommitmentFailed is returned when the key-commitment tag does not
-// match. This indicates a v5 file whose trailer HMAC passed (correct
+// match. This indicates a v6 file whose trailer HMAC passed (correct
 // password) but whose key-commitment tag is inconsistent — typically a
 // crafted file attempting to exploit the lack of key commitment.
 var ErrKeyCommitmentFailed = fmt.Errorf("key commitment verification failed")
 
 // computeTrailerHMAC computes the HMAC-SHA256 authentication tag for the
 // .cfo file trailer.
-func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, params format.Argon2Params) []byte {
+func computeTrailerHMAC(macKey, salt, noncePrefix []byte, segmentCount uint64, params format.Argon2Params) []byte {
 	h := hmac.New(sha256.New, macKey)
 
 	h.Write([]byte(format.TrailerHMACContext))
+	h.Write([]byte{format.AESGCM256Suite, 0})
 	h.Write(salt)
-	h.Write(segmentSeed)
+	h.Write(noncePrefix)
 
 	var buf [8]byte
 	binary.BigEndian.PutUint32(buf[0:4], params.Time)
@@ -637,7 +632,7 @@ func computeTrailerHMAC(macKey, salt, segmentSeed []byte, segmentCount uint64, p
 	return h.Sum(nil)
 }
 
-// computeKeyCommitTag computes the v5 key-commitment tag:
+// computeKeyCommitTag computes the v6 key-commitment tag:
 //
 //	HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
 //

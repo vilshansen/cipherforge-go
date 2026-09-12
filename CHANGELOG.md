@@ -1,5 +1,16 @@
 # Changelog
 
+## v6.0.0 (2026-09-12)
+
+- Replaced XChaCha20-Poly1305 with AES-256-GCM using the Go standard library.
+- Introduced the clean v6 format: 47-byte self-describing header, suite ID,
+  4-byte nonce prefix plus 8-byte segment counter, and 72-byte authenticated
+  trailer.
+- Existing v5/XChaCha files are intentionally not supported. Re-encrypt them
+  before using this release.
+- Retained Argon2id, HKDF-SHA256 key separation, per-segment AAD, trailer HMAC,
+  and key commitment.
+
 ## v5.1.0 (2026-08-22)
 
 ### Added

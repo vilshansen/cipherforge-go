@@ -67,11 +67,11 @@ func TestArgon2ParamsRoundTrip(t *testing.T) {
 
 func TestDefaultArgon2Params(t *testing.T) {
 	p := DefaultArgon2Params()
-	if p.Time != 5 {
-		t.Errorf("Time = %d, want 5", p.Time)
+	if p.Time != 12 {
+		t.Errorf("Time = %d, want 12", p.Time)
 	}
-	if p.Memory != 256*1024 {
-		t.Errorf("Memory = %d, want %d", p.Memory, 256*1024)
+	if p.Memory != 1024*1024 {
+		t.Errorf("Memory = %d, want %d", p.Memory, 1024*1024)
 	}
 	if p.Threads != 4 {
 		t.Errorf("Threads = %d, want 4", p.Threads)
@@ -85,20 +85,20 @@ func TestConstants(t *testing.T) {
 	if MagicSize != 9 {
 		t.Errorf("unexpected MagicSize: %d", MagicSize)
 	}
-	if FileVersion != 5 {
-		t.Errorf("FileVersion = %d, want 5", FileVersion)
+	if FileVersion != 6 {
+		t.Errorf("FileVersion = %d, want 6", FileVersion)
 	}
 	if Argon2ParamSize != 12 {
 		t.Errorf("Argon2ParamSize = %d, want 12", Argon2ParamSize)
 	}
-	if HeaderSize != 65 {
-		t.Errorf("HeaderSize = %d, want 65", HeaderSize)
+	if HeaderSize != 47 {
+		t.Errorf("HeaderSize = %d, want 47", HeaderSize)
 	}
-	if MaxArgon2Time != 10 {
-		t.Errorf("MaxArgon2Time = %d, want 10", MaxArgon2Time)
+	if MaxArgon2Time != 24 {
+		t.Errorf("MaxArgon2Time = %d, want 24", MaxArgon2Time)
 	}
-	if MaxArgon2Memory != 16*1024*1024 {
-		t.Errorf("MaxArgon2Memory = %d, want %d", MaxArgon2Memory, 16*1024*1024)
+	if MaxArgon2Memory != 2*1024*1024 {
+		t.Errorf("MaxArgon2Memory = %d, want %d", MaxArgon2Memory, 2*1024*1024)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestReadArgon2ParamsBoundary(t *testing.T) {
 }
 
 func TestTrailerSize(t *testing.T) {
-	// v5 trailer is 8 bytes (segment count) + 32 bytes (HMAC-SHA256) +
+	// v6 trailer is 8 bytes (segment count) + 32 bytes (HMAC-SHA256) +
 	// 32 bytes (key commitment) = 72 bytes
 	if TrailerSize != 8+HMACSize+KeyCommitSize {
 		t.Errorf("TrailerSize = %d, want %d", TrailerSize, 8+HMACSize+KeyCommitSize)

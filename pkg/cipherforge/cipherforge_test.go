@@ -128,8 +128,8 @@ func TestTamperDetection(t *testing.T) {
 	enc.Encrypt(in, out, nil)
 
 	data := out.Bytes()
-	// Header is 65 bytes in v5 format. Tamper a byte in the payload region.
-	data[80] ^= 0xFF
+	// Header is 47 bytes in v6 format. Tamper a byte in the payload region.
+	data[55] ^= 0xFF
 
 	decIn := bytes.NewReader(data)
 	decOut := &bytes.Buffer{}
@@ -141,8 +141,8 @@ func TestTamperDetection(t *testing.T) {
 	}
 }
 
-func TestV5RoundTrip(t *testing.T) {
-	// Test v5 format round-trip: encrypt and decrypt a file.
+func TestV6RoundTrip(t *testing.T) {
+	// Test v6 AES-GCM format round-trip: encrypt and decrypt a file.
 
 	password := []byte("test-password")
 	plaintext := []byte("hello")
@@ -164,12 +164,12 @@ func TestV5RoundTrip(t *testing.T) {
 	}
 
 	if !bytes.Equal(decOut.Bytes(), plaintext) {
-		t.Errorf("v5 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
+		t.Errorf("v6 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
 	}
 }
 
 func TestBatchEncryptionWithMasterKey(t *testing.T) {
-	// Test the v5 batch optimisation: derive a master key once, reuse for
+	// Test the v6 batch optimisation: derive a master key once, reuse for
 	// multiple files.
 	password := []byte("test-password")
 	masterKey := crypto.DeriveMasterKey(password, fastParams)
@@ -224,7 +224,7 @@ func TestTrailerTampering(t *testing.T) {
 	}
 
 	// Tamper: flip a byte in the trailer HMAC (bytes 8–39 of the trailer).
-	// The v5 trailer is: [segmentCount:8] [HMAC:32] [keyCommit:32].
+	// The v6 trailer is: [segmentCount:8] [HMAC:32] [keyCommit:32].
 	// We tamper the HMAC region, not the key-commitment region.
 	data := out.Bytes()
 	trailerStart := len(data) - format.TrailerSize
@@ -257,7 +257,7 @@ func TestSegmentCountTampering(t *testing.T) {
 	}
 
 	// Tamper: zero the segment count in the trailer.
-	// v5 trailer is 72 bytes: segmentCount(8) + HMAC(32) + keyCommit(32).
+	// v6 trailer is 72 bytes: segmentCount(8) + HMAC(32) + keyCommit(32).
 	data := out.Bytes()
 	trailerOffset := len(data) - format.TrailerSize
 	data[trailerOffset+7] = 0x00
@@ -423,7 +423,7 @@ func TestProgressCallback(t *testing.T) {
 }
 
 func TestKeyCommitmentTampering(t *testing.T) {
-	// Tamper with the key-commitment tag in a v5 file. Decryption should
+	// Tamper with the key-commitment tag in a v6 file. Decryption should
 	// fail with ErrKeyCommitmentFailed.
 	password := []byte("test-password")
 	plaintext := []byte("data for key commitment tamper test")
@@ -436,11 +436,11 @@ func TestKeyCommitmentTampering(t *testing.T) {
 		t.Fatalf("Encryption failed: %v", err)
 	}
 
-	// Verify output is v5.
+	// Verify output is v6 AES-GCM.
 	data := out.Bytes()
 	ver := data[9]<<24 | data[10]<<16 | data[11]<<8 | data[12]
-	if ver != 5 {
-		t.Fatalf("expected v5 output, got version %d", ver)
+	if ver != 6 {
+		t.Fatalf("expected v6 output, got version %d", ver)
 	}
 
 	// Tamper: flip a byte in the key-commitment tag (last 32 bytes of trailer).
@@ -460,10 +460,10 @@ func TestKeyCommitmentTampering(t *testing.T) {
 	}
 }
 
-func TestV5FileFormat(t *testing.T) {
-	// Verify that Encrypt produces a v5 file with correct sizes.
+func TestV6FileFormat(t *testing.T) {
+	// Verify that Encrypt produces a v6 AES-GCM file with correct sizes.
 	password := []byte("test-password")
-	plaintext := []byte("v5 format test")
+	plaintext := []byte("v6 format test")
 
 	in := bytes.NewReader(plaintext)
 	out := &bytes.Buffer{}
@@ -480,13 +480,13 @@ func TestV5FileFormat(t *testing.T) {
 		t.Fatal("bad magic")
 	}
 
-	// Check version = 5.
+	// Check version = 6.
 	ver := uint32(data[9])<<24 | uint32(data[10])<<16 | uint32(data[11])<<8 | uint32(data[12])
-	if ver != 5 {
-		t.Errorf("version = %d, want 5", ver)
+	if ver != 6 {
+		t.Errorf("version = %d, want 6", ver)
 	}
 
-	// Check that the trailer is 72 bytes (v5).
+	// Check that the trailer is 72 bytes (v6).
 	// Minimum file: header(65) + 1 segment(8+ct) + trailer(72)
 	expectedTrailerOffset := len(data) - format.TrailerSize
 	segCount := uint64(data[expectedTrailerOffset])<<56 |
@@ -499,6 +499,32 @@ func TestV5FileFormat(t *testing.T) {
 		uint64(data[expectedTrailerOffset+7])
 	if segCount != 1 {
 		t.Errorf("segment count = %d, want 1", segCount)
+	}
+	if data[13] != format.AESGCM256Suite {
+		t.Errorf("suite = %d, want %d", data[13], format.AESGCM256Suite)
+	}
+	if data[14] != 0 {
+		t.Errorf("flags = %d, want zero", data[14])
+	}
+}
+
+func TestAESGCMNonceConstruction(t *testing.T) {
+	prefix := []byte{0x01, 0x02, 0x03, 0x04}
+	first := deriveSegmentNonce(prefix, 0)
+	second := deriveSegmentNonce(prefix, 1)
+	last := deriveSegmentNonce(prefix, ^uint64(0))
+
+	if len(first) != 12 || len(second) != 12 || len(last) != 12 {
+		t.Fatalf("nonce length = %d, want 12", len(first))
+	}
+	if !bytes.Equal(first[:4], prefix) || !bytes.Equal(second[:4], prefix) {
+		t.Fatal("nonce prefix was not preserved")
+	}
+	if bytes.Equal(first, second) || bytes.Equal(second, last) {
+		t.Fatal("segment nonces must be unique")
+	}
+	if !bytes.Equal(first[4:], make([]byte, 8)) {
+		t.Fatal("segment zero counter is not encoded as big-endian zero")
 	}
 }
 
@@ -561,9 +587,9 @@ func TestHeaderSaltTampering(t *testing.T) {
 	}
 }
 
-func TestHeaderSeedTampering(t *testing.T) {
-	// Tampering the Segment Seed in the header should cause the trailer HMAC
-	// to fail (because the seed is covered by the HMAC).
+func TestHeaderNoncePrefixTampering(t *testing.T) {
+	// Tampering the nonce prefix in the header should cause the trailer HMAC
+	// to fail (because the prefix is covered by the HMAC).
 	password := []byte("test-password")
 	plaintext := []byte("sensitive data")
 
@@ -575,9 +601,9 @@ func TestHeaderSeedTampering(t *testing.T) {
 		t.Fatalf("Encryption failed: %v", err)
 	}
 
-	// Segment Seed is at bytes 28-51. Flip a byte.
+	// Nonce prefix is at bytes 31-34. Flip a byte.
 	data := out.Bytes()
-	data[30] ^= 0xFF
+	data[31] ^= 0xFF
 
 	decIn := bytes.NewReader(data)
 	decOut := &bytes.Buffer{}
@@ -585,8 +611,39 @@ func TestHeaderSeedTampering(t *testing.T) {
 	dec := NewDecrypter(password)
 	err := dec.Decrypt(decIn, decOut, nil)
 	if err == nil {
-		t.Fatal("expected authentication failure for tampered segment seed")
+		t.Fatal("expected authentication failure for tampered nonce prefix")
 	}
+}
+
+func TestUnsupportedSuite(t *testing.T) {
+	data := encryptTestData(t, []byte("suite test"))
+	data[13] = 0xFF
+
+	decOut := &bytes.Buffer{}
+	err := NewDecrypter([]byte("test-password")).Decrypt(bytes.NewReader(data), decOut, nil)
+	if err == nil || !strings.Contains(err.Error(), "unsupported encryption suite") {
+		t.Fatalf("expected unsupported suite error, got %v", err)
+	}
+}
+
+func TestUnsupportedFlags(t *testing.T) {
+	data := encryptTestData(t, []byte("flags test"))
+	data[14] = 0x01
+
+	decOut := &bytes.Buffer{}
+	err := NewDecrypter([]byte("test-password")).Decrypt(bytes.NewReader(data), decOut, nil)
+	if err == nil || !strings.Contains(err.Error(), "unsupported format flags") {
+		t.Fatalf("expected unsupported flags error, got %v", err)
+	}
+}
+
+func encryptTestData(t *testing.T, plaintext []byte) []byte {
+	t.Helper()
+	out := &bytes.Buffer{}
+	if err := NewEncrypterWithParams([]byte("test-password"), fastParams).Encrypt(bytes.NewReader(plaintext), out, nil); err != nil {
+		t.Fatalf("encryption failed: %v", err)
+	}
+	return out.Bytes()
 }
 
 func TestFileTooSmall(t *testing.T) {
@@ -674,16 +731,16 @@ func TestCorruptSegmentLength(t *testing.T) {
 	}
 
 	data := out.Bytes()
-	// The segment length is at byte 64 (right after the header).
+	// The segment length is at byte 47 (right after the header).
 	// Set it to an impossibly large value (max + 1).
-	data[64+0] = 0x00
-	data[64+1] = 0x10 // Make it much larger than valid range
-	data[64+2] = 0x00
-	data[64+3] = 0x00
-	data[64+4] = 0x00
-	data[64+5] = 0x00
-	data[64+6] = 0x00
-	data[64+7] = 0x00
+	data[47+0] = 0x00
+	data[47+1] = 0x10 // Make it much larger than valid range
+	data[47+2] = 0x00
+	data[47+3] = 0x00
+	data[47+4] = 0x00
+	data[47+5] = 0x00
+	data[47+6] = 0x00
+	data[47+7] = 0x00
 
 	decIn := bytes.NewReader(data)
 	decOut := &bytes.Buffer{}
