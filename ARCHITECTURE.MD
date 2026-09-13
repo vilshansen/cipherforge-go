@@ -140,14 +140,15 @@ pkg/cipherforge.Decrypter.Decrypt(reader, writer)
           └── AEAD.Open(ciphertext, nonce, aad) → plaintext
 ```
 
-If decryption fails with an authentication or key-commitment error, the CLI may
-invoke `RepairSecret` with the supplied secret. `RepairSecret` reads the v7 header
-salt and the trailer's key-commitment tag, generates the supported single-edit
-variants of the secret (substitution, adjacent transposition, deletion,
-insertion), and tests each candidate by deriving `encKey` with HKDF and
-recomputing the commitment HMAC. No payload decryption is involved, so the search
-is fast and produces no plaintext. When a variant matches, the CLI retries
-`Decrypt` with it and reports the corrected secret on stderr.
+If decryption fails with an authentication or key-commitment error, the CLI and
+the TUI invoke `RepairSecret` with the supplied secret. `RepairSecret` reads the
+v7 header salt and the trailer's key-commitment tag, generates the supported
+single-edit variants of the secret (substitution, adjacent transposition,
+deletion, insertion), and tests each candidate by deriving `encKey` with HKDF
+and recomputing the commitment HMAC. No payload decryption is involved, so the
+search is fast and produces no plaintext. When a variant matches, the caller
+retries `Decrypt` with it: the CLI reports the corrected secret on stderr and
+the TUI shows it on the results screen.
 
 ## Cryptographic Design
 
@@ -276,7 +277,7 @@ Targets: `linux/{amd64,arm64,386}`, `windows/{amd64,386}`, `darwin/{amd64,arm64}
 The version and git commit are injected via linker flags:
 
 ```
-go build -ldflags "-X main.Version=7.2.0 -X main.GitCommit=abc1234"
+go build -ldflags "-X main.Version=7.2.1 -X main.GitCommit=abc1234"
 ```
 
 ## Design Decisions

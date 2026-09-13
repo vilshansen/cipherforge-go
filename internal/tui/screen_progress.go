@@ -98,23 +98,30 @@ func runOperation(m Model, ch chan<- progressTickMsg) {
 
 	var err error
 	if m.textMode {
-		var result string
+		var result, corrected string
 		if m.operation == "encrypt" {
 			result, err = runTextEncrypt(m.inputText, m.password, ch)
 		} else {
-			result, err = runTextDecrypt(m.inputText, m.password, ch)
+			result, corrected, err = runTextDecrypt(m.inputText, m.password, ch)
 		}
 		if err != nil {
 			ch <- progressTickMsg{err: err}
 		} else {
-			ch <- progressTickMsg{done: true, result: result}
+			ch <- progressTickMsg{done: true, result: result, correctedSecret: corrected}
 		}
 		return
 	}
 	if m.operation == "encrypt" {
 		err = runEncrypt(m.inputFile, m.outputFile, m.password, m.base64, ch)
 	} else {
-		err = runDecrypt(m.inputFile, m.outputFile, m.password, m.base64, ch)
+		var corrected string
+		corrected, err = runDecrypt(m.inputFile, m.outputFile, m.password, m.base64, ch)
+		if err == nil {
+			// Report a correction so the results screen can show it. A plain
+			// success without a correction is signalled by closing the channel.
+			ch <- progressTickMsg{done: true, correctedSecret: corrected}
+			return
+		}
 	}
 	if err != nil {
 		ch <- progressTickMsg{err: err}
@@ -178,10 +185,10 @@ func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 	return err
 }
 
-func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch chan<- progressTickMsg) error {
+func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch chan<- progressTickMsg) (string, error) {
 	in, err := os.Open(inputFile)
 	if err != nil {
-		return fmt.Errorf("open input: %w", err)
+		return "", fmt.Errorf("open input: %w", err)
 	}
 
 	var reader io.ReadSeeker = in
@@ -189,11 +196,11 @@ func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 		raw, err := io.ReadAll(in)
 		in.Close() // done with file; raw data is in memory
 		if err != nil {
-			return fmt.Errorf("read base64 input: %w", err)
+			return "", fmt.Errorf("read base64 input: %w", err)
 		}
 		decoded, err := armor.DecodeBytes(raw)
 		if err != nil {
-			return fmt.Errorf("decode base64: %w", err)
+			return "", fmt.Errorf("decode base64: %w", err)
 		}
 		reader = bytes.NewReader(decoded)
 	} else {
@@ -206,7 +213,7 @@ func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 	succeeded := false
 	out, err := os.CreateTemp(filepath.Dir(outputFile), ".cfo-decrypt-*")
 	if err != nil {
-		return fmt.Errorf("create temp output: %w", err)
+		return "", fmt.Errorf("create temp output: %w", err)
 	}
 	writePath := out.Name()
 	defer func() {
@@ -221,16 +228,41 @@ func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 		sendProgress(ch, bytes)
 	})
 
+	// A mistyped secret is the most likely cause of an authentication failure,
+	// and the trailer's key-commitment tag lets us test nearby variants without
+	// reading the payload. See pkg/cipherforge/repair.go.
+	corrected := ""
+	if err != nil && cipherforge.IsSecretError(err) {
+		if repaired, rerr := cipherforge.RepairSecret(reader, password); rerr == nil {
+			// Rewind the ciphertext and drop the partial plaintext so the retry
+			// starts from a clean state.
+			if _, serr := reader.Seek(0, io.SeekStart); serr == nil && out.Truncate(0) == nil {
+				if _, serr := out.Seek(0, io.SeekStart); serr == nil {
+					dec = cipherforge.NewDecrypter(repaired)
+					derr := dec.Decrypt(reader, out, func(bytes int64) {
+						sendProgress(ch, bytes)
+					})
+					if derr == nil {
+						corrected = string(repaired)
+						err = nil
+					} else {
+						err = derr
+					}
+				}
+			}
+		}
+	}
+
 	if err == nil {
 		succeeded = true
 		// Atomically rename the temp file to the final output path.
 		out.Close() // Must close before rename on Windows
 		if rerr := os.Rename(writePath, outputFile); rerr != nil {
 			os.Remove(writePath)
-			return fmt.Errorf("atomic rename failed: %w", rerr)
+			return corrected, fmt.Errorf("atomic rename failed: %w", rerr)
 		}
 	}
-	return err
+	return corrected, err
 }
 
 // sendProgress sends a progress tick. Blocks briefly if the channel is full
@@ -252,18 +284,38 @@ func runTextEncrypt(plaintext string, password []byte, ch chan<- progressTickMsg
 	return armor.EncodeBytes(buf.Bytes())
 }
 
-func runTextDecrypt(b64input string, password []byte, ch chan<- progressTickMsg) (string, error) {
+func runTextDecrypt(b64input string, password []byte, ch chan<- progressTickMsg) (string, string, error) {
 	raw, err := armor.DecodeString(b64input)
 	if err != nil {
-		return "", fmt.Errorf("invalid base64 input: %w", err)
+		return "", "", fmt.Errorf("invalid base64 input: %w", err)
 	}
 
 	in := bytes.NewReader(raw)
 	var buf bytes.Buffer
 
 	dec := cipherforge.NewDecrypter(password)
-	if err := dec.Decrypt(in, &buf, func(b int64) { sendProgress(ch, b) }); err != nil {
-		return "", err
+	err = dec.Decrypt(in, &buf, func(b int64) { sendProgress(ch, b) })
+
+	// Mirror the file path: a mistyped secret can be corrected from the key
+	// commitment, which needs no payload decryption.
+	corrected := ""
+	if err != nil && cipherforge.IsSecretError(err) {
+		if repaired, rerr := cipherforge.RepairSecret(in, password); rerr == nil {
+			if _, serr := in.Seek(0, io.SeekStart); serr == nil {
+				buf.Reset()
+				dec = cipherforge.NewDecrypter(repaired)
+				if derr := dec.Decrypt(in, &buf, func(b int64) { sendProgress(ch, b) }); derr == nil {
+					corrected = string(repaired)
+					err = nil
+				} else {
+					err = derr
+				}
+			}
+		}
 	}
-	return buf.String(), nil
+
+	if err != nil {
+		return "", "", err
+	}
+	return buf.String(), corrected, nil
 }

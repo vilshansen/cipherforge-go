@@ -47,6 +47,10 @@ type progressTickMsg struct {
 	done   bool
 	err    error
 	result string // text output for text mode operations
+
+	// correctedSecret is set when decryption succeeded only after RepairSecret
+	// found a nearby secret that authenticates the file.
+	correctedSecret string
 }
 
 // Model is the top-level Bubble Tea model. It holds the current screen
@@ -277,7 +281,7 @@ func (m Model) handleProgressTick(msg progressTickMsg) (tea.Model, tea.Cmd) {
 		if m.operation == "decrypt" {
 			crypto.ZeroBytes(m.password)
 			m.password = nil
-			m.passwordEntry.retryMsg = "Wrong password or corrupt input — try again."
+			m.passwordEntry.retryMsg = "Wrong secret or corrupt input — try again."
 			m.screen = ScreenPassword
 			return m, m.passwordEntry.Init()
 		}
@@ -292,6 +296,7 @@ func (m Model) handleProgressTick(msg progressTickMsg) (tea.Model, tea.Cmd) {
 		}
 		m.results = buildResults(m.operation, m.inputFile, m.outputFile, nil, m.genPassword, m.outputText, m.textMode)
 		m.results.SetSize(m.width, m.height)
+		m.results.correctedSecret = msg.correctedSecret
 		m.screen = ScreenResults
 		return m, nil
 	}

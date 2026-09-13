@@ -249,9 +249,11 @@ heuristic guess. The search is bounded to a single edit: it cannot recover an
 arbitrary lost secret, and it does not correct errors outside the four cases
 above.
 
-The corrected secret is written to **stderr**, keeping it out of the data stream.
-Treat that output as sensitive secret material and store the corrected secret
-securely.
+In the CLI the corrected secret is written to **stderr**, keeping it out of the
+data stream; treat that output as sensitive secret material and store the
+corrected secret securely. The terminal UI applies the same correction and shows
+the corrected secret on the results screen instead, where `c` copies it to the
+clipboard.
 
 ### Notes on output filenames
 
@@ -272,7 +274,7 @@ By default, Cipherforge will not overwrite an existing output file — use
 | `Tab` / `Shift+Tab` | Secret screen | Cycle fields |
 | `Esc` | Sub-screens | Go back |
 | `q` | Main menu | Quit |
-| `c` | Results screen | Copy generated secret to clipboard |
+| `c` | Results screen | Copy the generated or corrected secret to clipboard |
 | `Shift+C` | Results screen | Copy encrypted/decrypted text |
 | `↑` `↓` `Enter` / `j` `k` / `PgUp` `PgDn` / `Home` `End` | Results screen | Scroll long text |
 | `Ctrl+S` | Text input | Confirm and proceed |
@@ -721,7 +723,7 @@ Recommended flags for a reproducible, static release build:
 ```bash
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
   -mod=vendor -trimpath -buildvcs=false \
-  -ldflags "-s -w -X main.Version=7.2.0 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
+  -ldflags "-s -w -X main.Version=7.2.1 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
   -o cfo-darwin-arm64 ./cmd/cfo/
 ```
 
@@ -735,7 +737,7 @@ Notes:
 - `-mod=vendor` builds against the local `vendor/` tree (create it first with
   `go mod vendor`); omit it to use normal module resolution instead.
 - `-X main.Version` / `-X main.GitCommit` stamp the version and commit into the
-  binary (defaults: `7.2.0` and `none`).
+  binary (defaults: `7.2.1` and `none`).
 
 To build for all supported platforms on Unix-like shells:
 ```bash

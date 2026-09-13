@@ -235,7 +235,7 @@ func TestResultsBoxAlignsWithLabels(t *testing.T) {
 			cols["label"] = strings.Index(ln, trimmed)
 		case strings.HasPrefix(trimmed, "-----BEGIN"):
 			cols["box"] = strings.Index(ln, trimmed)
-		case strings.HasPrefix(trimmed, "Generated password"):
+		case strings.HasPrefix(trimmed, "Generated secret"):
 			cols["pwdlbl"] = strings.Index(ln, trimmed)
 		case strings.HasPrefix(trimmed, "SECRETpassword"):
 			cols["pwdbox"] = strings.Index(ln, trimmed)

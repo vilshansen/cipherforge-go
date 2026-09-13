@@ -28,7 +28,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -49,7 +48,7 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "7.2.0"
+var Version = "7.2.1"
 var GitCommit = "none"
 
 // init wires the application version into the ASCII-armor Version header so
@@ -354,7 +353,7 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 	// failure, and the trailer's key-commitment tag lets us test nearby variants
 	// without reading the payload. A variant that authenticates is not a guess —
 	// it reproduces a 256-bit tag — so continuing with it is safe.
-	if err != nil && isAuthenticationFailure(err) {
+	if err != nil && cipherforge.IsSecretError(err) {
 		if corrected, rerr := cipherforge.RepairSecret(reader, password); rerr == nil {
 			ui.PrintWarning(fmt.Sprintf(
 				"The supplied secret did not authenticate %s, but a single-edit correction does. "+
@@ -406,14 +405,6 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 	}
 	published = true
 	return nil
-}
-
-// isAuthenticationFailure reports whether err means the derived key did not
-// match the file — which is what a mistyped secret looks like, and the only
-// case where searching for a corrected secret can help.
-func isAuthenticationFailure(err error) bool {
-	return errors.Is(err, cipherforge.ErrAuthenticationFailed) ||
-		errors.Is(err, cipherforge.ErrKeyCommitmentFailed)
 }
 
 // copyFileTo copies the contents of the file at path to w. It is used to release

@@ -42,7 +42,7 @@ function Show-Usage {
     Write-Host '  -Platforms  Comma-separated list of targets (default: all).'
     Write-Host '              Example: -Platforms linux/amd64,darwin/arm64'
     Write-Host ''
-    Write-Host '  -Version    Overrides the version string (default: 7.2.0).'
+    Write-Host '  -Version    Overrides the version string (default: 7.2.1).'
     Write-Host ''
     Write-Host '  -Vendor     Run "go mod vendor" first to create the local vendor/'
     Write-Host '              directory (requires network), then build fully offline.'
@@ -50,7 +50,7 @@ function Show-Usage {
 }
 
 if (-not $Version) {
-    $Version = '7.2.0'
+    $Version = '7.2.1'
 }
 
 if ($Help) {

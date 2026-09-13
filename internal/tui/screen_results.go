@@ -25,6 +25,10 @@ type ResultsModel struct {
 	scroll      int // line offset for the scrollable text view
 	width       int
 	height      int
+
+	// correctedSecret is set when decryption succeeded only after a single-edit
+	// correction recovered the intended secret.
+	correctedSecret string
 }
 
 func buildResults(operation, inputFile, outputFile string, err error, genPassword, outputText string, textMode bool) ResultsModel {
@@ -229,16 +233,30 @@ func (m ResultsModel) View() string {
 		b.WriteString("\n")
 	}
 
+	if m.success && m.correctedSecret != "" {
+		b.WriteString("\n")
+		b.WriteString(pwdLabelStyle.Render("Your secret was mistyped. The corrected secret for this file is:"))
+		b.WriteString("\n\n")
+		b.WriteString(pwdBoxStyle.Render(m.correctedSecret))
+		b.WriteString("\n\n")
+		if m.copiedPwd {
+			b.WriteString(copiedStyle.Render("✓ Corrected secret copied to clipboard"))
+		} else {
+			b.WriteString(hintIndent.Render("Press c to copy the corrected secret to clipboard"))
+		}
+		b.WriteString("\n")
+	}
+
 	if m.success && m.genPassword != "" {
 		b.WriteString("\n")
-		b.WriteString(pwdLabelStyle.Render("Generated password (save it; unrecoverable if lost):"))
+		b.WriteString(pwdLabelStyle.Render("Generated secret (save it; a lost secret cannot be recovered):"))
 		b.WriteString("\n\n")
 		b.WriteString(pwdBoxStyle.Render(m.genPassword))
 		b.WriteString("\n\n")
 		if m.copiedPwd {
-			b.WriteString(copiedStyle.Render("✓ Password copied to clipboard"))
+			b.WriteString(copiedStyle.Render("✓ Secret copied to clipboard"))
 		} else {
-			b.WriteString(hintIndent.Render("Press c to copy password to clipboard"))
+			b.WriteString(hintIndent.Render("Press c to copy the secret to clipboard"))
 		}
 		b.WriteString("\n")
 	}
@@ -267,8 +285,12 @@ func (m Model) updateResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "c":
-		if m.results.genPassword != "" {
-			clipboard.WriteAll(m.results.genPassword)
+		secret := m.results.genPassword
+		if m.results.correctedSecret != "" {
+			secret = m.results.correctedSecret
+		}
+		if secret != "" {
+			clipboard.WriteAll(secret)
 			m.results.copiedPwd = true
 		}
 		return m, nil

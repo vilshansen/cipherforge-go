@@ -1,5 +1,25 @@
 # Changelog
 
+## v7.2.1 (2026-09-13)
+
+### Changed
+
+- **The terminal UI now corrects a mistyped secret too.** The single-edit
+  correction added in v7.2.0 was CLI-only: the TUI reported "Wrong password or
+  corrupt input" and sent the user back to retype. It now retries with the
+  corrected secret and shows it on the results screen, where `c` copies it to
+  the clipboard.
+- **CLI correction notice reworded.** It said "a one-character correction",
+  which misdescribes a transposition (two characters swapped) and a deletion or
+  insertion (which change the length). It now says "a single-edit correction".
+- **Secret terminology in the TUI.** The results screen and the retry message no
+  longer say "password"; the generated value is labelled as a secret.
+
+### Documentation
+
+- README, ARCHITECTURE, and CRYPTODESIGN describe the correction feature, its
+  limits, and the fact that the key-commitment tag is public file data.
+
 ## v7.2.0 (2026-09-13)
 
 ### Added

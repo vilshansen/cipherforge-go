@@ -15,6 +15,15 @@ import (
 // key-commitment tag stored in the file.
 var ErrNoRepair = errors.New("no single-character correction of the secret authenticates this file")
 
+// IsSecretError reports whether err means the supplied secret did not derive the
+// file's keys — the only condition under which RepairSecret can help.
+//
+// A corrupted payload fails at segment authentication instead and is
+// deliberately not treated as a secret error: no candidate secret would fix it.
+func IsSecretError(err error) bool {
+	return errors.Is(err, ErrAuthenticationFailed) || errors.Is(err, ErrKeyCommitmentFailed)
+}
+
 // RepairSecret looks for a secret that authenticates against the key-commitment
 // tag stored in the .cfo stream r, differing from secret by a single character.
 //
