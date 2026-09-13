@@ -33,10 +33,28 @@ func RandReader() io.Reader {
 const (
 	SaltSize = 16 // 128-bit salt
 
-	// CharacterPool is the set of unambiguous characters for password generation:
+	// CharacterPool is the set of unambiguous characters for secret generation:
 	// digits 1-9 (no 0), uppercase A-Z minus I/L/O, lowercase a-z minus l.
-	// 57 characters total; 44 chars × log₂(57) ≈ 256.6 bits ≥ 256-bit strength.
+	// 57 characters total; 45 chars × log₂(57) ≈ 262.5 bits ≥ 256-bit strength.
 	CharacterPool = "123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+	// SecretLength is the number of random characters in a generated secret. It
+	// is the smallest multiple of SecretGroupSize whose keyspace still clears
+	// 256 bits: 45 × log₂(57) ≈ 262.5 bits, while 40 × log₂(57) ≈ 233 bits.
+	SecretLength = 45
+
+	// SecretGroupSize is the number of characters between separators in a
+	// generated secret. Grouping is for readability only.
+	SecretGroupSize = 5
+
+	// SecretSeparator separates the character groups of a generated secret. It is
+	// part of the secret string: a secret is used exactly as displayed, so the
+	// separators must not be stripped.
+	SecretSeparator = '-'
+
+	// SecretDisplayLength is the length of a generated secret as displayed:
+	// SecretLength characters plus one separator per completed group.
+	SecretDisplayLength = SecretLength + SecretLength/SecretGroupSize - 1
 )
 
 // DeriveKeys derives two independent 32-byte keys directly from the generated
@@ -67,6 +85,43 @@ func splitKeyPair(raw []byte) (encKey, macKey []byte) {
 
 // GenerateSalt creates a 16-byte random salt for the KDF using crypto/rand.
 func GenerateSalt() ([]byte, error) { return randRead(SaltSize) }
+
+// GenerateSecret generates a new encryption secret: SecretLength random
+// characters from CharacterPool, grouped by GroupSecret for readability.
+//
+// The returned slice is the secret in full — separators included — and is ready
+// to be used as key material. The caller owns it and must zero it with
+// ZeroBytes when done.
+func GenerateSecret() ([]byte, error) {
+	raw, err := GenerateSecurePassword(SecretLength, CharacterPool)
+	if err != nil {
+		return nil, err
+	}
+	defer ZeroBytes(raw)
+
+	secret := GroupSecret(raw)
+	MlockBytes(secret)
+	return secret, nil
+}
+
+// GroupSecret inserts SecretSeparator between every SecretGroupSize characters
+// of secret, so a long secret can be read aloud or transcribed without losing
+// one's place. The separators become part of the returned secret: callers use
+// exactly what they display, so the grouping and the key material never diverge.
+func GroupSecret(secret []byte) []byte {
+	if len(secret) <= SecretGroupSize {
+		return secret
+	}
+
+	grouped := make([]byte, 0, len(secret)+len(secret)/SecretGroupSize)
+	for i, c := range secret {
+		if i > 0 && i%SecretGroupSize == 0 {
+			grouped = append(grouped, SecretSeparator)
+		}
+		grouped = append(grouped, c)
+	}
+	return grouped
+}
 
 // randRead reads n cryptographically secure random bytes.
 func randRead(n int) ([]byte, error) {

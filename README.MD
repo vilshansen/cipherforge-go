@@ -119,7 +119,7 @@ the original. The original file is not modified or removed.
 
 ```
 cfo: Save this generated secret — it cannot be recovered.
-8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3kPqWmNbVcXdFgHjKzRtv
+8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3k
 ```
 
 **Decrypt a file:**
@@ -271,17 +271,20 @@ Cipherforge generates the encryption secret automatically — human-chosen
 passwords are the leading cause of cryptographic failure in practice, so there
 is no option to supply one.
 
-The generated secret is 64 characters drawn from a 57-character clean pool
+The generated secret is 45 characters drawn from a 57-character clean pool
 (`1–9`, `A–Z` excluding `I`, `L`, and `O`, `a–z` excluding `l`) using `crypto/rand`,
 Go's interface to the operating system's cryptographically secure random number
 generator. The pool excludes the five glyphs most commonly confused with each
 other (`0`/`O`, `1`/`I`/`l`/`L`), making secrets unambiguous to read aloud or
 transcribe from paper.
 
-**Why 64 characters?** Each character carries approximately 5.83 bits of entropy
-(log₂ 57 ≈ 5.83). At 64 characters that's ~373 bits of entropy — comfortably
-beyond the 256-bit strength of the encryption key. The secret is a flat string
-with no separators — every character contributes entropy.
+For readability the characters are printed in dash-separated groups of five. The
+dashes are part of the secret — enter it exactly as displayed.
+
+**Why 45 characters?** Each character carries approximately 5.83 bits of entropy
+(log₂ 57 ≈ 5.83). 45 is the smallest multiple of five that clears 256 bits, at
+~262 bits of entropy — comfortably beyond the 256-bit strength of the encryption
+key. Only the 45 characters contribute entropy; the separators do not.
 
 **Rejection sampling** is used during generation to eliminate modulo bias.
 `crypto/rand.Int` draws an unbiased random integer in [0, poolSize), avoiding
@@ -290,7 +293,7 @@ introduce. The result is a perfectly uniform distribution across all 57
 characters.
 
 ```
-8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3kPqWmNbVcXdFgHjKzRtv
+8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3k
 ```
 
 The secret is shown exactly once, at the time of encryption, and is the only

@@ -261,7 +261,7 @@ func (m Model) confirmPassword() (tea.Model, tea.Cmd) {
 }
 
 func (m *PasswordModel) regenerate() {
-	pwd, err := crypto.GenerateSecurePassword(64, crypto.CharacterPool)
+	pwd, err := crypto.GenerateSecret()
 	if err != nil {
 		return
 	}

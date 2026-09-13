@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/vilshansen/cipherforge-go/internal/armor"
+	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"github.com/vilshansen/cipherforge-go/internal/format"
 	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
 )
@@ -290,7 +291,7 @@ func TestShowHelp(t *testing.T) {
 		"-f, --force",
 		"-h, --help",
 		"-v, --version",
-		"64 characters",
+		"45 characters",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help output missing %q", want)
@@ -366,8 +367,8 @@ func TestHelpVersionFlags(t *testing.T) {
 func TestResolvePasswordKeepsSecretOffCiphertextStream(t *testing.T) {
 	secret, stdoutBytes, stderrBytes := resolvePasswordCaptured(t, true)
 
-	if len(secret) != passwordLength {
-		t.Fatalf("secret length = %d, want %d", len(secret), passwordLength)
+	if len(secret) != crypto.SecretDisplayLength {
+		t.Fatalf("secret length = %d, want %d", len(secret), crypto.SecretDisplayLength)
 	}
 	if bytes.Contains(stdoutBytes, secret) {
 		t.Errorf("CF70-001: generated secret leaked into the stdout ciphertext stream")

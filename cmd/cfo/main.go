@@ -48,7 +48,7 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "7.0.1"
+var Version = "7.1.0"
 var GitCommit = "none"
 
 // init wires the application version into the ASCII-armor Version header so
@@ -57,13 +57,9 @@ func init() {
 	armor.Version = "Version: Cipherforge " + Version
 }
 
-// characterPool is the set of unambiguous characters used for auto-generated
-// secrets. Digits 1-9 (no 0 — confused with O), uppercase A-Z without I/O/L,
-// lowercase a-z without l. 57 characters total.
-//
-// 64 chars × log₂(57) ≈ 373 bits of entropy, which is appropriate when the
-// secret is machine-generated and shown once to the operator.
-const passwordLength = 64
+// Generated secrets come from crypto.GenerateSecret: crypto.SecretLength random
+// characters drawn from crypto.CharacterPool and grouped by crypto.GroupSecret.
+// The separators are part of the secret, so it is used exactly as displayed.
 
 func main() {
 	// Always show help for -h/--help, version for -v/--version.
@@ -402,7 +398,7 @@ func copyFileTo(w io.Writer, path string) error {
 // protects, so anyone who captured the stream could decrypt it.
 func resolvePassword(operation string, ciphertextToStdout bool) ([]byte, error) {
 	if operation == "encrypt" {
-		p, err := crypto.GenerateSecurePassword(passwordLength, crypto.CharacterPool)
+		p, err := crypto.GenerateSecret()
 		if err != nil {
 			return nil, err
 		}
@@ -498,7 +494,8 @@ func showHelp() {
 	fmt.Println("  cfo                                 Launch the terminal UI (no flags)")
 
 	fmt.Println("\nNotes:")
-	fmt.Println("  The generated secret is 64 characters — shown once, cannot be recovered.")
+	fmt.Println("  The generated secret is 45 characters shown in dash-separated groups of")
+	fmt.Println("  five — copy it exactly as displayed; it cannot be recovered.")
 	fmt.Println("  With -o -, the generated secret is written to stderr so that it never")
 	fmt.Println("  shares the stdout stream that carries the ciphertext.")
 	fmt.Println("  Keys are derived per file with HKDF-SHA256; there is no password KDF to tune.")

@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"math"
 	"strings"
 	"testing"
 )
@@ -199,5 +200,78 @@ func TestRandReader(t *testing.T) {
 	r := RandReader()
 	if r == nil {
 		t.Error("RandReader returned nil")
+	}
+}
+
+func TestGroupSecret(t *testing.T) {
+	// 63 characters ▒ 12 separators.
+	raw := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!")
+	want := "abcde-fghij-klmno-pqrst-uvwxy-zABCD-EFGHI-JKLMN-OPQRS-TUVWX-YZ012-34567-89!"
+
+	if got := string(GroupSecret(raw)); got != want {
+		t.Errorf("GroupSecret() = %q, want %q", got, want)
+	}
+}
+
+func TestGroupSecretLeavesShortInputAlone(t *testing.T) {
+	// Anything at or below one group is returned unchanged: no leading,
+	// trailing, or duplicate separators.
+	for _, in := range []string{"", "a", "abc", "abcde"} {
+		if got := string(GroupSecret([]byte(in))); got != in {
+			t.Errorf("GroupSecret(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
+func TestSecretLengthIsMinimalMultipleOfGroupSize(t *testing.T) {
+	bitsPerChar := math.Log2(float64(len(CharacterPool)))
+
+	if SecretLength%SecretGroupSize != 0 {
+		t.Errorf("SecretLength = %d, want a multiple of %d", SecretLength, SecretGroupSize)
+	}
+	if got := float64(SecretLength) * bitsPerChar; got < 256 {
+		t.Errorf("SecretLength = %d gives %.1f bits, want at least 256", SecretLength, got)
+	}
+	// The next smaller multiple of the group size must fall short of 256 bits,
+	// otherwise a shorter secret would do.
+	if smaller := SecretLength - SecretGroupSize; float64(smaller)*bitsPerChar >= 256 {
+		t.Errorf("%d characters also clears 256 bits; SecretLength is not minimal", smaller)
+	}
+}
+
+func TestGenerateSecretIsGroupedPoolCharacters(t *testing.T) {
+	secret, err := GenerateSecret()
+	if err != nil {
+		t.Fatalf("GenerateSecret() error = %v", err)
+	}
+
+	if len(secret) != SecretDisplayLength {
+		t.Fatalf("len(secret) = %d, want %d", len(secret), SecretDisplayLength)
+	}
+	if secret[len(secret)-1] == SecretSeparator {
+		t.Error("secret must not end with a separator")
+	}
+
+	groups := strings.Split(string(secret), string(SecretSeparator))
+	if len(groups) != SecretLength/SecretGroupSize {
+		t.Fatalf("got %d groups, want %d", len(groups), SecretLength/SecretGroupSize)
+	}
+	for i, group := range groups {
+		if len(group) != SecretGroupSize {
+			t.Errorf("group %d = %q, want %d characters", i, group, SecretGroupSize)
+		}
+		for _, c := range group {
+			if !strings.ContainsRune(CharacterPool, c) {
+				t.Errorf("group %d contains %q, which is outside CharacterPool", i, c)
+			}
+		}
+	}
+
+	other, err := GenerateSecret()
+	if err != nil {
+		t.Fatalf("GenerateSecret() error = %v", err)
+	}
+	if bytes.Equal(secret, other) {
+		t.Error("GenerateSecret() should produce a different secret each call")
 	}
 }
