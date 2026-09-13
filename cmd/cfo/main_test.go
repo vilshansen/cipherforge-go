@@ -527,3 +527,92 @@ func decryptToStdout(t *testing.T, cipherPath string, secret []byte) ([]byte, er
 	outW.Close()
 	return <-done, decryptErr
 }
+
+// TestDecryptFileRepairsSingleCharacterSecretTypo verifies that a mistyped
+// secret is corrected automatically: the file's key-commitment tag lets the CLI
+// find the intended secret rather than failing the decryption.
+func TestDecryptFileRepairsSingleCharacterSecretTypo(t *testing.T) {
+	secret := []byte("8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3k")
+	plaintext := []byte("recover this")
+
+	cipherPath := encryptForTest(t, plaintext, secret)
+
+	// One character wrong: the final "k" typed as "q".
+	typo := []byte("8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3q")
+	outPath := filepath.Join(t.TempDir(), "recovered.bin")
+
+	var decryptErr error
+	stderrBytes := captureStderr(t, func() {
+		decryptErr = decryptFile(cipherPath, outPath, typo, false, false)
+	})
+
+	if decryptErr != nil {
+		t.Fatalf("decryptFile with a one-character typo = %v, want success", decryptErr)
+	}
+	if !bytes.Contains(stderrBytes, []byte("corrected secret")) {
+		t.Errorf("expected a correction notice on stderr, got %q", stderrBytes)
+	}
+	if !bytes.Contains(stderrBytes, secret) {
+		t.Errorf("expected the corrected secret on stderr, got %q", stderrBytes)
+	}
+
+	got, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, plaintext) {
+		t.Errorf("decrypted %q, want %q", got, plaintext)
+	}
+}
+
+// TestDecryptFileLeavesAnUnrecoverableSecretAlone guards the other side: when no
+// nearby variant authenticates, the original failure is reported and no output
+// file is produced.
+func TestDecryptFileLeavesAnUnrecoverableSecretAlone(t *testing.T) {
+	secret := []byte("8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3k")
+	cipherPath := encryptForTest(t, []byte("payload"), secret)
+
+	wrong := []byte("Zq7vT-bN2wX-9kPmR-4sJhL-cF6yD-gK8uE-aW3nZ-xV5tB-mQ2rS")
+	outPath := filepath.Join(t.TempDir(), "should-not-exist.bin")
+
+	var decryptErr error
+	stderrBytes := captureStderr(t, func() {
+		decryptErr = decryptFile(cipherPath, outPath, wrong, false, false)
+	})
+
+	if decryptErr == nil {
+		t.Fatal("expected decryption with an unrelated secret to fail")
+	}
+	if bytes.Contains(stderrBytes, []byte("corrected secret")) {
+		t.Errorf("no correction should be reported, got %q", stderrBytes)
+	}
+	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
+		t.Errorf("failed decryption must not create the output file (stat err = %v)", err)
+	}
+}
+
+// captureStderr runs fn with os.Stderr redirected to a pipe and returns what it
+// wrote. The pipe is drained on a goroutine so a large message cannot deadlock.
+func captureStderr(t *testing.T, fn func()) []byte {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	orig := os.Stderr
+	os.Stderr = w
+
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(r)
+		done <- b
+	}()
+
+	fn()
+
+	os.Stderr = orig
+	w.Close()
+	return <-done
+}

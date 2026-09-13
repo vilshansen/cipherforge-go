@@ -28,6 +28,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -347,7 +348,38 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 	}
 
 	dec := cipherforge.NewDecrypter(password)
-	if err := dec.Decrypt(reader, out, nil); err != nil {
+	err = dec.Decrypt(reader, out, nil)
+
+	// A mistyped secret is by far the most likely cause of an authentication
+	// failure, and the trailer's key-commitment tag lets us test nearby variants
+	// without reading the payload. A variant that authenticates is not a guess —
+	// it reproduces a 256-bit tag — so continuing with it is safe.
+	if err != nil && isAuthenticationFailure(err) {
+		if corrected, rerr := cipherforge.RepairSecret(reader, password); rerr == nil {
+			ui.PrintWarning(fmt.Sprintf(
+				"The supplied secret did not authenticate %s, but a one-character correction does. "+
+					"Update your stored copy.", filepath.Base(inputFile)))
+			fmt.Fprintf(os.Stderr, "cfo: corrected secret: %s\n", corrected)
+			defer crypto.ZeroBytes(corrected)
+
+			// Rewind both sides: the search moved the input, and the failed attempt
+			// may have left partial plaintext in the staged output file.
+			if _, serr := reader.Seek(0, io.SeekStart); serr != nil {
+				return err
+			}
+			if terr := out.Truncate(0); terr != nil {
+				return err
+			}
+			if _, serr := out.Seek(0, io.SeekStart); serr != nil {
+				return err
+			}
+
+			dec = cipherforge.NewDecrypter(corrected)
+			err = dec.Decrypt(reader, out, nil)
+		}
+	}
+
+	if err != nil {
 		return err
 	}
 
@@ -374,6 +406,14 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 	}
 	published = true
 	return nil
+}
+
+// isAuthenticationFailure reports whether err means the derived key did not
+// match the file — which is what a mistyped secret looks like, and the only
+// case where searching for a corrected secret can help.
+func isAuthenticationFailure(err error) bool {
+	return errors.Is(err, cipherforge.ErrAuthenticationFailed) ||
+		errors.Is(err, cipherforge.ErrKeyCommitmentFailed)
 }
 
 // copyFileTo copies the contents of the file at path to w. It is used to release

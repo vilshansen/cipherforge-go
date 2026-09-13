@@ -57,27 +57,25 @@ import (
 
 // Encrypter handles the encryption of a stream into .cfo format segments.
 //
-// The Encrypter is stateful only in that it holds the password and KDF
-// parameters. Each call to Encrypt() generates a fresh random salt and
-// Segment Seed, so the same Encrypter can safely encrypt multiple files
-// with independent keys.
+// The Encrypter is stateful only in that it holds the generated secret. Each
+// call to Encrypt() generates a fresh random salt and nonce prefix, so the same
+// Encrypter can safely encrypt multiple files with independent keys.
 //
-// Go note: unexported fields (lowercase `password`, `params`, `masterKey`)
-// are package-private — only accessible within the `cipherforge` package.
-// Java equivalent: `private byte[] password;` with package-private access.
+// Go note: unexported fields (lowercase `password`) are package-private — only
+// accessible within the `cipherforge` package. Java equivalent: `private byte[]
+// password;` with package-private access.
 type Encrypter struct {
 	password []byte // The generated secret
 }
 
-// NewEncrypter creates an Encrypter with the given password and production-
-// hardened Argon2id parameters (5 passes, 256 MiB, 4 threads).
+// NewEncrypter creates an Encrypter for the given generated secret.
 //
 // This is the "default constructor" — like Java's `new Encrypter(password)`.
 // The returned `*Encrypter` is a pointer (heap-allocated by default, though
 // Go's escape analysis may put it on the stack if it doesn't escape).
 //
-// Important: the password byte slice is NOT copied. The caller still owns it
-// and is responsible for zeroing it via `defer crypto.ZeroBytes(password)`.
+// Important: the secret byte slice is NOT copied. The caller still owns it
+// and is responsible for zeroing it via `defer crypto.ZeroBytes(secret)`.
 func NewEncrypter(password []byte) *Encrypter {
 	return &Encrypter{password: password}
 }
@@ -531,13 +529,13 @@ func deriveSegmentNonce(noncePrefix []byte, segmentCounter uint64) []byte {
 }
 
 // ErrAuthenticationFailed is returned when the trailer HMAC does not match,
-// indicating wrong password, tampered header, or corrupted file.
+// indicating wrong secret, tampered header, or corrupted file.
 var ErrAuthenticationFailed = fmt.Errorf("authentication failed")
 
 // ErrKeyCommitmentFailed is returned when the key-commitment tag does not
-// match. This indicates a v6 file whose trailer HMAC passed (correct
-// password) but whose key-commitment tag is inconsistent — typically a
-// crafted file attempting to exploit the lack of key commitment.
+// match. This indicates a file whose trailer HMAC passed but whose
+// key-commitment tag is inconsistent — typically a crafted file attempting to
+// exploit the lack of key commitment.
 var ErrKeyCommitmentFailed = fmt.Errorf("key commitment verification failed")
 
 // computeTrailerHMAC computes the HMAC-SHA256 authentication tag for the
@@ -557,12 +555,12 @@ func computeTrailerHMAC(macKey, salt, noncePrefix []byte, segmentCount uint64) [
 	return h.Sum(nil)
 }
 
-// computeKeyCommitTag computes the v6 key-commitment tag:
+// computeKeyCommitTag computes the v7 key-commitment tag:
 //
-//	HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
+//	HMAC-SHA256(encKey, "cipherforge-commitment-v2" || fileSalt)
 //
 // This tag proves that the file was encrypted with a specific encKey.
-// An attacker who wants a file to decrypt under two different passwords
+// An attacker who wants a file to decrypt under two different secrets
 // would need to find a collision in HMAC-SHA256 with different keys on
 // the same message — a 2^128 work factor.
 //

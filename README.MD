@@ -58,6 +58,11 @@ Cipherforge ships with five documents, each written for a different audience:
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Usage](#usage)
+  - [Examples](#examples)
+  - [Writing to stdout](#writing-to-stdout)
+  - [Correcting a mistyped secret](#correcting-a-mistyped-secret)
+  - [Notes on output filenames](#notes-on-output-filenames)
+  - [TUI Keyboard Reference](#tui-keyboard-reference)
 - [How It Works](#how-it-works)
   - [Secret Generation](#secret-generation)
   - [Key Derivation](#key-derivation)
@@ -214,6 +219,32 @@ temporary file before it is streamed out.
 ```bash
 echo "$SECRET" | cfo -d document.pdf.cfo -o -
 ```
+
+### Correcting a mistyped secret
+
+If a decryption fails, Cipherforge tries to work out whether the secret — not
+the file — is the problem. The trailer carries a 32-byte key-commitment tag,
+which is enough to test a candidate secret with a single key derivation and one
+HMAC without reading the payload, so the CLI can check *every* single-character
+variant of what you supplied:
+
+- one character substituted for another
+- two adjacent characters transposed
+- one character dropped
+- one character added
+
+When a variant authenticates, decryption continues with it and the corrected
+secret is reported on stderr:
+
+```
+cfo: warning: The supplied secret did not authenticate archive.cfo, but a one-character correction does. Update your stored copy.
+cfo: corrected secret: 8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3k
+```
+
+A match is not a guess: it reproduces a 256-bit tag, so a coincidental match
+would require a collision in HMAC-SHA256. Only single-character errors are
+searched — the search is exhaustive but bounded, which is what keeps it
+imperceptible.
 
 ### Notes on output filenames
 

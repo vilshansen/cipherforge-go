@@ -22,6 +22,7 @@ cipherforge-go/
 │   └── params.go        #   CLI flag parsing
 ├── pkg/cipherforge/     # Public API: Encrypter and Decrypter engines
 │   ├── cipherforge.go   #   high-level streaming encrypt/decrypt
+│   ├── repair.go        #   recovery of a mistyped secret at the header/trailer
 │   └── cipherforge_test.go
 ├── internal/
 │   ├── crypto/          # Cryptographic primitives (no file-format awareness)
