@@ -101,8 +101,9 @@ func NewEncrypterWithParams(password []byte, _ any) *Encrypter {
 //     bytes processed. Pass nil if you don't need progress updates.
 //
 // The method returns an error if any cryptographic or I/O operation fails.
-// On error, the partial output in w should be discarded (the caller in
-// main.go deletes failed output files).
+// On error the partial output already written to w must be discarded and never
+// published — the CLI stages encryption output in a temporary file for exactly
+// that reason.
 //
 // File layout produced:
 //
@@ -256,9 +257,8 @@ func encryptSegments(r io.Reader, w io.Writer, aead cipher.AEAD, noncePrefix []b
 
 // Decrypter handles the decryption of a .cfo stream in segments.
 //
-// Unlike Encrypter, the Decrypter has no KDF parameters — they are read from
-// the .cfo file header. This ensures the decryptor always uses the correct
-// parameters for that specific file.
+// Unlike Encrypter, the Decrypter reads the file salt and nonce prefix from the
+// .cfo header so it can reproduce the file-specific keys for that exact file.
 type Decrypter struct {
 	password []byte
 }
@@ -280,26 +280,30 @@ func NewDecrypter(password []byte) *Decrypter {
 //   - w: io.Writer — the plaintext destination.
 //   - progress: func(int64) — optional progress callback (plaintext bytes).
 //
-// Only v6 AES-GCM files are accepted. v6 adds a suite identifier and a
-// 32-byte key-commitment tag after
-// the HMAC in the trailer.
+// Only v7 AES-GCM files are accepted. The v7 trailer carries a suite
+// identifier and a 32-byte key-commitment tag after the HMAC.
 //
 // Verification order:
 //  1. Read and validate magic signature (9 bytes)
 //  2. Read and validate format version and encryption suite
-//  3. Read salt, nonce prefix, and Argon2 parameters from header
-//  4. Validate Argon2 parameters against safety limits
-//  5. Derive master key via Argon2id
-//  6. Derive file-specific keys via HKDF
-//  7. Seek to trailer, read segment count + HMAC + key-commitment tag
-//  8. Compute expected HMAC and compare in constant time
-//  9. Compute expected key commitment and compare in constant time
-//  10. If any check fails: return error — no plaintext written
-//  11. Seek back to payload start and decrypt segments
+//  3. Read salt and nonce prefix from the header
+//  4. Derive encKey and macKey from the generated secret and the file salt
+//  5. Seek to the trailer, read segment count + HMAC + key-commitment tag
+//  6. Compute the expected HMAC and compare it in constant time
+//  7. Compute the expected key commitment and compare it in constant time
+//  8. If any check fails: return error — no plaintext written
+//  9. Seek back to payload start and decrypt segments
 //
-// This ordering is critical: authentication is verified BEFORE any plaintext
-// touches disk. A wrong password, tampered header, or truncated file is
-// detected immediately, not after writing gigabytes of garbage.
+// The trailer is verified BEFORE any plaintext is produced, so a wrong secret,
+// a tampered header, or a truncated file is rejected up front rather than after
+// writing gigabytes of garbage.
+//
+// Note that the trailer authenticates file metadata, not the individual segment
+// ciphertexts — those carry their own AES-GCM tags. Segments are decrypted and
+// written in order, so a failure on a later segment happens after earlier
+// plaintext has already been written to w. Callers that publish output to a
+// consumer (for example stdout) must therefore stage it and release it only
+// after Decrypt returns nil.
 func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) error {
 	// Step 1: Validate magic signature.
 	// This is a cheap check — no point spending ~1 second on Argon2id if

@@ -194,6 +194,26 @@ cfo -d secret.txt.cfo --base64 -o -
 Decrypting with `--base64` requires GPG-style armored input (bare base64 is
 not accepted).
 
+### Writing to stdout
+
+When the ciphertext is written to stdout, the generated secret is written to
+**stderr** instead. The two must never share a stream — otherwise the secret
+would sit alongside the ciphertext it protects:
+
+```bash
+cfo -e document.pdf -o - > document.pdf.cfo 2> document.pdf.secret
+```
+
+Decryption to stdout is staged: plaintext is released only once the entire
+payload has authenticated. A ciphertext whose later segment was modified
+produces no output at all, instead of the valid plaintext that preceded the
+damaged segment. The trade-off is that the plaintext is written once to a
+temporary file before it is streamed out.
+
+```bash
+echo "$SECRET" | cfo -d document.pdf.cfo -o -
+```
+
 ### Notes on output filenames
 
 Encryption appends `.cfo` to the input filename: `photo.jpg` becomes
@@ -395,10 +415,16 @@ in a single tag. This closes the gap left by per-segment AEAD:
 - **Segment appending** — adding segments also changes the count
 
 Critically, the trailer is **verified before any plaintext is written to disk**.
-This means a wrong password, a corrupted file, or a tampered header is detected
+This means a wrong secret, a corrupted file, or a tampered header is detected
 upfront, without streaming the entire ciphertext. The decoder reads the trailer
 from the end of the file, verifies the HMAC, and only then proceeds with
 sequential decryption.
+
+Note that the trailer covers file metadata, while each segment carries its own
+AES-GCM tag. A segment modified in the middle of the payload is therefore
+detected only when that segment is reached, which can be after earlier plaintext
+has been produced. Callers that stream to a live consumer should rely on the
+staged output behaviour described in [Writing to stdout](#writing-to-stdout).
 
 If encryption or decryption fails at any point, the incomplete output file is
 automatically deleted. A failed decryption will never leave partial plaintext

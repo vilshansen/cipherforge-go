@@ -48,7 +48,7 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "7.0.0"
+var Version = "7.0.1"
 var GitCommit = "none"
 
 // init wires the application version into the ASCII-armor Version header so
@@ -129,8 +129,9 @@ func runCLI(cfg params) {
 		os.Exit(1)
 	}
 
-	// Resolve the password: use the user-supplied one, or generate/ask.
-	password, err := resolvePassword(cfg.Operation)
+	// Resolve the secret. When the ciphertext is written to stdout the generated
+	// secret must not share that stream (see resolvePassword).
+	password, err := resolvePassword(cfg.Operation, cfg.Output == "-")
 	if err != nil {
 		ui.PrintError(fmt.Sprintf("%v", err))
 		os.Exit(1)
@@ -281,7 +282,10 @@ func encryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 // Base64 decryption reads the entire input into memory, decodes it, and wraps
 // the result in a seekable bytes.Reader — suitable for copy/paste workflows
 // with reasonably-sized files.
-// Supports atomic mode: decrypt to temp file, rename on success.
+//
+// Plaintext is staged in a temporary file and published only once the entire
+// payload has authenticated: a file target is atomically renamed into place, and
+// stdout receives the staged bytes on success.
 func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bool) error {
 	if inputFile == "-" {
 		return fmt.Errorf("decrypt from stdin is not supported (seek required for trailer HMAC)")
@@ -312,32 +316,33 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 		reader = in
 	}
 
-	// Always write to a temporary file in the destination directory and
-	// atomically rename it into place on success, so a failed or interrupted
-	// decryption never leaves partial plaintext at the final path.
-	// os.CreateTemp is like Java's Files.createTempFile(). The temp file is
-	// in the same directory as the final output to ensure an atomic rename
-	// (rename across filesystems is not atomic).
+	// Decrypted plaintext is always staged in a temporary file and published only
+	// after the whole payload has authenticated:
+	//   - file target: atomically renamed into place, so a failed or interrupted
+	//     decryption never leaves partial plaintext at the final path;
+	//   - stdout: streamed out on success only, so a ciphertext whose later
+	//     segment was modified never exposes the earlier plaintext segments to
+	//     whatever is consuming stdout.
+	// os.CreateTemp is like Java's Files.createTempFile(). For a file target the
+	// temp file lives in the destination directory because rename across
+	// filesystems is not atomic.
 	var out *os.File
-	writePath := outputFile
 	if outputFile == "-" {
-		out = os.Stdout
+		out, err = os.CreateTemp("", ".cfo-stdout-*")
 	} else {
 		out, err = os.CreateTemp(filepath.Dir(outputFile), ".cfo-decrypt-*")
-		if err != nil {
-			return fmt.Errorf("cannot create temp file for atomic decrypt: %w", err)
-		}
-		writePath = out.Name()
 	}
+	if err != nil {
+		return fmt.Errorf("cannot create temp file for atomic decrypt: %w", err)
+	}
+	writePath := out.Name()
 
-	// Automatic cleanup on failure.
-	succeeded := false
+	// Automatic cleanup unless the staged plaintext was successfully published.
+	published := false
 	defer func() {
-		if outputFile != "-" {
+		if !published {
 			out.Close()
-			if !succeeded {
-				os.Remove(writePath)
-			}
+			os.Remove(writePath)
 		}
 	}()
 
@@ -346,32 +351,66 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 	}
 
 	dec := cipherforge.NewDecrypter(password)
-	err = dec.Decrypt(reader, out, nil)
-
-	if err == nil {
-		succeeded = true
+	if err := dec.Decrypt(reader, out, nil); err != nil {
+		return err
 	}
 
-	// Atomically rename the temp file to the final output path.
-	// os.Rename is atomic when src and dst are on the same filesystem.
-	if succeeded && outputFile != "-" {
-		out.Close() // Must close before rename on Windows
-		if err := os.Rename(writePath, outputFile); err != nil {
-			os.Remove(writePath)
-			return fmt.Errorf("atomic rename failed: %w", err)
+	// The entire payload authenticated. Close the staged file before publishing
+	// it: the copy and the rename both read it back, and Windows will not rename
+	// a file that is still open.
+	if err := out.Close(); err != nil {
+		return err
+	}
+
+	// Publish the staged plaintext.
+	if outputFile == "-" {
+		if err := copyFileTo(os.Stdout, writePath); err != nil {
+			return err
 		}
+		os.Remove(writePath)
+		published = true
+		return nil
 	}
+
+	// os.Rename is atomic when src and dst are on the same filesystem.
+	if err := os.Rename(writePath, outputFile); err != nil {
+		return fmt.Errorf("atomic rename failed: %w", err)
+	}
+	published = true
+	return nil
+}
+
+// copyFileTo copies the contents of the file at path to w. It is used to release
+// staged plaintext to stdout only once the complete ciphertext has
+// authenticated, so a modified segment cannot leak earlier plaintext.
+func copyFileTo(w io.Writer, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = io.Copy(w, f)
 	return err
 }
 
 // resolvePassword generates a secret for encryption or prompts for one during decryption.
-func resolvePassword(operation string) ([]byte, error) {
+//
+// ciphertextToStdout reports whether the encrypted output is itself destined for
+// stdout (-o -). In that case the generated secret is written to stderr instead:
+// sharing one stream would leave the secret sitting next to the ciphertext it
+// protects, so anyone who captured the stream could decrypt it.
+func resolvePassword(operation string, ciphertextToStdout bool) ([]byte, error) {
 	if operation == "encrypt" {
 		p, err := crypto.GenerateSecurePassword(passwordLength, crypto.CharacterPool)
 		if err != nil {
 			return nil, err
 		}
-		fmt.Printf("%s\n", p)
+		secretDest := os.Stdout
+		if ciphertextToStdout {
+			secretDest = os.Stderr
+		}
+		fmt.Fprintf(secretDest, "%s\n", p)
 		fmt.Fprintf(os.Stderr, "cfo: Save this generated secret — it cannot be recovered.\n")
 		return p, nil
 	}
@@ -460,6 +499,8 @@ func showHelp() {
 
 	fmt.Println("\nNotes:")
 	fmt.Println("  The generated secret is 64 characters — shown once, cannot be recovered.")
+	fmt.Println("  With -o -, the generated secret is written to stderr so that it never")
+	fmt.Println("  shares the stdout stream that carries the ciphertext.")
 	fmt.Println("  Keys are derived per file with HKDF-SHA256; there is no password KDF to tune.")
 	fmt.Println("  The .cfo file reveals the original filename and approximate plaintext size")
 	fmt.Println("  but does not hide the existence of encrypted data.")

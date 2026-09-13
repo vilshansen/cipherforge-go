@@ -1,5 +1,26 @@
 # Changelog
 
+## v7.0.1 (2026-09-13)
+
+### Fixed
+
+- **Encryption to stdout no longer discloses the generated secret.** With
+  `-o -` the ciphertext and the generated secret were both written to stdout,
+  so capturing the stream (for example `cfo -e file -o - > out.cfo`) also
+  captured the secret needed to decrypt it. The secret is now written to stderr
+  whenever stdout carries the ciphertext.
+- **Decryption to stdout no longer emits plaintext before the whole file has
+  authenticated.** Segments carry individual AES-GCM tags, so a modified later
+  segment previously failed only after the earlier plaintext segments had
+  already been streamed to stdout. Plaintext is now staged in a temporary file
+  and released to stdout only once the entire payload has authenticated; a
+  corrupted ciphertext therefore produces no output at all.
+
+### Documentation
+
+- Library docs state that callers publishing decrypted output to a live
+  consumer must stage it, and README documents the stdout behaviour.
+
 ## v7.0.0 (2026-09-13)
 
 ### Changed

@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -10,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/vilshansen/cipherforge-go/internal/armor"
+	"github.com/vilshansen/cipherforge-go/internal/format"
+	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
 )
 
 // TestArmorVersionMatchesApp verifies the init() wiring that stamps the app
@@ -353,4 +357,172 @@ func TestHelpVersionFlags(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestResolvePasswordKeepsSecretOffCiphertextStream is the CF70-001 regression
+// test. When the ciphertext itself is written to stdout (-o -), the generated
+// secret must not be written to that same stream: anyone holding the captured
+// stream would otherwise hold the secret that protects it.
+func TestResolvePasswordKeepsSecretOffCiphertextStream(t *testing.T) {
+	secret, stdoutBytes, stderrBytes := resolvePasswordCaptured(t, true)
+
+	if len(secret) != passwordLength {
+		t.Fatalf("secret length = %d, want %d", len(secret), passwordLength)
+	}
+	if bytes.Contains(stdoutBytes, secret) {
+		t.Errorf("CF70-001: generated secret leaked into the stdout ciphertext stream")
+	}
+	if !bytes.Contains(stderrBytes, secret) {
+		t.Errorf("generated secret must be written to stderr; stderr was %q", stderrBytes)
+	}
+}
+
+// TestResolvePasswordWritesSecretToStdoutForFileOutput guards the documented
+// behaviour scripts rely on: with a file output target the generated secret is
+// printed to stdout so the caller can capture it.
+func TestResolvePasswordWritesSecretToStdoutForFileOutput(t *testing.T) {
+	secret, stdoutBytes, _ := resolvePasswordCaptured(t, false)
+
+	if !bytes.Contains(stdoutBytes, secret) {
+		t.Errorf("for file output the generated secret must stay on stdout; stdout was %q", stdoutBytes)
+	}
+}
+
+// resolvePasswordCaptured runs resolvePassword with both output streams
+// redirected and returns the generated secret along with what each stream saw.
+func resolvePasswordCaptured(t *testing.T, ciphertextToStdout bool) (secret, stdoutBytes, stderrBytes []byte) {
+	t.Helper()
+
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origOut, origErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+
+	secret, resolveErr := resolvePassword("encrypt", ciphertextToStdout)
+
+	os.Stdout, os.Stderr = origOut, origErr
+	outW.Close()
+	errW.Close()
+
+	if resolveErr != nil {
+		t.Fatalf("resolvePassword failed: %v", resolveErr)
+	}
+
+	stdoutBytes, _ = io.ReadAll(outR)
+	stderrBytes, _ = io.ReadAll(errR)
+	return secret, stdoutBytes, stderrBytes
+}
+
+// TestDecryptToStdoutEmitsNothingOnLateSegmentFailure is the CF70-002
+// regression test. Corrupting a later segment must not let the earlier,
+// already-authenticated plaintext segments reach stdout: a consumer of stdout
+// must never receive plaintext from a ciphertext that ultimately fails
+// authentication.
+func TestDecryptToStdoutEmitsNothingOnLateSegmentFailure(t *testing.T) {
+	secret := []byte("stdout-staging-regression-secret")
+	plaintext := bytes.Repeat([]byte("A"), format.SegmentSize+4096) // two segments
+
+	cipherPath := encryptForTest(t, plaintext, secret)
+
+	data, err := os.ReadFile(cipherPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Flip one byte inside the *second* segment's ciphertext, leaving the first
+	// segment and the authenticated trailer untouched. The segment length prefix
+	// written by the encrypter gives the offset of the next segment.
+	firstLen := binary.BigEndian.Uint64(data[format.HeaderSize : format.HeaderSize+8])
+	secondCiphertext := format.HeaderSize + 8 + int(firstLen) + 8
+	data[secondCiphertext+100] ^= 0xFF
+
+	if err := os.WriteFile(cipherPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	emitted, decryptErr := decryptToStdout(t, cipherPath, secret)
+
+	if decryptErr == nil {
+		t.Fatal("expected decryption of the modified ciphertext to fail")
+	}
+	// The trailer HMAC and key-commitment checks must still pass — otherwise the
+	// failure would happen before any plaintext could be produced and the test
+	// would not actually exercise a late-segment failure.
+	if errors.Is(decryptErr, cipherforge.ErrAuthenticationFailed) {
+		t.Fatalf("test is not exercising a late-segment failure: %v", decryptErr)
+	}
+	if len(emitted) != 0 {
+		t.Fatalf("CF70-002: %d bytes of plaintext reached stdout before authentication failed", len(emitted))
+	}
+}
+
+// TestDecryptToStdoutEmitsFullPlaintextOnSuccess guards against over-correcting:
+// an intact multi-segment file must still stream completely to stdout.
+func TestDecryptToStdoutEmitsFullPlaintextOnSuccess(t *testing.T) {
+	secret := []byte("stdout-staging-success-secret")
+	plaintext := bytes.Repeat([]byte("B"), format.SegmentSize+4096) // two segments
+
+	cipherPath := encryptForTest(t, plaintext, secret)
+
+	emitted, decryptErr := decryptToStdout(t, cipherPath, secret)
+
+	if decryptErr != nil {
+		t.Fatalf("decryption failed: %v", decryptErr)
+	}
+	if !bytes.Equal(emitted, plaintext) {
+		t.Fatalf("stdout plaintext = %d bytes, want %d bytes", len(emitted), len(plaintext))
+	}
+}
+
+// encryptForTest encrypts plaintext to a .cfo file in a temp dir and returns
+// the ciphertext path. Several segments are produced when plaintext exceeds
+// format.SegmentSize.
+func encryptForTest(t *testing.T, plaintext, secret []byte) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	plainPath := filepath.Join(dir, "large.bin")
+	cipherPath := filepath.Join(dir, "large.bin.cfo")
+
+	if err := os.WriteFile(plainPath, plaintext, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := encryptFile(plainPath, cipherPath, secret, true, false); err != nil {
+		t.Fatalf("encryptFile failed: %v", err)
+	}
+	return cipherPath
+}
+
+// decryptToStdout runs decryptFile against stdout and returns everything that
+// reached stdout. The pipe is drained on a goroutine so that a regression
+// cannot deadlock the test by filling the pipe buffer.
+func decryptToStdout(t *testing.T, cipherPath string, secret []byte) ([]byte, error) {
+	t.Helper()
+
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origOut := os.Stdout
+	os.Stdout = outW
+
+	done := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(outR)
+		done <- b
+	}()
+
+	decryptErr := decryptFile(cipherPath, "-", secret, true, false)
+
+	os.Stdout = origOut
+	outW.Close()
+	return <-done, decryptErr
 }
