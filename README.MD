@@ -704,7 +704,7 @@ Recommended flags for a reproducible, static release build:
 ```bash
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
   -mod=vendor -trimpath -buildvcs=false \
-  -ldflags "-s -w -X main.Version=7.1.0 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
+  -ldflags "-s -w -X main.Version=7.2.0 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
   -o cfo-darwin-arm64 ./cmd/cfo/
 ```
 
@@ -718,7 +718,7 @@ Notes:
 - `-mod=vendor` builds against the local `vendor/` tree (create it first with
   `go mod vendor`); omit it to use normal module resolution instead.
 - `-X main.Version` / `-X main.GitCommit` stamp the version and commit into the
-  binary (defaults: `7.1.0` and `none`).
+  binary (defaults: `7.2.0` and `none`).
 
 To build for all supported platforms on Unix-like shells:
 ```bash

@@ -267,7 +267,7 @@ Targets: `linux/{amd64,arm64,386}`, `windows/{amd64,386}`, `darwin/{amd64,arm64}
 The version and git commit are injected via linker flags:
 
 ```
-go build -ldflags "-X main.Version=7.1.0 -X main.GitCommit=abc1234"
+go build -ldflags "-X main.Version=7.2.0 -X main.GitCommit=abc1234"
 ```
 
 ## Design Decisions

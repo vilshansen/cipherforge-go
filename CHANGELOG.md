@@ -1,5 +1,26 @@
 # Changelog
 
+## v7.2.0 (2026-09-13)
+
+### Added
+
+- **Automatic recovery from a mistyped secret.** When decryption fails because
+  the secret was mistyped or transcribed incorrectly, the CLI now searches every
+  single-character variant of it — one character substituted, two adjacent
+  characters transposed, one character dropped, or one character added — against
+  the trailer's key-commitment tag. A candidate is tested with one key
+  derivation and one HMAC and the payload is never read, so the exhaustive
+  search takes about 54 ms. When a variant authenticates, decryption continues
+  with it and the corrected secret is reported on stderr so the stored copy can
+  be fixed. A match reproduces a 256-bit tag, so a false positive would require
+  a collision in HMAC-SHA256.
+- **`cipherforge.RepairSecret`** exposes the same search to library callers.
+
+### Documentation
+
+- README documents the recovery behavior and ARCHITECTURE lists the new source
+  file.
+
 ## v7.1.0 (2026-09-13)
 
 ### Changed
