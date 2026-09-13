@@ -1,5 +1,5 @@
 // Command cfo is the Cipherforge CLI — a tool for encrypting and decrypting
-// files using AES-256-GCM and Argon2id.
+// files using AES-256-GCM and HKDF-SHA256.
 //
 // # Go Language Notes for Java Developers (Entry Point & CLI)
 //
@@ -36,7 +36,6 @@ import (
 
 	"github.com/vilshansen/cipherforge-go/internal/armor"
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
-	"github.com/vilshansen/cipherforge-go/internal/format"
 	"github.com/vilshansen/cipherforge-go/internal/tui"
 	"github.com/vilshansen/cipherforge-go/internal/ui"
 	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
@@ -49,7 +48,7 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "6.0.0"
+var Version = "7.0.0"
 var GitCommit = "none"
 
 // init wires the application version into the ASCII-armor Version header so
@@ -59,10 +58,10 @@ func init() {
 }
 
 // characterPool is the set of unambiguous characters used for auto-generated
-// secrets. Digits 1-9 (no 0 — confused with O), uppercase A-Z without I/O,
-// lowercase a-z without l. 58 characters total.
+// secrets. Digits 1-9 (no 0 — confused with O), uppercase A-Z without I/O/L,
+// lowercase a-z without l. 57 characters total.
 //
-// 64 chars × log₂(57) ≈ 366 bits of entropy, which is appropriate when the
+// 64 chars × log₂(57) ≈ 373 bits of entropy, which is appropriate when the
 // secret is machine-generated and shown once to the operator.
 const passwordLength = 64
 
@@ -131,29 +130,12 @@ func runCLI(cfg params) {
 	}
 
 	// Resolve the password: use the user-supplied one, or generate/ask.
-	password, err := resolvePassword(cfg.Operation, cfg.Password)
+	password, err := resolvePassword(cfg.Operation)
 	if err != nil {
 		ui.PrintError(fmt.Sprintf("%v", err))
 		os.Exit(1)
 	}
 	defer crypto.ZeroBytes(password)
-
-	// Security warning: short user-supplied password + multiple files.
-	if cfg.Operation == "encrypt" && cfg.Password != nil && len(cfg.Password) < 20 && len(inputFiles) > 1 {
-		ui.PrintWarning(fmt.Sprintf(
-			"Short password (%d chars) with %d files. The batch optimisation derives\n"+
-				"                all file keys from one Argon2id run — a weak password puts every\n"+
-				"                output file at risk. Consider a longer password or encrypting\n"+
-				"                files separately with different passwords.",
-			len(cfg.Password), len(inputFiles)))
-	}
-
-	// For encryption, derive the master key ONCE and reuse for all files.
-	var masterKey []byte
-	if cfg.Operation == "encrypt" {
-		masterKey = crypto.DeriveMasterKey(password, format.DefaultArgon2Params())
-		defer crypto.ZeroBytes(masterKey)
-	}
 
 	var hasErrors bool
 	for _, inputFile := range inputFiles {
@@ -161,7 +143,7 @@ func runCLI(cfg params) {
 		if outputFile == "" {
 			outputFile = deriveOutputPath(cfg.Operation, inputFile)
 		}
-		if err := processFile(cfg.Operation, inputFile, outputFile, password, masterKey, cfg.Quiet, cfg.Force, cfg.Base64); err != nil {
+		if err := processFile(cfg.Operation, inputFile, outputFile, password, cfg.Quiet, cfg.Force, cfg.Base64); err != nil {
 			ui.PrintError(fmt.Sprintf("Failed to process %s: %v", inputFile, err))
 			hasErrors = true
 		}
@@ -191,7 +173,7 @@ func deriveOutputPath(operation, inputFile string) string {
 
 // processFile dispatches to encryptFile or decryptFile based on the operation.
 // Also performs path validation and checks for existing output files.
-func processFile(operation, inputFile, outputFile string, password, masterKey []byte, quiet, force, base64 bool) error {
+func processFile(operation, inputFile, outputFile string, password []byte, quiet, force, base64 bool) error {
 	// os.Stat returns (FileInfo, error). If err == nil, the file exists.
 	if outputFile != "-" && !force {
 		if _, err := os.Stat(outputFile); err == nil {
@@ -199,7 +181,7 @@ func processFile(operation, inputFile, outputFile string, password, masterKey []
 		}
 	}
 	if operation == "encrypt" {
-		return encryptFile(inputFile, outputFile, password, masterKey, quiet, base64)
+		return encryptFile(inputFile, outputFile, password, quiet, base64)
 	}
 	return decryptFile(inputFile, outputFile, password, quiet, base64)
 }
@@ -208,7 +190,7 @@ func processFile(operation, inputFile, outputFile string, password, masterKey []
 // When base64 is true, the output is wrapped in GPG-style base64 armor
 // (BEGIN/END markers, 68-char lines) for easy copy/paste. On failure, the
 // output file is automatically removed.
-func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet, base64 bool) error {
+func encryptFile(inputFile, outputFile string, password []byte, quiet, base64 bool) error {
 	// Open input. os.Stdin is a global *os.File for standard input (like System.in).
 	var in *os.File
 	if inputFile == "-" {
@@ -259,14 +241,7 @@ func encryptFile(inputFile, outputFile string, password, masterKey []byte, quiet
 		}
 	}
 
-	// Select the appropriate Encrypter constructor: batch mode (pre-derived
-	// master key) or single-file mode (derive master key on demand).
-	var enc *cipherforge.Encrypter
-	if masterKey != nil {
-		enc = cipherforge.NewEncrypterWithMasterKey(password, masterKey)
-	} else {
-		enc = cipherforge.NewEncrypter(password)
-	}
+	enc := cipherforge.NewEncrypter(password)
 
 	// Wrap output in ASCII armor if requested: base64 wrapped at 68 cols
 	// with BEGIN/END markers (GPG-style).
@@ -389,17 +364,8 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 	return err
 }
 
-// resolvePassword determines the password to use for the operation.
-// Priority: 1) User-supplied via -p, 2) Auto-generated for encrypt, 3) Prompt for decrypt.
-func resolvePassword(operation string, userPassword []byte) ([]byte, error) {
-	if userPassword != nil {
-		if len(userPassword) == 0 {
-			return nil, fmt.Errorf("password must not be empty")
-		}
-		ui.PrintWarning("Enterprise mode: user-supplied passwords are not recommended. Generating a high-entropy secret instead.")
-		userPassword = nil
-	}
-
+// resolvePassword generates a secret for encryption or prompts for one during decryption.
+func resolvePassword(operation string) ([]byte, error) {
 	if operation == "encrypt" {
 		p, err := crypto.GenerateSecurePassword(passwordLength, crypto.CharacterPool)
 		if err != nil {
@@ -460,22 +426,18 @@ func showHelp() {
 	if GitCommit != "none" && GitCommit != "" {
 		verLine += fmt.Sprintf(" (%s)", GitCommit)
 	}
-	verLine += " — encrypt and decrypt files with AES-256-GCM and Argon2id."
+	verLine += " — encrypt and decrypt files with AES-256-GCM and HKDF-SHA256."
 	fmt.Printf("%s\n\n", verLine)
 
 	fmt.Println("Usage: cfo -e <file...>")
 	fmt.Println("       cfo -d <file...>")
 	fmt.Println("       cfo -e <file> -o <out>.cfo")
-	fmt.Println("       cfo -e <file...> -p <pwd>")
-	fmt.Println("       cfo -e <file...> -p")
 	fmt.Println("       cfo -e -o <out>.cfo           (reads from stdin)")
 
 	fmt.Println("\nFlags:")
 	fmt.Println("  -e                Encrypt — each input file produces <name>.cfo")
 	fmt.Println("  -d                Decrypt — each .cfo file produces its original name")
 	fmt.Println("  -o <file>         Output filename (use - for stdout)")
-	fmt.Println("  -p [pwd]          Supply a password. Without -p, encryption auto-generates one;")
-	fmt.Println("                    decryption prompts interactively")
 	fmt.Println("  -b, --base64      Wrap encrypted output in base64 armor (BEGIN/END markers,")
 	fmt.Println("                    68-char lines) for easy copy/paste; also accepts armored")
 	fmt.Println("                    input for decryption")
@@ -487,9 +449,9 @@ func showHelp() {
 
 	fmt.Println("\nExamples:")
 	fmt.Println("  cfo -e document.pdf                Encrypt document.pdf → document.pdf.cfo")
-	fmt.Println("  cfo -e *.txt -p mysecret           Encrypt all .txt files (skips .cfo files)")
-	fmt.Println("  cfo -d document.pdf.cfo            Decrypt (prompts for password)")
-	fmt.Println("  cfo -d *.cfo -p mysecret           Decrypt all .cfo files")
+	fmt.Println("  cfo -e *.txt                       Encrypt all .txt files (skips .cfo files)")
+	fmt.Println("  cfo -d document.pdf.cfo            Decrypt (prompts for the generated secret)")
+	fmt.Println("  cfo -d *.cfo                       Decrypt all .cfo files")
 	fmt.Println("  cfo -e backup.tar -o archive.cfo   Encrypt to a custom output name")
 	fmt.Println("  cfo -e secret.txt --base64         Encrypt to armored base64 .cfo output")
 	fmt.Println("  echo 'Hello' | cfo -e -o out.cfo   Encrypt from stdin")
@@ -497,8 +459,8 @@ func showHelp() {
 	fmt.Println("  cfo                                 Launch the terminal UI (no flags)")
 
 	fmt.Println("\nNotes:")
-	fmt.Println("  The auto-generated password is 44 characters — shown once, cannot be recovered.")
-	fmt.Println("  Argon2id KDF uses 256 MiB memory per operation; each takes ~1 second.")
+	fmt.Println("  The generated secret is 64 characters — shown once, cannot be recovered.")
+	fmt.Println("  Keys are derived per file with HKDF-SHA256; there is no password KDF to tune.")
 	fmt.Println("  The .cfo file reveals the original filename and approximate plaintext size")
 	fmt.Println("  but does not hide the existence of encrypted data.")
 	fmt.Println("  File format details: see FILEFORMAT.MD")

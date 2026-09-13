@@ -1,5 +1,5 @@
 // Package crypto provides cryptographic primitives for Cipherforge: key
-// derivation (Argon2id + HKDF), random generation, and sensitive-memory
+// derivation (HKDF), random generation, and sensitive-memory
 // management.
 //
 // # Memory Security Limitations
@@ -22,7 +22,6 @@ import (
 	"runtime"
 
 	"github.com/vilshansen/cipherforge-go/internal/format"
-	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -40,28 +39,12 @@ const (
 	CharacterPool = "123456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 )
 
-// DeriveMasterKey derives a master key from password using Argon2id.
-// Password is []byte (not string) so it can be zeroed after use.
-// Called once per password; per-file keys are derived via DeriveKeysFromMaster.
-func DeriveMasterKey(password []byte, params format.Argon2Params) []byte {
-	masterKey := argon2.IDKey(
-		password,
-		[]byte(format.MasterKeySalt),
-		params.Time,
-		params.Memory,
-		params.Threads,
-		32, // 256-bit key
-	)
-	MlockBytes(masterKey)
-	return masterKey
-}
-
-// DeriveKeysFromMaster derives two independent 32-byte keys from a master key
-// and file-specific salt using HKDF-SHA256 (RFC 5869). HKDF's domain
+// DeriveKeys derives two independent 32-byte keys directly from the generated
+// secret and file-specific salt using HKDF-SHA256 (RFC 5869). HKDF's domain
 // separation via the info parameter ensures encKey and macKey are
 // computationally independent.
-func DeriveKeysFromMaster(masterKey, fileSalt []byte) (encKey, macKey []byte) {
-	r := hkdf.New(sha256.New, masterKey, fileSalt, []byte(format.FileKeyContext))
+func DeriveKeys(secret, fileSalt []byte) (encKey, macKey []byte) {
+	r := hkdf.New(sha256.New, secret, fileSalt, []byte(format.FileKeyContext))
 	raw := make([]byte, 64)
 	if _, err := io.ReadFull(r, raw); err != nil {
 		return nil, nil

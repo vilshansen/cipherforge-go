@@ -6,12 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vilshansen/cipherforge-go/internal/crypto"
 	"github.com/vilshansen/cipherforge-go/internal/format"
 )
 
-// fastParams are lightweight Argon2id parameters to keep tests fast.
-var fastParams = format.FastTestParams()
+var fastParams struct{}
 
 func TestRoundTrip(t *testing.T) {
 	password := []byte("test-password")
@@ -20,7 +18,7 @@ func TestRoundTrip(t *testing.T) {
 	in := bytes.NewReader(plaintext)
 	out := &bytes.Buffer{}
 
-	enc := NewEncrypterWithParams(password, fastParams)
+	enc := NewEncrypter(password)
 	if err := enc.Encrypt(in, out, nil); err != nil {
 		t.Fatalf("Encryption failed: %v", err)
 	}
@@ -165,49 +163,6 @@ func TestV6RoundTrip(t *testing.T) {
 
 	if !bytes.Equal(decOut.Bytes(), plaintext) {
 		t.Errorf("v6 round-trip failed: got %q, want %q", decOut.Bytes(), plaintext)
-	}
-}
-
-func TestBatchEncryptionWithMasterKey(t *testing.T) {
-	// Test the v6 batch optimisation: derive a master key once, reuse for
-	// multiple files.
-	password := []byte("test-password")
-	masterKey := crypto.DeriveMasterKey(password, fastParams)
-
-	plaintexts := [][]byte{
-		[]byte("first file"),
-		[]byte("second file with more data"),
-		[]byte("third"),
-	}
-
-	for i, pt := range plaintexts {
-		in := bytes.NewReader(pt)
-		out := &bytes.Buffer{}
-
-		enc := NewEncrypterWithMasterKeyParams(password, masterKey, fastParams)
-		if err := enc.Encrypt(in, out, nil); err != nil {
-			t.Fatalf("File %d encryption failed: %v", i, err)
-		}
-
-		// Each file must have independent salt → different ciphertext
-		// despite same master key.
-		if i > 0 {
-			// The outputs should differ in the salt region (bytes 12-27)
-			// even for identical plaintext. We already encrypt different
-			// plaintexts, so we're really just checking nothing crashed.
-		}
-
-		decIn := bytes.NewReader(out.Bytes())
-		decOut := &bytes.Buffer{}
-
-		dec := NewDecrypter(password)
-		if err := dec.Decrypt(decIn, decOut, nil); err != nil {
-			t.Fatalf("File %d decryption failed: %v", i, err)
-		}
-
-		if !bytes.Equal(decOut.Bytes(), pt) {
-			t.Errorf("File %d round-trip mismatch", i)
-		}
 	}
 }
 
@@ -436,11 +391,11 @@ func TestKeyCommitmentTampering(t *testing.T) {
 		t.Fatalf("Encryption failed: %v", err)
 	}
 
-	// Verify output is v6 AES-GCM.
+	// Verify output is v7 AES-GCM.
 	data := out.Bytes()
-	ver := data[9]<<24 | data[10]<<16 | data[11]<<8 | data[12]
-	if ver != 6 {
-		t.Fatalf("expected v6 output, got version %d", ver)
+	ver := uint32(data[9])<<24 | uint32(data[10])<<16 | uint32(data[11])<<8 | uint32(data[12])
+	if ver != 7 {
+		t.Fatalf("expected v7 output, got version %d", ver)
 	}
 
 	// Tamper: flip a byte in the key-commitment tag (last 32 bytes of trailer).
@@ -460,8 +415,8 @@ func TestKeyCommitmentTampering(t *testing.T) {
 	}
 }
 
-func TestV6FileFormat(t *testing.T) {
-	// Verify that Encrypt produces a v6 AES-GCM file with correct sizes.
+func TestV7FileFormat(t *testing.T) {
+	// Verify that Encrypt produces a v7 AES-GCM file with correct sizes.
 	password := []byte("test-password")
 	plaintext := []byte("v6 format test")
 
@@ -480,13 +435,13 @@ func TestV6FileFormat(t *testing.T) {
 		t.Fatal("bad magic")
 	}
 
-	// Check version = 6.
+	// Check version = 7.
 	ver := uint32(data[9])<<24 | uint32(data[10])<<16 | uint32(data[11])<<8 | uint32(data[12])
-	if ver != 6 {
-		t.Errorf("version = %d, want 6", ver)
+	if ver != 7 {
+		t.Errorf("version = %d, want 7", ver)
 	}
 
-	// Check that the trailer is 72 bytes (v6).
+	// Check that the trailer is 72 bytes (v7).
 	// Minimum file: header(65) + 1 segment(8+ct) + trailer(72)
 	expectedTrailerOffset := len(data) - format.TrailerSize
 	segCount := uint64(data[expectedTrailerOffset])<<56 |
@@ -637,17 +592,6 @@ func TestUnsupportedFlags(t *testing.T) {
 	}
 }
 
-func TestInvalidEncryptionParamsRejectedBeforeOutput(t *testing.T) {
-	out := &bytes.Buffer{}
-	enc := NewEncrypterWithParams([]byte("test-password"), format.Argon2Params{Time: 0, Memory: 1, Threads: 1})
-	if err := enc.Encrypt(bytes.NewReader([]byte("params test")), out, nil); err == nil {
-		t.Fatal("expected invalid Argon2 parameters to be rejected")
-	}
-	if out.Len() != 0 {
-		t.Fatalf("invalid parameters wrote %d bytes", out.Len())
-	}
-}
-
 func encryptTestData(t *testing.T, plaintext []byte) []byte {
 	t.Helper()
 	out := &bytes.Buffer{}
@@ -742,16 +686,16 @@ func TestCorruptSegmentLength(t *testing.T) {
 	}
 
 	data := out.Bytes()
-	// The segment length is at byte 47 (right after the header).
+	// The segment length is at byte 35 (right after the header).
 	// Set it to an impossibly large value (max + 1).
-	data[47+0] = 0x00
-	data[47+1] = 0x10 // Make it much larger than valid range
-	data[47+2] = 0x00
-	data[47+3] = 0x00
-	data[47+4] = 0x00
-	data[47+5] = 0x00
-	data[47+6] = 0x00
-	data[47+7] = 0x00
+	data[35+0] = 0x00
+	data[35+1] = 0x10 // Make it much larger than valid range
+	data[35+2] = 0x00
+	data[35+3] = 0x00
+	data[35+4] = 0x00
+	data[35+5] = 0x00
+	data[35+6] = 0x00
+	data[35+7] = 0x00
 
 	decIn := bytes.NewReader(data)
 	decOut := &bytes.Buffer{}

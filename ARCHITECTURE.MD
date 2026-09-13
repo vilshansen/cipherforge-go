@@ -7,9 +7,9 @@ design decisions, and the rationale behind dependencies.
 ## Overview
 
 Cipherforge is a file encryption tool built with long-term archival in mind.
-It encrypts files of any size using AES-256-GCM and Argon2id, writing
-them in a self-describing `.cfo` format designed to be decodable decades from
-now. It doubles as a terminal application (TUI) and a traditional CLI tool,
+It encrypts files of any size using AES-256-GCM with HKDF-SHA256 key
+derivation, writing them in a self-describing `.cfo` format designed to be
+decodable decades from now. It doubles as a terminal application (TUI) and a traditional CLI tool,
 both from the same binary.
 
 ## Directory Structure
@@ -25,14 +25,14 @@ cipherforge-go/
 │   └── cipherforge_test.go
 ├── internal/
 │   ├── crypto/          # Cryptographic primitives (no file-format awareness)
-│   │   ├── crypto.go    #   Argon2id KDF, HKDF, password generation, ZeroBytes
+│   │   ├── crypto.go    #   HKDF, secret generation, ZeroBytes
 │   │   ├── crypto_test.go
 │   │   ├── mlock_unix.go
 │   │   └── mlock_windows.go
 │   ├── format/          # .cfo binary format constants and serialization
 │   │   ├── format.go
 │   │   └── format_test.go
-│   ├── ui/              # Terminal I/O: password prompts, warning/error output
+│   ├── ui/              # Terminal I/O: secret prompts, warning/error output
 │   │   ├── ui.go
 │   │   └── ui_test.go
 │   └── tui/             # Full-screen terminal UI (Bubble Tea)
@@ -75,8 +75,8 @@ The code follows a strict layering where lower layers never import higher ones:
 │  - header/trailer construction          │
 ├─────────────────────────────────────────┤
 │  internal/crypto  (primitives)          │
-│  - Argon2id, HKDF, CSPRNG               │
-│  - password generation                  │
+│  - HKDF, CSPRNG                         │
+│  - secret generation                    │
 │  - memory locking / zeroing             │
 ├─────────────────────────────────────────┤
 │  internal/format  (constants)           │
@@ -94,7 +94,7 @@ user interaction. The TUI sits between `cmd/cfo` and `pkg/cipherforge`.
 ### File Encryption
 
 ```
-User input (file path + password)
+User input (file path)
     │
     ▼
 cmd/cfo/main.go
@@ -102,10 +102,10 @@ cmd/cfo/main.go
     ▼
 pkg/cipherforge.Encrypter.Encrypt(reader, writer)
     │
-    ├── crypto.DeriveMasterKey(password, argon2params)  → 32-byte master key
-    ├── crypto.GenerateSalt()                           → 16-byte file salt
-    ├── crypto.DeriveKeysFromMaster(masterKey, salt)     → encKey + macKey
-    ├── format.WriteHeader(writer, salt, params)
+    ├── crypto.GenerateSecurePassword()                 → generated secret
+    ├── crypto.GenerateSalt()                            → 16-byte file salt
+    ├── crypto.DeriveKeys(secret, salt)                  → encKey + macKey
+    ├── format.WriteHeader(writer, salt)
     │
     ├── for each 1 MiB segment:
     │     ├── deriveSegmentNonce(prefix, segmentNum)   → 12-byte nonce
@@ -119,7 +119,7 @@ pkg/cipherforge.Encrypter.Encrypt(reader, writer)
 ### File Decryption
 
 ```
-User input (.cfo file + password)
+User input (.cfo file + generated secret)
     │
     ▼
 cmd/cfo/main.go
@@ -128,9 +128,8 @@ cmd/cfo/main.go
 pkg/cipherforge.Decrypter.Decrypt(reader, writer)
     │
     ├── Seek to end, read trailer
-    ├── Read header → salt, Argon2 params
-    ├── crypto.DeriveMasterKey(password, params)
-    ├── crypto.DeriveKeysFromMaster(masterKey, salt)
+    ├── Read header → salt
+    ├── crypto.DeriveKeys(secret, salt)
     ├── Verify trailer HMAC  ← detects wrong password BEFORE any plaintext
     │
     └── for each segment:
@@ -144,8 +143,7 @@ pkg/cipherforge.Decrypter.Decrypt(reader, writer)
 
 | Component | Algorithm | Rationale |
 |---|---|---|
-| Key derivation | Argon2id (5 passes, 256 MiB, 4 threads) | Memory-hard, ASIC-resistant, OWASP recommended |
-| Key separation | HKDF-SHA256 (RFC 5869) | Independent enc/mac keys from one master key |
+| Key derivation and separation | HKDF-SHA256 (RFC 5869) | Independent enc/mac keys from generated secret and file salt |
 | Encryption | AES-256-GCM | 12-byte prefix/counter nonce, 16-byte tag |
 | Authentication | GCM per segment + HMAC-SHA256 trailer | Segments independently verified |
 | Key commitment | HMAC-SHA256(encKey, context || salt) | Ciphertext binds to a single key |
@@ -159,11 +157,11 @@ touches disk.
 
 ## File Format
 
-The `.cfo` format (v6) has three contiguous regions:
+The `.cfo` format (v7) has three contiguous regions:
 
 ```
 ╔══════════════════════╗
-║ HEADER  (47 bytes)   ║  magic, version, suite, salt, nonce prefix, KDF params
+║ HEADER  (35 bytes)   ║  magic, version, suite, salt, nonce prefix
 ╠══════════════════════╣
 ║ PAYLOAD (variable)   ║  1+ segments: [8-byte len][AEAD ciphertext]
 ╠══════════════════════╣
@@ -236,7 +234,7 @@ The `-i` flag forces TUI mode.
 
 | Dependency | Purpose | Why |
 |---|---|---|
-| `golang.org/x/crypto` | Argon2id, HKDF | Official Go extended library, well-audited |
+| `golang.org/x/crypto` | HKDF-SHA256 | Official Go extended library, well-audited |
 | `golang.org/x/term` | Terminal detection, raw mode, ReadPassword | Official Go extended library |
 | `golang.org/x/sys` | mlock, Windows syscalls | Official Go extended library |
 | `github.com/charmbracelet/bubbletea` | TUI framework (Elm Architecture) | Pure Go, 30k+ stars, no CGo |
@@ -263,17 +261,21 @@ Targets: `linux/{amd64,arm64,386}`, `windows/{amd64,386}`, `darwin/{amd64,arm64}
 The version and git commit are injected via linker flags:
 
 ```
-go build -ldflags "-X main.Version=5.0.0 -X main.GitCommit=abc1234"
+go build -ldflags "-X main.Version=7.0.0 -X main.GitCommit=abc1234"
 ```
 
 ## Design Decisions
 
-### Why Argon2id and not bcrypt/scrypt/PBKDF2?
+### Why is there no password-based KDF?
 
-Argon2id is the winner of the Password Hashing Competition (2015) and is the
-OWASP recommendation. It is memory-hard (256 MiB default), making GPU/ASIC
-attacks expensive. bcrypt is limited to 4 KiB memory; PBKDF2 has no memory
-hardness.
+Cipherforge never accepts a human-chosen encryption password. The secret is
+generated by the operating system CSPRNG at 64 characters (~373 bits of
+entropy), so the keyspace is already far beyond brute force and a memory-hard
+KDF would add attacker cost only in a scenario that cannot occur. Skipping it
+also removes the embedded-KDF-parameter attack surface: there are no
+attacker-controlled cost parameters in the header to validate or bound. Key
+separation is still provided by HKDF-SHA256, which expands the secret into
+independent encryption and MAC keys per file.
 
 ### Why AES-256-GCM?
 

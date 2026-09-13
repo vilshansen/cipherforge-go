@@ -11,10 +11,9 @@ stays constant regardless of whether you're encrypting a 10 KB text file or a
 any byte — header, payload, or trailer — is detected before any plaintext is
 written to disk.
 
-By default, passwords are generated automatically from a cryptographically
-secure random source. Cipherforge prints the password once — store it somewhere
-safe. Explicit passwords can also be supplied via the `-p` flag for scripting or
-personal preference.
+By default, a secret is generated automatically from a cryptographically
+secure random source. Cipherforge prints the secret once — store it somewhere
+safe; it cannot be recovered.
 
 ---
 
@@ -25,7 +24,7 @@ Cipherforge ships with five documents, each written for a different audience:
 | Document | Audience | Purpose |
 |---|---|---|
 | **[README.MD](README.MD)** (this file) | All users | Installation, quick start, usage, and a high-level "How It Works" overview |
-| **[CRYPTODESIGN.MD](CRYPTODESIGN.MD)** | Developers, security reviewers | Rationale behind AES-256-GCM, Argon2id parameters, two-tier key derivation, nonce management, authentication, and post-quantum considerations |
+| **[CRYPTODESIGN.MD](CRYPTODESIGN.MD)** | Developers, security reviewers | Rationale behind AES-256-GCM, HKDF-SHA256 key derivation, nonce management, authentication, and post-quantum considerations |
 | **[FILEFORMAT.MD](FILEFORMAT.MD)** | Developers implementing a decoder, maintainers | Authoritative `.cfo` binary format specification. Byte-level layout, field-by-field security analysis, pseudocode for the decryption algorithm, and what each field protects against |
 | **[ARCHITECTURE.MD](ARCHITECTURE.MD)** | Contributors, new developers | Codebase structure, layered architecture, data flow diagrams, TUI design, build system, and rationale for Go as the implementation language |
 | **[RELEASE.MD](RELEASE.MD)** | Maintainers, release managers | Step-by-step runbook for bumping the version, building all platforms, and publishing a tagged release to GitHub |
@@ -59,7 +58,7 @@ Cipherforge ships with five documents, each written for a different audience:
 - [Quick Start](#quick-start)
 - [Usage](#usage)
 - [How It Works](#how-it-works)
-  - [Password Generation](#password-generation)
+  - [Secret Generation](#secret-generation)
   - [Key Derivation](#key-derivation)
   - [Key Separation](#key-separation)
   - [Encryption](#encryption)
@@ -103,31 +102,31 @@ Cipherforge opens a full-screen terminal interface with a main menu:
 5. Quit
 
 Navigate with arrow keys or press 1–5 for shortcuts. The TUI guides you
-through file picker, password entry, progress display, and results — all
-with keyboard-driven navigation.
+through the file picker, progress display, and results — all with
+keyboard-driven navigation.
 
 **Encrypt text for copy/paste:**
-Select "Encrypt text" from the menu, type or paste any text, choose a
-password (or auto-generate one), and get base64-encoded output you can
-copy directly to your clipboard with `Shift+C`.
+Select "Encrypt text" from the menu, type or paste any text, and get
+base64-encoded output you can copy directly to your clipboard with `Shift+C`.
+The generated secret is shown on the results screen.
 
 **Encrypt a file:**
 ```
 cfo -e document.pdf
 ```
-Cipherforge prints a generated password and writes `document.pdf.cfo` alongside
+Cipherforge prints a generated secret and writes `document.pdf.cfo` alongside
 the original. The original file is not modified or removed.
 
 ```
-Encryption password (save this — it cannot be recovered):
-8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3
+cfo: Save this generated secret — it cannot be recovered.
+8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3kPqWmNbVcXdFgHjKzRtv
 ```
 
 **Decrypt a file:**
 ```
 cfo -d document.pdf.cfo
 ```
-You will be prompted for the password. Output is written to `document.pdf`.
+You will be prompted for the generated secret. Output is written to `document.pdf`.
 
 That's all there is to it.
 
@@ -140,9 +139,6 @@ Options:
   -e <path>    Encrypt a file or glob pattern
   -d <path>    Decrypt a .cfo file or glob pattern
   -o <file>    Output filename (requires a single input file)
-  -p [pwd]     Supply a password (optional argument — prompts if omitted).
-               Without -p, encryption auto-generates a password and
-               decryption prompts interactively.
   -b, --base64      Wrap encrypted output in base64 armor (BEGIN/END markers,
                     68-char lines) for easy copy/paste (encrypt only)
   -i, --interactive Launch the full-screen terminal UI
@@ -152,7 +148,7 @@ Options:
   -v, --version     Show version information
 ```
 
-Only one of `-e` or `-d` may be used at a time. `-p` can be combined with either.
+Only one of `-e` or `-d` may be used at a time.
 
 ### Examples
 
@@ -182,18 +178,13 @@ Decrypt all `.cfo` files in a directory:
 cfo -d "archives/*.cfo"
 ```
 
-Decrypt non-interactively (piping password from a file or secret manager):
+Decrypt non-interactively (piping the generated secret from a file or secret
+manager):
 ```bash
-echo "8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3" | cfo -d archive.cfo
+echo "$SECRET" | cfo -d archive.cfo
 ```
-When stdin is not a terminal, Cipherforge reads the password from stdin instead
+When stdin is not a terminal, Cipherforge reads the secret from stdin instead
 of prompting. This is useful for scripted or automated workflows.
-
-Encrypt and decrypt with an explicit password:
-```bash
-cfo -e report.pdf -p mysecret
-cfo -d report.pdf.cfo -p mysecret
-```
 
 Encrypt to armored base64 output (easy copy/paste, GPG-style):
 ```bash
@@ -202,12 +193,6 @@ cfo -d secret.txt.cfo --base64 -o -
 ```
 Decrypting with `--base64` requires GPG-style armored input (bare base64 is
 not accepted).
-
-Use interactive password entry (useful when the shell history is a concern):
-```bash
-cfo -e report.pdf -p
-Enter password for encryption:
-```
 
 ### Notes on output filenames
 
@@ -225,10 +210,10 @@ By default, Cipherforge will not overwrite an existing output file — use
 | `1`–`5` | Main menu | Jump to option |
 | `Enter` | Menus, checkboxes | Select / toggle |
 | `Space` | Checkboxes | Toggle |
-| `Tab` / `Shift+Tab` | Password screen | Cycle fields |
+| `Tab` / `Shift+Tab` | Secret screen | Cycle fields |
 | `Esc` | Sub-screens | Go back |
 | `q` | Main menu | Quit |
-| `c` | Results screen | Copy password to clipboard |
+| `c` | Results screen | Copy generated secret to clipboard |
 | `Shift+C` | Results screen | Copy encrypted/decrypted text |
 | `↑` `↓` `Enter` / `j` `k` / `PgUp` `PgDn` / `Home` `End` | Results screen | Scroll long text |
 | `Ctrl+S` | Text input | Confirm and proceed |
@@ -260,23 +245,22 @@ cfo -e sensitive-data.tar.gz
 
 ## How It Works
 
-### Password Generation
+### Secret Generation
 
-By default, Cipherforge generates passwords automatically — human-chosen
-passwords are the leading cause of cryptographic failure in practice. Explicit
-passwords can be supplied with `-p` when scripting or when a user-managed
-password is preferred.
+Cipherforge generates the encryption secret automatically — human-chosen
+passwords are the leading cause of cryptographic failure in practice, so there
+is no option to supply one.
 
-Auto-generated passwords are 44 characters drawn from a 57-character clean pool
+The generated secret is 64 characters drawn from a 57-character clean pool
 (`1–9`, `A–Z` excluding `I`, `L`, and `O`, `a–z` excluding `l`) using `crypto/rand`,
 Go's interface to the operating system's cryptographically secure random number
 generator. The pool excludes the five glyphs most commonly confused with each
-other (`0`/`O`, `1`/`I`/`l`/`L`), making passwords unambiguous to read aloud or
+other (`0`/`O`, `1`/`I`/`l`/`L`), making secrets unambiguous to read aloud or
 transcribe from paper.
 
-**Why 44 characters?** Each character carries approximately 5.83 bits of entropy
-(log₂ 57 ≈ 5.83). At 44 characters that's ~257 bits of raw entropy, matching
-the full 256-bit strength of the encryption key. The password is a flat string
+**Why 64 characters?** Each character carries approximately 5.83 bits of entropy
+(log₂ 57 ≈ 5.83). At 64 characters that's ~373 bits of entropy — comfortably
+beyond the 256-bit strength of the encryption key. The secret is a flat string
 with no separators — every character contributes entropy.
 
 **Rejection sampling** is used during generation to eliminate modulo bias.
@@ -286,66 +270,26 @@ introduce. The result is a perfectly uniform distribution across all 57
 characters.
 
 ```
-8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3
+8oEmoQhvn6u9gK3pweUYZrTuJZJtvzU6WiUB87TjAxH3kPqWmNbVcXdFgHjKzRtv
 ```
 
-The password is shown exactly once, at the time of encryption. **There is no
-recovery mechanism.** Store it in a password manager or print it and keep it
-physically secure alongside the archive.
+The secret is shown exactly once, at the time of encryption, and is the only
+way to decrypt the file. **There is no recovery mechanism.** Store it in a
+password manager or print it and keep it physically secure alongside the
+archive.
 
 ---
 
 ### Key Derivation
 
-The password is never used directly as a key. It is processed through
-**Argon2id** (RFC 9106), a memory-hard key derivation function (KDF) that
-makes brute-force attacks expensive by requiring large amounts of RAM in
-addition to CPU time.
+The generated secret is high-entropy random material and is used as HKDF input
+keying material. A random 16-byte **salt** is generated for each file and
+stored in the header. HKDF-SHA256 derives 64 bytes per file, so the salt makes
+keys independent across files while retaining deterministic decryption.
 
-Argon2id was the winner of the Password Hashing Competition (2015) and is the
-current recommendation of OWASP, NIST, and the IETF for password-based key
-derivation. It is specifically designed to be resistant to GPU and ASIC
-acceleration: while a GPU can run thousands of cheap hash computations in
-parallel, it cannot run thousands of 256 MiB memory allocations in parallel
-— memory bandwidth is the bottleneck, not compute.
-
-Cipherforge uses hardened parameters:
-
-| Parameter | Value   | Purpose |
-|-----------|---------|---------|
-| Time      | 5       | Number of passes over memory |
-| Memory    | 256 MiB | RAM allocated per derivation |
-| Threads   | 4       | Parallel memory lanes |
-| Output    | 32 bytes | Master key |
-
-**Why 256 MiB and 5 passes?** For the default auto-generated 44-character
-passwords (~257 bits of entropy), the keyspace is physically unsearchable —
-the KDF parameters are cryptographically irrelevant. The parameters matter for
-user-supplied passwords. 256 MiB is the threshold where even a custom-ASIC
-attacker must use external DRAM rather than on-die SRAM, which is where
-Argon2id's memory-hardness imposes real economic cost. Below 256 MiB, ASIC
-cores can fit their working memory on-die, dramatically reducing per-guess
-cost. Above 256 MiB, returns diminish: going to 1 GiB quadruples attacker
-per-core memory cost but also quadruples user wait time with no corresponding
-improvement in the security margin for passwords of reasonable length. Five
-passes (up from four) compensates for the reduced memory by making
-time-memory tradeoff attacks more expensive, at negligible runtime cost.
-The result is ~1 second per derivation on modern hardware while keeping the
-cost to brute-force even a weak 8-character password above $200K in ASIC
-silicon.
-
-A **master key** is derived from the password once per execution. This master
-key is then used as the input keying material for a secondary derivation step
-using **HKDF-SHA256**. 
-
-A random 16-byte **salt** is generated for each file and stored in the header.
-The salt is fed into the HKDF step, ensuring that two files encrypted with the
-same password produce completely different encryption keys.
-
-This two-tier architecture is a significant performance optimization for batch
-operations: encrypting 100 files requires only one expensive Argon2id derivation
-(the master key) followed by 100 fast HKDF derivations, instead of 100
-expensive Argon2id operations.
+There is no password-based KDF because Cipherforge does not accept
+human-chosen encryption passwords. The secret is generated by the OS CSPRNG
+and shown exactly once.
 
 ### Key Separation
 
@@ -435,12 +379,12 @@ the file at a segment boundary, or appending extra segments.
 written, a 72-byte trailer is appended:
 
 ```
-[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v6-aes256-gcm"
-|| suite || flags || salt || noncePrefix || argon2Params || segmentCount): 32 bytes]
-[Key-Commitment Tag: 32 bytes] HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)
+[Segment Count: 8 bytes] [HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v7-aes256-gcm"
+|| suite || flags || salt || noncePrefix || segmentCount): 32 bytes]
+[Key-Commitment Tag: 32 bytes] HMAC-SHA256(encKey, "cipherforge-commitment-v2" || fileSalt)
 ```
 
-The HMAC commits to the suite, flags, salt, nonce prefix, KDF parameters, and
+The HMAC commits to the suite, flags, salt, nonce prefix, and
 the total segment count
 in a single tag. This closes the gap left by per-segment AEAD:
 
@@ -464,7 +408,7 @@ on disk.
 
 ### Memory Safety
 
-Sensitive material — the derived keys and the generated password — is stored in
+Sensitive material — the derived keys and the generated secret — is stored in
 byte slices (`[]byte`) rather than Go strings. Go strings are immutable and
 interned; once allocated, the runtime may hold copies in memory indefinitely and
 there is no way to force them to be zeroed. Byte slices give direct control over
@@ -508,7 +452,7 @@ than O(N), effectively halving the security level of symmetric primitives. A
 Grover — which NIST SP 800-57 considers sufficient for the foreseeable future
 (NIST's "Category 1" post-quantum security target is 128 bits).
 
-AES-256-GCM, HMAC-SHA256, Argon2id, and HKDF-SHA256 are all unaffected
+AES-256-GCM, HMAC-SHA256, and HKDF-SHA256 are all unaffected
 by Shor's algorithm. The symmetric design of Cipherforge makes it
 post-quantum-ready without any special configuration.
 
@@ -525,15 +469,11 @@ All multi-byte integer values are stored in **big-endian** byte order.
 | Field Name        | Data Type           | Length    | Value            |
 +-------------------+---------------------+-----------+------------------+
 | Magic             | byte array          | 9 bytes   | 0xC1PHRF0RGE     |
-| Version           | uint32 (big-endian) | 4 bytes   | 0x00000006       |
+| Version           | uint32 (big-endian) | 4 bytes   | 0x00000007       |
 | Suite             | uint8               | 1 byte    | AES-256-GCM      |
 | Flags             | uint8               | 1 byte    | 0x00             |
-| Salt              | byte array          | 16 bytes  | Argon2id Salt    |
+| Salt              | byte array          | 16 bytes  | HKDF salt        |
 | Nonce Prefix      | byte array          | 4 bytes   | GCM nonce prefix |
-| Argon2 Time       | uint32 (big-endian) | 4 bytes   | KDF passes       |
-| Argon2 Memory     | uint32 (big-endian) | 4 bytes   | KDF memory (KiB) |
-| Argon2 Threads    | uint8               | 1 byte    | KDF parallelism  |
-| Reserved          | byte array          | 3 bytes   | 0x000000         |
 +-------------------+---------------------+-----------+------------------+
 |              ENCRYPTED PAYLOAD (REPEAT UNTIL TRAILER)                  |
 +-------------------+---------------------+-----------+------------------+
@@ -552,18 +492,14 @@ All multi-byte integer values are stored in **big-endian** byte order.
 +-------------------+---------------------+-----------+------------------+
 ```
 
-**Header** (47 bytes fixed):
+**Header** (35 bytes fixed):
 - `Magic` (8 bytes): `0xC1 0x50 0x48 0x52 0x46 0x30 0x52 0x47` — allows fast
   rejection of non-`.cfo` files before any key derivation is attempted
-- `Version` (4 bytes): format version, currently `0x00000006`
+- `Version` (4 bytes): format version, currently `0x00000007`
 - `Suite` (1 byte): `0x01` for AES-256-GCM
 - `Flags` (1 byte): reserved and must be zero
 - `Salt` (16 bytes): random HKDF salt, unique per file
 - `Nonce Prefix` (4 bytes): random prefix for the 12-byte GCM nonce
-- `Argon2 Time` (4 bytes): number of passes over memory
-- `Argon2 Memory` (4 bytes): KiB of RAM for the KDF (262,144 = 256 MiB)
-- `Argon2 Threads` (1 byte): degree of parallelism
-- `Reserved` (3 bytes): must be zero, reserved for future use
 
 **Payload** (repeating):
 Each segment is prefixed with an 8-byte big-endian length, followed by the
@@ -573,15 +509,15 @@ size is 1,048,576 + 16 bytes (plaintext + AEAD overhead).
 
 **Trailer** (72 bytes fixed):
 - `Segment Count` (8 bytes): total number of segments written
-- `Trailer HMAC` (32 bytes): `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v6-aes256-gcm" || suite || flags || salt || noncePrefix || argon2Time || argon2Memory || argon2Threads || zero[3] || segmentCount)`
-- `Key-Commitment Tag` (32 bytes): `HMAC-SHA256(encKey, "cipherforge-commitment-v1" || fileSalt)`
+- `Trailer HMAC` (32 bytes): `HMAC-SHA256(macKey, "cipherforge-trailer-hmac-v7-aes256-gcm" || suite || flags || salt || noncePrefix || segmentCount)`
+- `Key-Commitment Tag` (32 bytes): `HMAC-SHA256(encKey, "cipherforge-commitment-v2" || fileSalt)`
 
 The trailer is always at `EOF - 72`. The decoder seeks to this offset first,
 verifies the HMAC and key-commitment tag, then performs a single sequential
 read of the payload.
 
-**Header size**: 9 + 4 + 1 + 1 + 16 + 4 + 12 = **47 bytes** (v6)
-**Minimum valid file size**: 47 (header) + 72 (trailer) = **119 bytes**
+**Header size**: 9 + 4 + 1 + 1 + 16 + 4 = **35 bytes** (v7)
+**Minimum valid file size**: 35 (header) + 72 (trailer) = **107 bytes**
 **Overhead per segment**: 8 (length) + 16 (tag) = **24 bytes**  
 **File overhead**: 137 bytes + 24 bytes per segment
 
@@ -604,7 +540,6 @@ standard:
 | Primitive | Standard |
 |-----------|----------|
 | AES-256-GCM | NIST SP 800-38D |
-| Argon2id | RFC 9106 |
 | HMAC-SHA256 | RFC 2104, FIPS 198-1 |
 | HKDF-SHA256 | RFC 5869, NIST SP 800-56C |
 
@@ -615,21 +550,21 @@ scratch.
 
 **Practical recommendation for long-term archives:**
 
-1. Store the password in at least two physically separate locations (e.g. a
+1. Store the generated secret in at least two physically separate locations (e.g. a
    printed copy in a fireproof safe and a trusted password manager)
 2. Keep a copy of the source code and/or compiled binary alongside the archive
 3. Record the platform the binary was built for
 4. Test decryption periodically — do not wait until you need the file to
-   discover the password is missing
+   discover the secret is missing
 
 The most common failure mode for encrypted long-term archives is not
-cryptographic weakness — it is password loss.
+cryptographic weakness — it is secret loss.
 
 ---
 
 ## Security Considerations
 
-**The password is shown once.** If you lose it, the data is unrecoverable.
+**The generated secret is shown once.** If you lose it, the data is unrecoverable.
 There is no backdoor, no key escrow, and no recovery mechanism. This is
 intentional.
 

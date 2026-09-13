@@ -221,6 +221,10 @@ func (m Model) updateTextInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.passwordEntry = NewPasswordModel(m.operation, "text input")
 		m.passwordEntry.textMode = true
+		if m.operation == "encrypt" {
+			return m.confirmPassword()
+		}
+
 		m.screen = ScreenPassword
 		return m, m.passwordEntry.Init()
 

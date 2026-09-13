@@ -4,12 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/vilshansen/cipherforge-go/internal/format"
 )
-
-// fastParams are lightweight Argon2id parameters for tests.
-var fastParams = format.FastTestParams()
 
 func TestGenerateSalt(t *testing.T) {
 	got, err := GenerateSalt()
@@ -90,6 +85,7 @@ func TestMlockBytes(t *testing.T) {
 	}
 }
 
+/*
 func TestDeriveMasterKey(t *testing.T) {
 	password := []byte("test-password")
 	params := fastParams
@@ -176,6 +172,26 @@ func TestV4KeyDerivationRoundTrip(t *testing.T) {
 	}
 	if !bytes.Equal(macKeyEnc, macKeyDec) {
 		t.Error("macKey mismatch between encrypt and decrypt sides")
+	}
+}
+
+}
+*/
+
+func TestDeriveKeys(t *testing.T) {
+	secret := []byte("generated-secret")
+	salt := []byte("test-salt-12345678")
+	encKey, macKey := DeriveKeys(secret, salt)
+	if len(encKey) != 32 || len(macKey) != 32 {
+		t.Fatal("derived keys must be 32 bytes")
+	}
+	encKey2, macKey2 := DeriveKeys(secret, salt)
+	if !bytes.Equal(encKey, encKey2) || !bytes.Equal(macKey, macKey2) {
+		t.Fatal("DeriveKeys not deterministic")
+	}
+	encKey3, macKey3 := DeriveKeys(secret, []byte("different-salt-1234"))
+	if bytes.Equal(encKey, encKey3) || bytes.Equal(macKey, macKey3) {
+		t.Fatal("different salts must produce different keys")
 	}
 }
 

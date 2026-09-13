@@ -66,9 +66,7 @@ import (
 // are package-private — only accessible within the `cipherforge` package.
 // Java equivalent: `private byte[] password;` with package-private access.
 type Encrypter struct {
-	password  []byte              // The user's password (or auto-generated)
-	params    format.Argon2Params // KDF parameters (defaults: 5 passes, 256 MiB)
-	masterKey []byte              // Pre-derived master key for batch optimization (nil = derive on demand)
+	password []byte // The generated secret
 }
 
 // NewEncrypter creates an Encrypter with the given password and production-
@@ -81,40 +79,13 @@ type Encrypter struct {
 // Important: the password byte slice is NOT copied. The caller still owns it
 // and is responsible for zeroing it via `defer crypto.ZeroBytes(password)`.
 func NewEncrypter(password []byte) *Encrypter {
-	return &Encrypter{
-		password: password,
-		params:   format.DefaultArgon2Params(),
-	}
+	return &Encrypter{password: password}
 }
 
-// NewEncrypterWithParams creates an Encrypter with custom Argon2id parameters.
-// This is primarily used in tests (to use fastParams for speed) but could also
-// be used to increase or decrease the KDF cost for specific use cases.
-func NewEncrypterWithParams(password []byte, params format.Argon2Params) *Encrypter {
-	return &Encrypter{password: password, params: params}
-}
-
-// NewEncrypterWithMasterKey creates an Encrypter with a pre-derived master
-// key for batch encryption. This skips the expensive Argon2id derivation
-// inside Encrypt(), making encryption of multiple files much faster.
-//
-// When masterKey is provided, Encrypt() uses HKDF-SHA256 directly from the
-// master key with a per-file random salt to derive file-specific keys.
-// The master key itself must have been derived via crypto.DeriveMasterKey().
-func NewEncrypterWithMasterKey(password []byte, masterKey []byte) *Encrypter {
-	return NewEncrypterWithMasterKeyParams(password, masterKey, format.DefaultArgon2Params())
-}
-
-// NewEncrypterWithMasterKeyParams is like NewEncrypterWithMasterKey but
-// records the Argon2id parameters the master key was derived with, so a
-// decrypter reading the output header reproduces the same master key. This is
-// primarily used in tests (with fastParams) to keep the KDF cheap.
-func NewEncrypterWithMasterKeyParams(password []byte, masterKey []byte, params format.Argon2Params) *Encrypter {
-	return &Encrypter{
-		password:  password,
-		params:    params,
-		masterKey: masterKey,
-	}
+// NewEncrypterWithParams is retained as a source-compatible no-op for callers
+// migrating from v6. v7 has no configurable password KDF parameters.
+func NewEncrypterWithParams(password []byte, _ any) *Encrypter {
+	return NewEncrypter(password)
 }
 
 // Encrypt reads plaintext from r, encrypts it in 1 MiB segments using
@@ -135,19 +106,15 @@ func NewEncrypterWithMasterKeyParams(password []byte, masterKey []byte, params f
 //
 // File layout produced:
 //
-//	[Header: 47 bytes]
+//	[Header: 35 bytes]
 //	  Magic (9) | Version (4) | Suite (1) | Flags (1) | Salt (16) |
-//	  NoncePrefix (4) | Argon2Params (12)
+//	  NoncePrefix (4)
 //	[Payload: variable]
 //	  For each segment:
 //	    [segmentLen: 8 bytes] [ciphertext || GCM tag: variable]
 //	[Trailer: 72 bytes]
 //	  [segmentCount: 8 bytes] [HMAC-SHA256: 32 bytes] [KeyCommitTag: 32 bytes]
 func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) error {
-	if err := format.ValidateArgon2Params(e.params); err != nil {
-		return err
-	}
-
 	// Step 1: Generate per-file random values.
 	// crypto.GenerateSalt() returns ([]byte, error) — the salt goes in the
 	// file header and is used as the HKDF salt for file-specific key derivation.
@@ -164,38 +131,9 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	}
 
 	// Step 2: Key derivation.
-	//
-	// If a pre-derived master key was provided (batch mode), use it directly.
-	// Otherwise, derive the master key from the password using Argon2id.
-	// The shouldZeroMasterKey flag prevents zeroing a shared master key
-	// that might be reused for subsequent files in batch mode.
-	//
-	// Go note: `:=` inside an if/else creates variables scoped to that block.
-	// The `var masterKey []byte` declaration at the top of this block ensures
-	// both branches assign to the same outer-scope variable.
-	var masterKey []byte
-	var shouldZeroMasterKey bool
-	if e.masterKey != nil {
-		// Use pre-derived master key (batch encryption optimization).
-		// Don't zero it — the caller owns it and may reuse it.
-		masterKey = e.masterKey
-		shouldZeroMasterKey = false
-	} else {
-		// Derive master key on demand (single-file mode).
-		masterKey = crypto.DeriveMasterKey(e.password, e.params)
-		shouldZeroMasterKey = true
-	}
-	// defer runs when Encrypt() returns, regardless of error/success.
-	// In Go, you can conditionally set up defers — this one only fires
-	// if we derived the key ourselves.
-	if shouldZeroMasterKey {
-		defer crypto.ZeroBytes(masterKey)
-	}
-
-	// Derive file-specific keys from the master key + per-file salt.
 	// encKey: 32 bytes for AES-256-GCM encryption
 	// macKey: 32 bytes for HMAC-SHA256 trailer authentication
-	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
+	encKey, macKey := crypto.DeriveKeys(e.password, salt)
 	defer crypto.ZeroBytes(encKey) // encKey is always locally derived, always zeroed
 
 	block, err := aes.NewCipher(encKey)
@@ -221,8 +159,8 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	bufOut := bufio.NewWriterSize(w, format.SegmentSize+aead.Overhead()+8)
 	defer bufOut.Flush() // Flush the buffered writer when done (even on error)
 
-	// Step 4: Write the v6 header.
-	if err := writeHeader(bufOut, salt, noncePrefix, e.params); err != nil {
+	// Step 4: Write the v7 header.
+	if err := writeHeader(bufOut, salt, noncePrefix); err != nil {
 		return err
 	}
 
@@ -237,7 +175,7 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 		return err
 	}
 
-	trailerHMAC := computeTrailerHMAC(macKey, salt, noncePrefix, segmentCount, e.params)
+	trailerHMAC := computeTrailerHMAC(macKey, salt, noncePrefix, segmentCount)
 	if _, err := bufOut.Write(trailerHMAC); err != nil {
 		return err
 	}
@@ -259,8 +197,9 @@ func (e *Encrypter) Encrypt(r io.Reader, w io.Writer, progress func(int64)) erro
 	return nil
 }
 
-// writeHeader writes the 47-byte v6 .cfo header to w.
-func writeHeader(w io.Writer, salt, noncePrefix []byte, params format.Argon2Params) error {
+// encryptSegments reads plaintext from r, encrypts it in 1 MiB segments,
+// writeHeader writes the 35-byte v7 .cfo header to w.
+func writeHeader(w io.Writer, salt, noncePrefix []byte) error {
 	if _, err := w.Write([]byte(format.Magic)); err != nil {
 		return err
 	}
@@ -276,7 +215,7 @@ func writeHeader(w io.Writer, salt, noncePrefix []byte, params format.Argon2Para
 	if _, err := w.Write(noncePrefix); err != nil {
 		return err
 	}
-	return format.WriteArgon2Params(w, params)
+	return nil
 }
 
 // encryptSegments reads plaintext from r, encrypts it in 1 MiB segments,
@@ -407,25 +346,9 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 		return err
 	}
 
-	// Step 4: Read and validate Argon2 parameters.
-	// ReadArgon2Params enforces safety limits (max 10 passes, max 16 GiB memory)
-	// to prevent resource exhaustion from maliciously crafted files.
-	// This happens BEFORE key derivation — the HMAC can't protect us here
-	// because the HMAC key itself hasn't been derived yet.
-	params, err := format.ReadArgon2Params(r)
-	if err != nil {
-		return err
-	}
-
-	// Step 5: Key derivation.
-	// Derive the master key from the password using the file's embedded
-	// Argon2id parameters. This ensures files remain decryptable if
-	// default parameters change in future versions.
-	masterKey := crypto.DeriveMasterKey(d.password, params)
-	defer crypto.ZeroBytes(masterKey)
-
-	// Derive file-specific encryption and MAC keys.
-	encKey, macKey := crypto.DeriveKeysFromMaster(masterKey, salt)
+	// Step 4: Derive file-specific encryption and MAC keys directly from the
+	// generated secret and the per-file salt.
+	encKey, macKey := crypto.DeriveKeys(d.password, salt)
 	defer crypto.ZeroBytes(encKey)
 
 	block, err := aes.NewCipher(encKey)
@@ -469,7 +392,7 @@ func (d *Decrypter) Decrypt(r io.ReadSeeker, w io.Writer, progress func(int64)) 
 	storedKeyCommit := trailerBuf[40:72]
 
 	// Compute the expected HMAC and compare in constant time.
-	expectedHMAC := computeTrailerHMAC(macKey, salt, noncePrefix, segmentCount, params)
+	expectedHMAC := computeTrailerHMAC(macKey, salt, noncePrefix, segmentCount)
 	if !hmac.Equal(storedHMAC, expectedHMAC) {
 		crypto.ZeroBytes(macKey)
 		return ErrAuthenticationFailed
@@ -615,19 +538,13 @@ var ErrKeyCommitmentFailed = fmt.Errorf("key commitment verification failed")
 
 // computeTrailerHMAC computes the HMAC-SHA256 authentication tag for the
 // .cfo file trailer.
-func computeTrailerHMAC(macKey, salt, noncePrefix []byte, segmentCount uint64, params format.Argon2Params) []byte {
+func computeTrailerHMAC(macKey, salt, noncePrefix []byte, segmentCount uint64) []byte {
 	h := hmac.New(sha256.New, macKey)
 
 	h.Write([]byte(format.TrailerHMACContext))
 	h.Write([]byte{format.AESGCM256Suite, 0})
 	h.Write(salt)
 	h.Write(noncePrefix)
-
-	var buf [8]byte
-	binary.BigEndian.PutUint32(buf[0:4], params.Time)
-	binary.BigEndian.PutUint32(buf[4:8], params.Memory)
-	h.Write(buf[:])
-	h.Write([]byte{params.Threads, 0, 0, 0})
 
 	var countBuf [8]byte
 	binary.BigEndian.PutUint64(countBuf[:], segmentCount)

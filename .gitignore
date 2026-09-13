@@ -12,5 +12,6 @@ cfo.exe
 dist/
 vendor/
 cipherforge_releases/
+release-assets/
 *.test
 

@@ -44,7 +44,7 @@ func (m MainMenuModel) View() string {
 	if m.gitCommit != "none" && m.gitCommit != "" {
 		verLine += fmt.Sprintf(" (%s)", m.gitCommit)
 	}
-	verLine += " — encrypt and decrypt files with AES-256-GCM and Argon2id."
+	verLine += " — encrypt and decrypt files with AES-256-GCM and HKDF-SHA256."
 	b.WriteString(subtleStyle.Render(verLine))
 	b.WriteString("\n\n")
 

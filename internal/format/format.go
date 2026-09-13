@@ -52,9 +52,9 @@ const (
 	Magic     = "\xC1\x50\x48\x52\x46\x30\x52\x47\x45"
 	MagicSize = 9
 
-	// FileVersion is the current format version (v6). Stored as uint32
+	// FileVersion is the current format version (v7). Stored as uint32
 	// big-endian in the file header.
-	FileVersion = uint32(6)
+	FileVersion = uint32(7)
 
 	VersionSize     = 4  // uint32 = 4 bytes
 	SuiteSize       = 1  // algorithm suite identifier
@@ -93,7 +93,7 @@ const (
 	// HeaderSize is the full v6 header size:
 	//   magic(9) + version(4) + suite(1) + flags(1) + salt(16) +
 	//   nonce prefix(4) + argon2params(12) = 47
-	HeaderSize = MagicSize + VersionSize + SuiteSize + FlagsSize + SaltSize + NoncePrefixSize + Argon2ParamSize
+	HeaderSize = MagicSize + VersionSize + SuiteSize + FlagsSize + SaltSize + NoncePrefixSize
 
 	// HKDF and HMAC context strings for domain separation.
 	// These are ASCII strings used as info/salt parameters in HKDF and as
@@ -101,13 +101,12 @@ const (
 	//
 	// Java note: Go strings are UTF-8 encoded and immutable (like Java strings).
 	// Converting a string to []byte allocates a new byte slice.
-	TrailerHMACContext = "cipherforge-trailer-hmac-v6-aes256-gcm"
-	MasterKeySalt      = "cipherforge-master-key-v1"
-	FileKeyContext     = "cipherforge-file-key-v1"
-	KeyCommitContext   = "cipherforge-commitment-v1"
+	TrailerHMACContext = "cipherforge-trailer-hmac-v7-aes256-gcm"
+	FileKeyContext     = "cipherforge-file-key-v2"
+	KeyCommitContext   = "cipherforge-commitment-v2"
 )
 
-// Argon2Params holds the tunable parameters for the Argon2id KDF.
+/*
 //
 // Go struct field tags (backtick strings after the type) are metadata,
 // like Java annotations but simpler. They're accessible via the reflect
@@ -239,6 +238,8 @@ func ReadArgon2Params(r io.Reader) (Argon2Params, error) {
 	}
 	return p, nil
 }
+
+*/
 
 // WriteUint64 writes a 64-bit unsigned integer in big-endian byte order.
 //

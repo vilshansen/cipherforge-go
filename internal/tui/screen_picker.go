@@ -254,8 +254,12 @@ func (m Model) updateFilePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Proceed to password screen.
 		m.passwordEntry = NewPasswordModel(m.operation, fullPath)
+		if m.operation == "encrypt" {
+			return m.confirmPassword()
+		}
+
+		// Decryption requires the saved generated secret.
 		m.screen = ScreenPassword
 		return m, m.passwordEntry.Init()
 

@@ -11,8 +11,8 @@ import (
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
 )
 
-// PasswordModel handles password entry. For encrypt: optionally auto-generate
-// a strong password via a checkbox. For decrypt: prompt for the password.
+// PasswordModel handles generated secrets for encryption and secret entry for
+// decryption.
 type PasswordModel struct {
 	operation string
 	inputFile string
@@ -41,6 +41,7 @@ func NewPasswordModel(operation, inputFile string) PasswordModel {
 		operation:     operation,
 		inputFile:     inputFile,
 		passwordInput: ti,
+		autoGen:       operation == "encrypt",
 		focus:         0,
 	}
 }
@@ -73,29 +74,26 @@ func (m PasswordModel) View() string {
 	}
 	b.WriteString("\n")
 
-	// Password input field.
-	label := "    Password: "
-	if m.focus == 0 {
-		label = "▶   Password: "
-	}
-	b.WriteString(label)
-	b.WriteString(m.passwordInput.View())
-	b.WriteString("\n\n")
-
-	if m.operation == "encrypt" && !m.textMode {
-		// File encrypt: auto-generate + base64 checkboxes.
-		b.WriteString(m.checkbox("Auto-generate strong password", m.autoGen, m.focus == 1))
-		b.WriteString("\n")
-		b.WriteString(m.checkbox("Base64 encode output", m.base64Enabled, m.focus == 2))
+	if m.operation == "encrypt" {
+		b.WriteString(subtleStyle.Render("A random secret will be generated and shown after encryption."))
 		b.WriteString("\n\n")
-	} else if m.operation == "encrypt" && m.textMode {
-		// Text encrypt: auto-generate checkbox only.
-		b.WriteString(m.checkbox("Auto-generate strong password", m.autoGen, m.focus == 1))
+		if !m.textMode {
+			b.WriteString(m.checkbox("Base64 encode output", m.base64Enabled, m.focus == 0))
+			b.WriteString("\n\n")
+		}
+	} else {
+		label := "    Secret: "
+		if m.focus == 0 {
+			label = "▶   Secret: "
+		}
+		b.WriteString(label)
+		b.WriteString(m.passwordInput.View())
 		b.WriteString("\n\n")
-	} else if !m.textMode {
-		// File decrypt: base64 checkbox.
-		b.WriteString(m.checkbox("Input is armored base64", m.base64Enabled, m.focus == 1))
-		b.WriteString("\n\n")
+		if !m.textMode {
+			// File decrypt: base64 checkbox.
+			b.WriteString(m.checkbox("Input is armored base64", m.base64Enabled, m.focus == 1))
+			b.WriteString("\n\n")
+		}
 	}
 
 	// Confirm button.
@@ -135,7 +133,7 @@ func (m PasswordModel) checkbox(label string, checked, focused bool) string {
 func (m Model) updatePassword(msg tea.Msg) (tea.Model, tea.Cmd) {
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
-		if m.passwordEntry.focus == 0 {
+		if m.passwordEntry.operation == "decrypt" && m.passwordEntry.focus == 0 {
 			var cmd tea.Cmd
 			m.passwordEntry.passwordInput, cmd = m.passwordEntry.passwordInput.Update(msg)
 			return m, cmd
@@ -165,7 +163,7 @@ func (m Model) updatePassword(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
-		if m.passwordEntry.isConfirmFocus() || m.passwordEntry.focus == 0 {
+		if m.passwordEntry.isConfirmFocus() || (m.passwordEntry.operation == "decrypt" && m.passwordEntry.focus == 0) {
 			return m.confirmPassword()
 		}
 		// Enter on a checkbox toggles it.
@@ -173,7 +171,7 @@ func (m Model) updatePassword(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.passwordEntry.focus == 0 {
+	if m.passwordEntry.operation == "decrypt" && m.passwordEntry.focus == 0 {
 		m.passwordEntry.retryMsg = ""
 		if key.String() == "enter" {
 			return m.confirmPassword()
@@ -187,14 +185,14 @@ func (m Model) updatePassword(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *PasswordModel) maxFocus() int {
-	if m.textMode {
-		if m.operation == "encrypt" {
-			return 3 // password, autogen, confirm
-		}
-		return 2 // password, confirm
-	}
 	if m.operation == "encrypt" {
-		return 4
+		if m.textMode {
+			return 1
+		}
+		return 2
+	}
+	if m.textMode {
+		return 2
 	}
 	return 3
 }
@@ -204,41 +202,26 @@ func (m *PasswordModel) isConfirmFocus() bool {
 }
 
 func (m *PasswordModel) isCheckboxFocus() bool {
-	if m.textMode {
-		return m.operation == "encrypt" && m.focus == 1
-	}
 	if m.operation == "encrypt" {
-		return m.focus == 1 || m.focus == 2
+		return !m.textMode && m.focus == 0
 	}
-	return m.focus == 1
+	return !m.textMode && m.focus == 1
 }
 
 func (m *PasswordModel) cycleFocus(dir int) {
-	if m.focus == 0 {
+	if m.operation == "decrypt" && m.focus == 0 {
 		m.passwordInput.Blur()
 	}
 	max := m.maxFocus()
 	m.focus = ((m.focus+dir)%max + max) % max
-	if m.focus == 0 {
+	if m.operation == "decrypt" && m.focus == 0 {
 		m.passwordInput.Focus()
 	}
 }
 
 func (m *PasswordModel) toggleFocused() {
 	switch {
-	case m.operation == "encrypt" && m.focus == 1:
-		m.autoGen = !m.autoGen
-		if m.autoGen {
-			m.regenerate()
-			m.passwordInput.EchoMode = textinput.EchoNormal
-			m.passwordInput.SetValue(m.genPassword)
-			m.passwordInput.CursorEnd()
-		} else {
-			m.genPassword = ""
-			m.passwordInput.EchoMode = textinput.EchoPassword
-			m.passwordInput.SetValue("")
-		}
-	case !m.textMode && m.operation == "encrypt" && m.focus == 2:
+	case !m.textMode && m.operation == "encrypt" && m.focus == 0:
 		m.base64Enabled = !m.base64Enabled
 	case !m.textMode && m.operation != "encrypt" && m.focus == 1:
 		m.base64Enabled = !m.base64Enabled
@@ -246,18 +229,14 @@ func (m *PasswordModel) toggleFocused() {
 }
 
 func (m Model) confirmPassword() (tea.Model, tea.Cmd) {
-	inputVal := m.passwordEntry.passwordInput.Value()
-
-	if m.operation == "encrypt" && m.passwordEntry.autoGen {
-		if inputVal == "" {
-			m.passwordEntry.regenerate()
-			inputVal = m.passwordEntry.genPassword
-		}
-		m.password = []byte(inputVal)
-		m.genPassword = inputVal
+	if m.operation == "encrypt" {
+		m.passwordEntry.regenerate()
+		m.password = []byte(m.passwordEntry.genPassword)
+		m.genPassword = m.passwordEntry.genPassword
 	} else {
+		inputVal := m.passwordEntry.passwordInput.Value()
 		if inputVal == "" {
-			m.showError(fmt.Errorf("password cannot be empty"))
+			m.showError(fmt.Errorf("secret cannot be empty"))
 			return m, nil
 		}
 		m.password = []byte(inputVal)
@@ -282,7 +261,7 @@ func (m Model) confirmPassword() (tea.Model, tea.Cmd) {
 }
 
 func (m *PasswordModel) regenerate() {
-	pwd, err := crypto.GenerateSecurePassword(44, crypto.CharacterPool)
+	pwd, err := crypto.GenerateSecurePassword(64, crypto.CharacterPool)
 	if err != nil {
 		return
 	}

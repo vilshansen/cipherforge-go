@@ -26,13 +26,12 @@ func TestGetParameters(t *testing.T) {
 	defer func() { os.Args = origArgs }()
 
 	tests := []struct {
-		name           string
-		args           []string
-		wantOp         string
-		wantFiles      []string
-		wantOutput     string
-		wantPwdPresent bool
-		wantErr        bool
+		name       string
+		args       []string
+		wantOp     string
+		wantFiles  []string
+		wantOutput string
+		wantErr    bool
 	}{
 		{
 			name:      "encrypt single file",
@@ -59,24 +58,8 @@ func TestGetParameters(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:           "encrypt with -p password",
-			args:           []string{"cfo", "-e", "test.txt", "-p", "mysecret"},
-			wantOp:         "encrypt",
-			wantFiles:      []string{"test.txt"},
-			wantPwdPresent: true,
-			wantErr:        false,
-		},
-		{
-			name:           "decrypt with -p password",
-			args:           []string{"cfo", "-d", "test.txt.cfo", "-p", "mysecret"},
-			wantOp:         "decrypt",
-			wantFiles:      []string{"test.txt.cfo"},
-			wantPwdPresent: true,
-			wantErr:        false,
-		},
-		{
-			name:    "-p specified twice",
-			args:    []string{"cfo", "-e", "f1", "-p", "a", "-p", "b"},
+			name:    "-p removed",
+			args:    []string{"cfo", "-e", "test.txt", "-p", "mysecret"},
 			wantErr: true,
 		},
 		{
@@ -126,9 +109,6 @@ func TestGetParameters(t *testing.T) {
 			}
 			if p.Output != tt.wantOutput {
 				t.Errorf("output = %q, want %q", p.Output, tt.wantOutput)
-			}
-			if tt.wantPwdPresent && p.Password == nil {
-				t.Error("expected non-nil password from -p flag")
 			}
 		})
 	}
@@ -300,17 +280,22 @@ func TestShowHelp(t *testing.T) {
 		"-e ",
 		"-d ",
 		"-o ",
-		"-p ",
 		"-b, --base64",
 		"-i, --interactive",
 		"-q, --quiet",
 		"-f, --force",
 		"-h, --help",
 		"-v, --version",
+		"64 characters",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help output missing %q", want)
 		}
+	}
+
+	// The -p flag was removed in v7, so the help text must not advertise it.
+	if strings.Contains(out, "-p ") {
+		t.Error("help output still advertises the removed -p flag")
 	}
 }
 

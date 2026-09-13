@@ -1,5 +1,32 @@
 # Changelog
 
+## v7.0.0 (2026-09-13)
+
+### Changed
+
+- **Removed Argon2id — keys are derived directly with HKDF-SHA256.** The
+  encryption secret is already high-entropy machine-generated material, so the
+  header no longer carries KDF parameters and shrank from 47 to 35 bytes.
+- **Encryption no longer accepts a password.** The `-p` / `--password` flag has
+  been removed. Every encryption generates a 64-character secret from the OS
+  CSPRNG and prints it once; store it, there is no recovery mechanism.
+- **The TUI skips secret entry when encrypting.** File and text encryption go
+  straight from the picker to the results screen, which shows the generated
+  secret. Decryption still prompts for it.
+- **New domain-separation contexts.** The trailer HMAC and key commitment now
+  use `cipherforge-trailer-hmac-v7-aes256-gcm` and `cipherforge-commitment-v2`,
+  and the trailer HMAC no longer commits to KDF parameters.
+- **Documentation rewritten for v7** across README, ARCHITECTURE, CRYPTODESIGN,
+  and FILEFORMAT.
+
+### Removed
+
+- **The batch master-key API.** `NewEncrypterWithMasterKey`,
+  `NewEncrypterWithMasterKeyParams`, and `crypto.DeriveMasterKey` are gone;
+  there is no longer a separate Argon2 master-key tier to pre-derive.
+- **Support for v6 and earlier `.cfo` files.** Re-encrypt them with a v6 build
+  before upgrading.
+
 ## v6.0.1 (2026-09-12)
 
 - **Reject nonzero reserved header bytes.** Reserved Argon2 fields are now

@@ -1,7 +1,7 @@
 # Cipherforge Cryptographic Design
 
 This document describes the current Cipherforge file format. The current format
-is v6 and uses AES-256-GCM. Older formats are not supported by this release.
+is v7 and uses AES-256-GCM with HKDF-SHA256. Older formats are not supported.
 
 ## Design Goals
 
@@ -19,7 +19,7 @@ Cipherforge is file encryption for long-term archives. The design requires:
 
 | Component | Algorithm | Size or parameters |
 |---|---|---|
-| Password KDF | Argon2id | 32-byte output; 5 passes, 256 MiB, 4 lanes |
+| Secret key derivation | HKDF-SHA256 | 64 bytes per file; 16-byte random salt |
 | Key expansion | HKDF-SHA256 | 64 bytes per file |
 | Encryption | AES-256-GCM | 32-byte key, 12-byte nonce, 16-byte tag |
 | File authentication | HMAC-SHA256 | 32-byte tag |
@@ -31,24 +31,12 @@ is derived from the password; it is never used directly as a password hash.
 
 ## Key Derivation
 
-The password is processed once per operation:
-
-```
-masterKey = Argon2id(
-    password,
-    salt="cipherforge-master-key-v1",
-    time=header.time,
-    memory=header.memory,
-    threads=header.threads,
-    output=32
-)
-```
-
+Cipherforge generates a high-entropy secret with the operating system CSPRNG.
 Each file has an independent 16-byte random salt. File keys are derived with:
 
 ```
-raw    = HKDF-SHA256(masterKey, fileSalt,
-                     "cipherforge-file-key-v1", 64)
+raw    = HKDF-SHA256(secret, fileSalt,
+           "cipherforge-file-key-v2", 64)
 encKey = raw[0:32]
 macKey = raw[32:64]
 ```
@@ -102,10 +90,10 @@ uint64_be(segmentCount) || trailerHMAC || keyCommitment
 ```
 
 The trailer HMAC authenticates the suite, flags, file salt, nonce prefix,
-Argon2 parameters, and segment count. Its context is:
+and segment count. Its context is:
 
 ```
-cipherforge-trailer-hmac-v6-aes256-gcm
+cipherforge-trailer-hmac-v7-aes256-gcm
 ```
 
 The key commitment is:
@@ -124,8 +112,7 @@ Both tags are compared with constant-time comparison.
 Decryption performs these checks before writing plaintext:
 
 1. Validate magic, version, suite, and reserved flags.
-2. Read and validate Argon2 parameters against resource limits.
-3. Derive the master and file keys.
+2. Derive the file keys from the generated secret and file salt.
 4. Seek to the fixed-size trailer.
 5. Verify the trailer HMAC and key commitment.
 6. Read exactly the payload region described by the trailer offset.
@@ -146,16 +133,14 @@ not a guarantee against every memory-residency attack.
 ## Security Properties and Limits
 
 The format provides confidentiality and authenticated integrity for the
-plaintext, metadata, segment ordering, and file boundaries when the password
-is secret and nonce construction is followed. It does not hide file existence,
+plaintext, metadata, segment ordering, and file boundaries when the generated
+secret is secret and nonce construction is followed. It does not hide file existence,
 output names, approximate plaintext size, or access timing. Password strength
-remains important despite Argon2id; the generated secrets are intended to be
-high entropy.
+remains important; the generated secrets are intended to be high entropy.
 
 ## Standards
 
 - AES-GCM: NIST SP 800-38D
-- Argon2id: RFC 9106
 - HKDF: RFC 5869
 - HMAC: RFC 2104 and FIPS 198-1
 - SHA-256: FIPS 180-4
