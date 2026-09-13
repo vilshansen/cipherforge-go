@@ -552,6 +552,14 @@ func TestDecryptFileRepairsSingleCharacterSecretTypo(t *testing.T) {
 	if !bytes.Contains(stderrBytes, []byte("corrected secret")) {
 		t.Errorf("expected a correction notice on stderr, got %q", stderrBytes)
 	}
+	// The warning must be a single line naming the corrected secret: shells that
+	// turn native stderr into error records will wrap long lines, so assert the
+	// exact text here where the capture is byte-accurate.
+	wantWarning := "cfo: warning: The supplied secret did not authenticate " +
+		filepath.Base(cipherPath) + ", but a single-edit correction does. Update your stored copy."
+	if !bytes.Contains(stderrBytes, []byte(wantWarning)) {
+		t.Errorf("stderr missing the correction warning\n want: %q\n got:  %q", wantWarning, stderrBytes)
+	}
 	if !bytes.Contains(stderrBytes, secret) {
 		t.Errorf("expected the corrected secret on stderr, got %q", stderrBytes)
 	}
