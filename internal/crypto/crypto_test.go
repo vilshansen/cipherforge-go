@@ -59,10 +59,24 @@ func TestGenerateSecurePassword(t *testing.T) {
 				}
 			}
 
-			// Generate a second password — it should be different.
-			got2, _ := GenerateSecurePassword(tt.length, CharacterPool)
-			if bytes.Equal(got, got2) {
-				t.Error("two generated passwords should be different")
+			// A second draw should differ from the first. Short outputs can
+			// collide by chance (two 1-character secrets match with probability
+			// 1/57, so a single comparison fails about 1.8% of runs), so try
+			// several draws and require that at least one differs. A generator
+			// that returned a constant would still fail.
+			differed := false
+			for i := 0; i < 8; i++ {
+				got2, err := GenerateSecurePassword(tt.length, CharacterPool)
+				if err != nil {
+					t.Fatalf("GenerateSecurePassword() error = %v", err)
+				}
+				if !bytes.Equal(got, got2) {
+					differed = true
+					break
+				}
+			}
+			if !differed {
+				t.Errorf("8 successive %d-character passwords all matched; the generator looks deterministic", tt.length)
 			}
 		})
 	}

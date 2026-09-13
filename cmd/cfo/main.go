@@ -178,16 +178,16 @@ func processFile(operation, inputFile, outputFile string, password []byte, quiet
 		}
 	}
 	if operation == "encrypt" {
-		return encryptFile(inputFile, outputFile, password, quiet, base64)
+		return encryptFile(inputFile, outputFile, password, quiet, force, base64)
 	}
-	return decryptFile(inputFile, outputFile, password, quiet, base64)
+	return decryptFile(inputFile, outputFile, password, quiet, force, base64)
 }
 
 // encryptFile handles I/O setup for encryption and delegates to the Encrypter engine.
 // When base64 is true, the output is wrapped in GPG-style base64 armor
 // (BEGIN/END markers, 68-char lines) for easy copy/paste. On failure, the
 // output file is automatically removed.
-func encryptFile(inputFile, outputFile string, password []byte, quiet, base64 bool) error {
+func encryptFile(inputFile, outputFile string, password []byte, quiet, force, base64 bool) error {
 	// Open input. os.Stdin is a global *os.File for standard input (like System.in).
 	var in *os.File
 	if inputFile == "-" {
@@ -260,13 +260,11 @@ func encryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 
 	if err == nil {
 		succeeded = true
-		// Atomically rename the temp file to the final output path.
-		// os.Rename is atomic when src and dst are on the same filesystem.
 		if outputFile != "-" {
 			out.Close() // Must close before rename on Windows
-			if rerr := os.Rename(writePath, outputFile); rerr != nil {
+			if rerr := publishStaged(writePath, outputFile, force); rerr != nil {
 				os.Remove(writePath)
-				return fmt.Errorf("atomic rename failed: %w", rerr)
+				return rerr
 			}
 		}
 	}
@@ -282,7 +280,7 @@ func encryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 // Plaintext is staged in a temporary file and published only once the entire
 // payload has authenticated: a file target is atomically renamed into place, and
 // stdout receives the staged bytes on success.
-func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bool) error {
+func decryptFile(inputFile, outputFile string, password []byte, quiet, force, base64 bool) error {
 	if inputFile == "-" {
 		return fmt.Errorf("decrypt from stdin is not supported (seek required for trailer HMAC)")
 	}
@@ -399,11 +397,31 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 		return nil
 	}
 
+	if err := publishStaged(writePath, outputFile, force); err != nil {
+		return err
+	}
+	published = true
+	return nil
+}
+
+// publishStaged atomically moves a staged temporary file to its final path.
+//
+// The existence check is repeated here, immediately before the rename, because
+// the check in processFile happens before the encryption or decryption runs.
+// Without this, a file created at outputFile during a long run would be silently
+// clobbered even though -f was never given. The check and the rename are still
+// two operations, but the window shrinks from the length of the whole run to a
+// few microseconds.
+func publishStaged(writePath, outputFile string, force bool) error {
+	if !force {
+		if _, err := os.Stat(outputFile); err == nil {
+			return fmt.Errorf("output file %q was created while processing (use -f to overwrite)", outputFile)
+		}
+	}
 	// os.Rename is atomic when src and dst are on the same filesystem.
 	if err := os.Rename(writePath, outputFile); err != nil {
 		return fmt.Errorf("atomic rename failed: %w", err)
 	}
-	published = true
 	return nil
 }
 

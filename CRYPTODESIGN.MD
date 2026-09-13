@@ -47,6 +47,13 @@ The encryption key (encKey) and trailer-MAC key (macKey) are independent outputs
 of HKDF. The key-commitment tag is computed with `encKey`, and is not reused as
 an AEAD key.
 
+HKDF-SHA256 is a key-expansion function, not a password-stretching function: it
+does not slow down guessing, so it offers no brute-force resistance against a
+low-entropy input. The construction above is sound only because the secret is
+about 262 bits of CSPRNG output. If a user-chosen passphrase mode is ever added,
+the passphrase must be routed through a memory-hard KDF (Argon2id) and must never
+be passed to `DeriveKeys` directly.
+
 ## AES-GCM Nonces
 
 Every file header contains a 4-byte random nonce prefix. Segment `i` uses the
@@ -140,6 +147,14 @@ Derived keys are byte slices, locked when supported by the operating system,
 and explicitly zeroed after use. Go's garbage collector can retain historical
 copies of heap data; zeroing and memory locking are best-effort protections,
 not a guarantee against every memory-residency attack.
+
+Two secret copies sit outside that discipline by design. A secret rendered on
+the terminal UI's results screen is held as a Go string, because the Bubble Tea
+render path is string-only and strings are immutable, so the copy cannot be
+zeroed; the underlying `[]byte` is wiped as soon as the string is made. A secret
+copied to the system clipboard is outside this process entirely — it is not
+locked, zeroed, or expired by Cipherforge, and other software on the machine may
+read it.
 
 ## Security Properties and Limits
 

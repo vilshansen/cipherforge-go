@@ -495,7 +495,7 @@ func encryptForTest(t *testing.T, plaintext, secret []byte) string {
 	if err := os.WriteFile(plainPath, plaintext, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := encryptFile(plainPath, cipherPath, secret, true, false); err != nil {
+	if err := encryptFile(plainPath, cipherPath, secret, true, false, false); err != nil {
 		t.Fatalf("encryptFile failed: %v", err)
 	}
 	return cipherPath
@@ -521,7 +521,7 @@ func decryptToStdout(t *testing.T, cipherPath string, secret []byte) ([]byte, er
 		done <- b
 	}()
 
-	decryptErr := decryptFile(cipherPath, "-", secret, true, false)
+	decryptErr := decryptFile(cipherPath, "-", secret, true, false, false)
 
 	os.Stdout = origOut
 	outW.Close()
@@ -543,7 +543,7 @@ func TestDecryptFileRepairsSingleCharacterSecretTypo(t *testing.T) {
 
 	var decryptErr error
 	stderrBytes := captureStderr(t, func() {
-		decryptErr = decryptFile(cipherPath, outPath, typo, false, false)
+		decryptErr = decryptFile(cipherPath, outPath, typo, false, false, false)
 	})
 
 	if decryptErr != nil {
@@ -585,7 +585,7 @@ func TestDecryptFileLeavesAnUnrecoverableSecretAlone(t *testing.T) {
 
 	var decryptErr error
 	stderrBytes := captureStderr(t, func() {
-		decryptErr = decryptFile(cipherPath, outPath, wrong, false, false)
+		decryptErr = decryptFile(cipherPath, outPath, wrong, false, false, false)
 	})
 
 	if decryptErr == nil {
@@ -623,4 +623,36 @@ func captureStderr(t *testing.T, fn func()) []byte {
 	os.Stderr = orig
 	w.Close()
 	return <-done
+}
+
+// TestPublishStagedRefusesToClobberNewFile is the CF-2026-04 regression test:
+// the existence check made at the start of a run is not enough, because a file
+// can appear at the destination while a long encryption or decryption is in
+// flight. publishStaged re-checks immediately before the rename.
+func TestPublishStagedRefusesToClobberNewFile(t *testing.T) {
+	dir := t.TempDir()
+	staged := filepath.Join(dir, "staged")
+	target := filepath.Join(dir, "target")
+
+	if err := os.WriteFile(staged, []byte("new content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("existing content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := publishStaged(staged, target, false); err == nil {
+		t.Fatal("publishStaged overwrote an existing file without force")
+	}
+	if got, _ := os.ReadFile(target); string(got) != "existing content" {
+		t.Errorf("target was modified: %q", got)
+	}
+
+	// With force the staged file is published over the existing one.
+	if err := publishStaged(staged, target, true); err != nil {
+		t.Fatalf("publishStaged with force = %v, want success", err)
+	}
+	if got, _ := os.ReadFile(target); string(got) != "new content" {
+		t.Errorf("target = %q, want the staged content", got)
+	}
 }

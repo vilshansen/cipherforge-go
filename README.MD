@@ -649,6 +649,14 @@ backdoor and no key escrow. It can, however, identify the secret when the value
 you supply differs from it by a single supported edit; see
 [Correcting a mistyped secret](#correcting-a-mistyped-secret).
 
+**Copies of the secret are not cleared automatically.** When the terminal UI
+copies a secret to the clipboard, and when the CLI prints a corrected secret to
+stderr, that copy lives outside Cipherforge's memory. Clipboard entries are not
+expired, overwritten, or locked: they remain readable by other applications and
+may be synchronized to other devices by clipboard-history or cloud-clipboard
+features. Clear the clipboard once you have stored the secret somewhere durable,
+and prefer a password manager or an encrypted file over the clipboard.
+
 **The filename is not encrypted.** The `.cfo` extension is appended to the
 original filename. `payroll-2026.xlsx` becomes `payroll-2026.xlsx.cfo`. The
 contents are protected; the name is not. Rename before encrypting if the

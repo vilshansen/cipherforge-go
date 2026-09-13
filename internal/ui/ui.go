@@ -28,7 +28,6 @@
 package ui
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -84,24 +83,55 @@ func ReadPasswordFromTerminal(prompt string) ([]byte, error) {
 		return bytePassword, err
 	}
 
-	// Non-interactive mode (piped input): read a line normally.
-	// bufio.NewReader wraps an io.Reader with a buffer (like BufferedReader).
-	reader := bufio.NewReader(os.Stdin)
-	// ReadBytes('\n') reads until newline (like BufferedReader.readLine()
-	// but returns the delimiter). Returns io.EOF on end of input.
-	line, err := reader.ReadBytes('\n')
-	if err != nil && err != io.EOF {
-		return nil, err
+	// Non-interactive mode (piped input): read a single line. Input here is
+	// scripted (`echo "$SECRET" | cfo -d file.cfo`) and is read with the same
+	// pre-allocated, residue-free buffer as interactive input.
+	return readPasswordLine(os.Stdin)
+}
+
+// maxPasswordInput is the capacity pre-allocated for a password read from a
+// terminal or a pipe. A generated secret is 53 characters as displayed and the
+// longest historical format was 64, so this leaves ample headroom: append cannot
+// grow the slice for any realistic input. Longer input still works; it simply
+// reallocates.
+//
+// Growth is worth avoiding because each reallocation abandons the previous
+// backing array on the heap with a real prefix of the secret in it. Only the
+// final slice reaches crypto.ZeroBytes, so those abandoned copies are never
+// wiped — and unlike the returned buffer they are not covered by mlock either.
+const maxPasswordInput = 256
+
+// readPasswordLine reads one line from r and returns it without its trailing
+// newline.
+//
+// Bytes are read one at a time into a pre-allocated buffer so that the slice
+// handed back to the caller is the only one holding the secret. A buffered
+// reader would keep a second copy in a reusable internal buffer that cannot be
+// zeroed.
+func readPasswordLine(r io.Reader) ([]byte, error) {
+	password := make([]byte, 0, maxPasswordInput)
+	buf := make([]byte, 1)
+
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			if buf[0] == '\n' {
+				// A Windows-style line ending leaves a stray CR behind, which is
+				// not part of the secret.
+				return bytes.TrimSuffix(password, []byte("\r")), nil
+			}
+			password = append(password, buf[0])
+		}
+		if err != nil {
+			if err == io.EOF {
+				if len(password) == 0 {
+					return nil, fmt.Errorf("unexpected end of input")
+				}
+				return password, nil
+			}
+			return nil, err
+		}
 	}
-	if err == io.EOF && len(line) == 0 {
-		return nil, fmt.Errorf("unexpected end of input")
-	}
-	// Strip trailing newline(s): \r\n (Windows) or \n (Unix).
-	// Use TrimSuffix (not TrimRight) to avoid stripping trailing
-	// newlines that are legitimately part of the password.
-	line = bytes.TrimSuffix(line, []byte("\r\n"))
-	line = bytes.TrimSuffix(line, []byte("\n"))
-	return line, nil
 }
 
 // ReadPasswordStarred reads a password with star masking (one * per character).
@@ -152,7 +182,8 @@ func ReadPasswordStarred(prompt string) ([]byte, error) {
 	// Print the prompt to stderr.
 	fmt.Fprint(os.Stderr, prompt)
 
-	var password []byte
+	// Pre-allocated so typing never grows the slice: see maxPasswordInput.
+	password := make([]byte, 0, maxPasswordInput)
 	buf := make([]byte, 1) // Single-byte buffer for reading one char at a time
 
 	for {
@@ -196,8 +227,9 @@ func ReadPasswordStarred(prompt string) ([]byte, error) {
 			}
 
 		case b >= 32 && b < 127:
-			// Printable ASCII character — append to password.
-			// append() grows the slice if needed (allocates new backing array).
+			// Printable ASCII character — append to password. The buffer was
+			// pre-allocated to maxPasswordInput, so this does not reallocate and
+			// leaves no abandoned copy of the secret on the heap.
 			password = append(password, b)
 			// Print * for visual feedback.
 			fmt.Fprint(os.Stderr, "*")

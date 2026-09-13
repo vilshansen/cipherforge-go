@@ -242,7 +242,7 @@ func (m ResultsModel) View() string {
 		if m.copiedPwd {
 			b.WriteString(copiedStyle.Render("✓ Corrected secret copied to clipboard"))
 		} else {
-			b.WriteString(hintIndent.Render("Press c to copy the corrected secret to clipboard"))
+			b.WriteString(hintIndent.Render("Press c to copy the corrected secret (clipboard not auto-cleared)"))
 		}
 		b.WriteString("\n")
 	}
@@ -256,7 +256,7 @@ func (m ResultsModel) View() string {
 		if m.copiedPwd {
 			b.WriteString(copiedStyle.Render("✓ Secret copied to clipboard"))
 		} else {
-			b.WriteString(hintIndent.Render("Press c to copy the secret to clipboard"))
+			b.WriteString(hintIndent.Render("Press c to copy the secret (clipboard not auto-cleared)"))
 		}
 		b.WriteString("\n")
 	}

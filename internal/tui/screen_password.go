@@ -265,7 +265,13 @@ func (m *PasswordModel) regenerate() {
 	if err != nil {
 		return
 	}
+	// The secret is held as a string because the Bubble Tea render path is
+	// string-only, and a string cannot be zeroed. Copying into a string
+	// duplicates the secret, so the []byte original is wiped here immediately:
+	// the copy is unavoidable and is about to be displayed anyway, but the
+	// slice does not need to outlive it.
 	m.genPassword = string(pwd)
+	crypto.ZeroBytes(pwd)
 }
 
 func deriveOutputPathTUI(operation, inputFile string) string {
