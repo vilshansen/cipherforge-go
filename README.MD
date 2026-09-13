@@ -7,9 +7,10 @@ decryptable decades from now, even if the original binary is gone.
 
 It handles files of any size through 1 MiB streaming segments, so memory usage
 stays constant regardless of whether you're encrypting a 10 KB text file or a
-100 GB disk image. Every encrypted file is fully authenticated: tampering with
-any byte — header, payload, or trailer — is detected before any plaintext is
-written to disk.
+100 GB disk image. Every encrypted file is authenticated: tampering with the
+header, payload, or trailer is detected. For CLI file decryption, plaintext is
+staged and is not published to the destination until the complete file has
+successfully decrypted.
 
 By default, a secret is generated automatically from a cryptographically
 secure random source. Cipherforge prints the secret once — store it somewhere
@@ -296,10 +297,11 @@ characters.
 8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3k
 ```
 
-The secret is shown exactly once, at the time of encryption, and is the only
-way to decrypt the file. **There is no recovery mechanism.** Store it in a
-password manager or print it and keep it physically secure alongside the
-archive.
+The generated secret is emitted once, at the time of encryption, and is the only
+way to decrypt the file. When ciphertext is written to stdout (`-o -`), the
+secret is written to stderr so it cannot be mixed into the ciphertext stream.
+**There is no recovery mechanism.** Store it in a password manager or print it
+and keep it physically secure alongside the archive.
 
 ---
 
@@ -412,7 +414,7 @@ the total segment count
 in a single tag. This closes the gap left by per-segment AEAD:
 
 - **Header substitution** — swapping the salt or nonce prefix from another
-  file (even one encrypted with the same password) invalidates the HMAC
+  file (even one encrypted with the same secret) invalidates the HMAC
 - **File truncation** — removing segments changes the segment count, invalidating
   the HMAC
 - **Segment appending** — adding segments also changes the count
@@ -671,7 +673,7 @@ Recommended flags for a reproducible, static release build:
 ```bash
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
   -mod=vendor -trimpath -buildvcs=false \
-  -ldflags "-s -w -X main.Version=6.0.0 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
+  -ldflags "-s -w -X main.Version=7.1.0 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
   -o cfo-darwin-arm64 ./cmd/cfo/
 ```
 
@@ -685,7 +687,7 @@ Notes:
 - `-mod=vendor` builds against the local `vendor/` tree (create it first with
   `go mod vendor`); omit it to use normal module resolution instead.
 - `-X main.Version` / `-X main.GitCommit` stamp the version and commit into the
-  binary (defaults: `6.0.0` and `none`).
+  binary (defaults: `7.1.0` and `none`).
 
 To build for all supported platforms on Unix-like shells:
 ```bash

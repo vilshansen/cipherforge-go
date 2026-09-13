@@ -15,7 +15,11 @@
 
 ### Documentation
 
-- README and ARCHITECTURE describe the new secret length and grouping.
+- **Cryptographic documentation was aligned with the v7.1.0 secret model.**
+  README, ARCHITECTURE, and CRYPTODESIGN now describe the generated secret
+  rather than a human-chosen password, use the v7 key-commitment context, and
+  distinguish the generic library's streaming output from the CLI's staged,
+  publish-only-on-success behavior.
 
 ## v7.0.1 (2026-09-13)
 

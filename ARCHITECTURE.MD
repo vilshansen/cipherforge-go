@@ -40,7 +40,7 @@ cipherforge-go/
 │       ├── screen_main.go   #   Main menu
 │       ├── screen_picker.go #   File picker with type-ahead
 │       ├── screen_text.go   #   Text input for encrypt/decrypt text mode
-│       ├── screen_password.go # Password entry with auto-generate
+│       ├── screen_password.go # Secret generation (encrypt), entry (decrypt)
 │       ├── screen_progress.go # Progress bar during operations
 │       ├── screen_results.go  # Results display with copy shortcuts
 │       └── tui_test.go
@@ -102,7 +102,7 @@ cmd/cfo/main.go
     ▼
 pkg/cipherforge.Encrypter.Encrypt(reader, writer)
     │
-    ├── crypto.GenerateSecurePassword()                 → generated secret
+    ├── crypto.GenerateSecret()                         → generated secret
     ├── crypto.GenerateSalt()                            → 16-byte file salt
     ├── crypto.DeriveKeys(secret, salt)                  → encKey + macKey
     ├── format.WriteHeader(writer, salt)
@@ -130,7 +130,7 @@ pkg/cipherforge.Decrypter.Decrypt(reader, writer)
     ├── Seek to end, read trailer
     ├── Read header → salt
     ├── crypto.DeriveKeys(secret, salt)
-    ├── Verify trailer HMAC  ← detects wrong password BEFORE any plaintext
+    ├── Verify trailer HMAC  ← detects a wrong secret BEFORE any plaintext
     │
     └── for each segment:
           ├── read segment length
@@ -148,12 +148,14 @@ pkg/cipherforge.Decrypter.Decrypt(reader, writer)
 | Authentication | GCM per segment + HMAC-SHA256 trailer | Segments independently verified |
 | Key commitment | HMAC-SHA256(encKey, context || salt) | Ciphertext binds to a single key |
 | Randomness | OS CSPRNG (crypto/rand) | /dev/urandom, CNG — not userspace PRNG |
-| Password gen | crypto/rand + rejection sampling | No modulo bias, 256+ bits entropy |
-| Memory | mlock (best-effort) + ZeroBytes | Key material locked; passwords explicitly zeroed |
+| Secret generation | crypto/rand + rejection sampling | No modulo bias, approximately 262 bits of entropy |
+| Memory | mlock (best-effort) + ZeroBytes | Key material locked; secrets explicitly zeroed |
 
-The trailer HMAC and key-commitment tag are verified **before** any segment is
-decrypted. This means a wrong password is detected immediately — no plaintext
-touches disk.
+The trailer HMAC and key-commitment tag are verified **before** payload segments
+are processed. This detects an incorrect secret and authenticated file-level
+metadata failures before segment plaintext is produced. The CLI additionally
+stages decrypted output, so partial plaintext is not published if a later
+segment fails authentication.
 
 ## File Format
 
@@ -185,9 +187,12 @@ Model ←→ Update ←→ View
 ### Screen Flow
 
 ```
-MainMenu → FilePicker → Password → Progress → Results → MainMenu
+MainMenu → FilePicker → Progress → Results → MainMenu
                 │                        │
                 └── TextInput ───────────┘
+
+Decryption inserts a Secret screen before Progress. Encryption does not: the
+secret is generated and shown on the Results screen.
 ```
 
 Every screen is a sub-model stored on the top-level `Model` struct. Screen
@@ -210,9 +215,9 @@ dropping updates.
 | `screen_main.go` | Main menu with numbered shortcuts |
 | `screen_picker.go` | File picker, type-ahead search |
 | `screen_text.go` | Multi-line text input for text encrypt/decrypt |
-| `screen_password.go` | Password entry, auto-generate checkbox, focus cycling |
+| `screen_password.go` | Secret generation (encryption), secret entry (decryption), focus cycling |
 | `screen_progress.go` | Progress bar, runEncrypt/runDecrypt, text operations |
-| `screen_results.go` | Success/failure display, password box, clipboard |
+| `screen_results.go` | Success/failure display, generated-secret box, clipboard |
 
 ## CLI vs TUI Dispatch
 

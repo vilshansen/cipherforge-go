@@ -7,11 +7,12 @@ is v7 and uses AES-256-GCM with HKDF-SHA256. Older formats are not supported.
 
 Cipherforge is file encryption for long-term archives. The design requires:
 
-1. Memory-hard password protection with self-described parameters.
+1. High-entropy machine-generated encryption secrets with no password-based
+   KDF.
 2. Independent keys for encryption, file authentication, and key commitment.
 3. Mechanically unique nonces for every encrypted segment.
 4. Authentication of header metadata, segment ordering, lengths, and payload.
-5. Trailer verification before plaintext is written.
+5. Verification of file-level authentication before CLI plaintext publication.
 6. A bounded, deterministic binary format that can be implemented without the
    original program.
 
@@ -27,7 +28,8 @@ Cipherforge is file encryption for long-term archives. The design requires:
 | Randomness | OS CSPRNG | `crypto/rand` |
 
 AES-256-GCM is used through Go's standard library. The 32-byte encryption key
-is derived from the password; it is never used directly as a password hash.
+is derived from the generated secret; the secret is not used directly as an
+AES key.
 
 ## Key Derivation
 
@@ -41,8 +43,9 @@ encKey = raw[0:32]
 macKey = raw[32:64]
 ```
 
-The encryption and trailer keys are independent outputs of HKDF. The
-key-commitment tag is computed with `encKey`, and is not reused as an AEAD key.
+The encryption key (encKey) and trailer-MAC key (macKey) are independent outputs
+of HKDF. The key-commitment tag is computed with `encKey`, and is not reused as
+an AEAD key.
 
 ## AES-GCM Nonces
 
@@ -100,7 +103,7 @@ The key commitment is:
 
 ```
 HMAC-SHA256(encKey,
-  "cipherforge-commitment-v1" || fileSalt)
+  "cipherforge-commitment-v2" || fileSalt)
 ```
 
 The trailer closes gaps that per-segment AEAD cannot close by itself: file
@@ -109,19 +112,21 @@ Both tags are compared with constant-time comparison.
 
 ## Verification Order
 
-Decryption performs these checks before writing plaintext:
+Decryption performs file-level authentication checks before processing payload
+segments:
 
 1. Validate magic, version, suite, and reserved flags.
 2. Derive the file keys from the generated secret and file salt.
-4. Seek to the fixed-size trailer.
-5. Verify the trailer HMAC and key commitment.
-6. Read exactly the payload region described by the trailer offset.
-7. Authenticate and write each segment in order.
+3. Seek to the fixed-size trailer.
+4. Verify the trailer HMAC and key commitment.
+5. Read exactly the payload region described by the trailer offset.
+6. Authenticate and write each segment in order.
 
-The generic library API writes to its supplied `io.Writer` as segments pass
-authentication. The CLI writes to a sibling temporary file and atomically
-renames it only after successful completion, so failed CLI decryptions do not
-publish partial plaintext.
+The generic library API writes each successfully authenticated segment to its
+supplied `io.Writer`. The CLI stages decrypted plaintext in a temporary file and
+publishes it only once the entire payload has authenticated — atomically renaming
+it into place for a file target, or streaming it to stdout on success — so a
+failed CLI decryption publishes no partial plaintext.
 
 ## Memory Handling
 
@@ -135,8 +140,10 @@ not a guarantee against every memory-residency attack.
 The format provides confidentiality and authenticated integrity for the
 plaintext, metadata, segment ordering, and file boundaries when the generated
 secret is secret and nonce construction is followed. It does not hide file existence,
-output names, approximate plaintext size, or access timing. Password strength
-remains important; the generated secrets are intended to be high entropy.
+output names, approximate plaintext size, or access timing. Security depends on
+the generated secret remaining secret: it is high-entropy random material, and
+there is no user-chosen password whose strength affects the brute-force
+resistance of a file.
 
 ## Standards
 
