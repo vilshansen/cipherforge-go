@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -248,8 +249,28 @@ func (m Model) confirmPassword() (tea.Model, tea.Cmd) {
 		if m.outputFile == "" {
 			m.outputFile = deriveOutputPathTUI(m.operation, m.inputFile)
 		}
+		// Refuse to replace an existing file without asking. The CLI requires -f
+		// for this and the TUI has no -f, so the user must confirm explicitly:
+		// decrypting archive.txt.cfo while archive.txt still exists would
+		// otherwise destroy a file they did not know was in the way.
+		if m.outputFile != "-" {
+			if _, err := os.Stat(m.outputFile); err == nil {
+				m.confirmOverwrite = NewConfirmOverwriteModel(m.outputFile)
+				m.screen = ScreenConfirmOverwrite
+				return m, nil
+			}
+		}
 	}
 
+	return m.startOperation()
+}
+
+// startOperation launches the worker goroutine and switches to the progress
+// screen. It is reached directly when the output path is free, and from the
+// overwrite-confirmation screen when the user accepts replacing an existing
+// file.
+func (m Model) startOperation() (tea.Model, tea.Cmd) {
+	m.confirmOverwrite = ConfirmOverwriteModel{}
 	m.progress = NewProgressModel(m.operation, m.inputFile, m.outputFile)
 	m.screen = ScreenProgress
 

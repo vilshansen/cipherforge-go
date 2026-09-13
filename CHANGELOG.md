@@ -1,5 +1,48 @@
 # Changelog
 
+## v7.2.2 (2026-09-13)
+
+### Security
+
+- **Reading a secret no longer leaves copies behind that cannot be wiped.** The
+  buffer that collects a secret is now pre-allocated, so typing or piping one
+  never grows the slice: growth abandons the previous array on the heap with a
+  prefix of the secret in it, and only the final slice was ever zeroed. The
+  piped-input path also no longer uses a buffered reader, whose internal buffer
+  held a second copy of the secret that could not be wiped at all (CF-2026-01).
+- **A file created at the output path during a long operation is no longer
+  silently replaced.** The destination is re-checked immediately before the
+  staged file is moved into place, shrinking the window from the length of the
+  whole encryption or decryption to a few microseconds (CF-2026-04).
+
+### Added
+
+- **The terminal UI asks before overwriting an existing file.** The CLI has
+  always required `-f`, but the TUI replaced files without asking, so decrypting
+  `archive.txt.cfo` while `archive.txt` still existed destroyed the original with
+  no warning. It now shows a confirmation that defaults to Cancel, with `y` to
+  overwrite and `n` or `Esc` to return to the secret screen with the typed secret
+  intact.
+
+### Changed
+
+- **The generated secret's byte slice is zeroed** as soon as it has been copied
+  into the string used to render it on the TUI secret screen.
+
+### Documentation
+
+- README and the TUI results screen state that clipboard copies of a secret are
+  not cleared automatically, and README documents the overwrite confirmation and
+  its keys.
+- CRYPTODESIGN records that HKDF-SHA256 is a key-expansion function, not a
+  password-stretching function: it offers no brute-force resistance against a
+  low-entropy input, so its use here depends on the secret being ~262 bits of
+  CSPRNG output. A future passphrase mode must be routed through a memory-hard
+  KDF (Argon2id) and must never reach `DeriveKeys` directly.
+- CRYPTODESIGN's memory-handling section documents the two places where
+  unzeroable secret copies are accepted by design: the immutable render string
+  and the system clipboard.
+
 ## v7.2.1 (2026-09-13)
 
 ### Changed

@@ -5,6 +5,10 @@
 //
 //	Main Menu → File Picker → Password Entry → Progress → Results
 //
+// When the operation would replace a file that already exists, an overwrite
+// confirmation is inserted between the secret screen and the progress screen;
+// the TUI has no -f equivalent and never replaces a file without being told to.
+//
 // When the TUI exits, it returns a Config that the CLI entry point uses
 // to execute the actual encryption/decryption via the existing engine.
 //
@@ -39,6 +43,7 @@ const (
 	ScreenPassword
 	ScreenProgress
 	ScreenResults
+	ScreenConfirmOverwrite
 )
 
 // progressTickMsg carries a progress update from the encrypt/decrypt goroutine.
@@ -81,12 +86,13 @@ type Model struct {
 	progressCh chan progressTickMsg
 
 	// Sub-models for each screen.
-	mainMenu      MainMenuModel
-	filePicker    FilePickerModel
-	textInput     TextInputModel
-	passwordEntry PasswordModel
-	progress      ProgressModel
-	results       ResultsModel
+	mainMenu         MainMenuModel
+	filePicker       FilePickerModel
+	textInput        TextInputModel
+	passwordEntry    PasswordModel
+	progress         ProgressModel
+	results          ResultsModel
+	confirmOverwrite ConfirmOverwriteModel
 
 	// Error state: if set, display error and return to previous screen.
 	err        error
@@ -153,6 +159,8 @@ func (m Model) initForScreen() tea.Cmd {
 		return m.progress.Init()
 	case ScreenResults:
 		return nil
+	case ScreenConfirmOverwrite:
+		return nil
 	default:
 		return nil
 	}
@@ -171,6 +179,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.passwordEntry.SetSize(msg.Width, msg.Height)
 		m.progress.SetSize(msg.Width, msg.Height)
 		m.results.SetSize(msg.Width, msg.Height)
+		m.confirmOverwrite.SetSize(msg.Width, msg.Height)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -210,6 +219,8 @@ func (m Model) updateScreen(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateProgress(msg)
 	case ScreenResults:
 		return m.updateResults(msg)
+	case ScreenConfirmOverwrite:
+		return m.updateConfirmOverwrite(msg)
 	default:
 		return m, nil
 	}
@@ -234,6 +245,8 @@ func (m Model) View() string {
 			content = m.progress.View()
 		case ScreenResults:
 			content = m.results.View()
+		case ScreenConfirmOverwrite:
+			content = m.confirmOverwrite.View()
 		default:
 			content = "Unknown screen"
 		}

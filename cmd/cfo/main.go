@@ -48,7 +48,7 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "7.2.1"
+var Version = "7.2.2"
 var GitCommit = "none"
 
 // init wires the application version into the ASCII-armor Version header so

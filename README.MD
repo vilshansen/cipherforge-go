@@ -261,7 +261,10 @@ Encryption appends `.cfo` to the input filename: `photo.jpg` becomes
 `photo.jpg.cfo`. Decryption strips the `.cfo` suffix to recover the original
 name. If the input does not end with `.cfo`, `.dec` is appended instead.
 By default, Cipherforge will not overwrite an existing output file — use
-`-f` / `--force` to override this safety check.
+`-f` / `--force` to override this safety check. The terminal UI has no `-f`
+equivalent: it asks for confirmation instead, and defaults to Cancel, so a
+stray keypress cannot replace a file. This matters most when decrypting
+`archive.txt.cfo` while `archive.txt` still exists.
 
 ### TUI Keyboard Reference
 
@@ -272,6 +275,10 @@ By default, Cipherforge will not overwrite an existing output file — use
 | `Enter` | Menus, checkboxes | Select / toggle |
 | `Space` | Checkboxes | Toggle |
 | `Tab` / `Shift+Tab` | Secret screen | Cycle fields |
+| `←` `→` / `Tab` | Overwrite prompt | Choose Cancel or Overwrite |
+| `Enter` | Overwrite prompt | Confirm the selected choice (defaults to Cancel) |
+| `y` | Overwrite prompt | Overwrite the existing file |
+| `n` / `Esc` | Overwrite prompt | Cancel and return to the secret screen |
 | `Esc` | Sub-screens | Go back |
 | `q` | Main menu | Quit |
 | `c` | Results screen | Copy the generated or corrected secret to clipboard |
@@ -731,7 +738,7 @@ Recommended flags for a reproducible, static release build:
 ```bash
 CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build \
   -mod=vendor -trimpath -buildvcs=false \
-  -ldflags "-s -w -X main.Version=7.2.1 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
+  -ldflags "-s -w -X main.Version=7.2.2 -X main.GitCommit=$(git rev-parse --short HEAD 2>/dev/null || echo none)" \
   -o cfo-darwin-arm64 ./cmd/cfo/
 ```
 
@@ -745,7 +752,7 @@ Notes:
 - `-mod=vendor` builds against the local `vendor/` tree (create it first with
   `go mod vendor`); omit it to use normal module resolution instead.
 - `-X main.Version` / `-X main.GitCommit` stamp the version and commit into the
-  binary (defaults: `7.2.1` and `none`).
+  binary (defaults: `7.2.2` and `none`).
 
 To build for all supported platforms on Unix-like shells:
 ```bash

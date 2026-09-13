@@ -22,7 +22,7 @@ else
     GIT_COMMIT="unknown"
 fi
 
-VERSION="${VERSION:-7.2.1}"
+VERSION="${VERSION:-7.2.2}"
 
 SOURCE_FILE="./cmd/cfo/"
 

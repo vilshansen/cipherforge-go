@@ -44,6 +44,7 @@ cipherforge-go/
 │       ├── screen_password.go # Secret generation (encrypt), entry (decrypt)
 │       ├── screen_progress.go # Progress bar during operations
 │       ├── screen_results.go  # Results display with copy shortcuts
+│       ├── screen_confirm.go  # Overwrite confirmation before replacing a file
 │       └── tui_test.go
 ├── sample.txt           # Unicode test file
 ├── FILEFORMAT.MD        # Authoritative .cfo format specification
@@ -229,6 +230,7 @@ dropping updates.
 | `screen_password.go` | Secret generation (encryption), secret entry (decryption), focus cycling |
 | `screen_progress.go` | Progress bar, runEncrypt/runDecrypt, text operations |
 | `screen_results.go` | Success/failure display, generated-secret box, clipboard |
+| `screen_confirm.go` | Overwrite confirmation, inserted before progress when the output path is taken |
 
 ## CLI vs TUI Dispatch
 
@@ -277,7 +279,7 @@ Targets: `linux/{amd64,arm64,386}`, `windows/{amd64,386}`, `darwin/{amd64,arm64}
 The version and git commit are injected via linker flags:
 
 ```
-go build -ldflags "-X main.Version=7.2.1 -X main.GitCommit=abc1234"
+go build -ldflags "-X main.Version=7.2.2 -X main.GitCommit=abc1234"
 ```
 
 ## Design Decisions
