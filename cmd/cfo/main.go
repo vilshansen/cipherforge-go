@@ -28,6 +28,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,6 +37,7 @@ import (
 
 	"github.com/vilshansen/cipherforge-go/internal/armor"
 	"github.com/vilshansen/cipherforge-go/internal/crypto"
+	"github.com/vilshansen/cipherforge-go/internal/publish"
 	"github.com/vilshansen/cipherforge-go/internal/tui"
 	"github.com/vilshansen/cipherforge-go/internal/ui"
 	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
@@ -48,7 +50,7 @@ import (
 // If not set, they default to "dev" and "none" respectively.
 // This is Go's equivalent of Maven's resource filtering or Gradle's
 // processResources to inject build metadata.
-var Version = "7.2.2"
+var Version = "7.2.3"
 var GitCommit = "none"
 
 // init wires the application version into the ASCII-armor Version header so
@@ -171,9 +173,11 @@ func deriveOutputPath(operation, inputFile string) string {
 // processFile dispatches to encryptFile or decryptFile based on the operation.
 // Also performs path validation and checks for existing output files.
 func processFile(operation, inputFile, outputFile string, password []byte, quiet, force, base64 bool) error {
-	// os.Stat returns (FileInfo, error). If err == nil, the file exists.
+	// Lstat, not Stat, and the same check publish.Publish makes later: a dangling
+	// symlink is still an artifact the user created, and os.Stat would not see
+	// it. os.Lstat returns (FileInfo, error); err == nil means the path exists.
 	if outputFile != "-" && !force {
-		if _, err := os.Stat(outputFile); err == nil {
+		if _, err := os.Lstat(outputFile); err == nil {
 			return fmt.Errorf("output file %q already exists (use -f to overwrite)", outputFile)
 		}
 	}
@@ -262,7 +266,7 @@ func encryptFile(inputFile, outputFile string, password []byte, quiet, force, ba
 		succeeded = true
 		if outputFile != "-" {
 			out.Close() // Must close before rename on Windows
-			if rerr := publishStaged(writePath, outputFile, force); rerr != nil {
+			if rerr := publishOutput(writePath, outputFile, force); rerr != nil {
 				os.Remove(writePath)
 				return rerr
 			}
@@ -397,32 +401,25 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, force, ba
 		return nil
 	}
 
-	if err := publishStaged(writePath, outputFile, force); err != nil {
+	if err := publishOutput(writePath, outputFile, force); err != nil {
 		return err
 	}
 	published = true
 	return nil
 }
 
-// publishStaged atomically moves a staged temporary file to its final path.
-//
-// The existence check is repeated here, immediately before the rename, because
-// the check in processFile happens before the encryption or decryption runs.
-// Without this, a file created at outputFile during a long run would be silently
-// clobbered even though -f was never given. The check and the rename are still
-// two operations, but the window shrinks from the length of the whole run to a
-// few microseconds.
-func publishStaged(writePath, outputFile string, force bool) error {
-	if !force {
-		if _, err := os.Stat(outputFile); err == nil {
-			return fmt.Errorf("output file %q was created while processing (use -f to overwrite)", outputFile)
-		}
+// publishOutput moves the staged output into place and translates the shared
+// publish.ErrExists into the CLI's wording and remedy hint. The check is
+// repeated inside publish.Publish immediately before the move, because the
+// check in processFile runs before the whole encryption or decryption: without
+// it, a file created at outputFile during a long run would be silently
+// clobbered even though -f was never given.
+func publishOutput(writePath, outputFile string, force bool) error {
+	err := publish.Publish(writePath, outputFile, force)
+	if errors.Is(err, publish.ErrExists) {
+		return fmt.Errorf("output file %q was created while processing (use -f to overwrite)", outputFile)
 	}
-	// os.Rename is atomic when src and dst are on the same filesystem.
-	if err := os.Rename(writePath, outputFile); err != nil {
-		return fmt.Errorf("atomic rename failed: %w", err)
-	}
-	return nil
+	return err
 }
 
 // copyFileTo copies the contents of the file at path to w. It is used to release

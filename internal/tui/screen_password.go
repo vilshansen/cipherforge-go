@@ -262,15 +262,18 @@ func (m Model) confirmPassword() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	return m.startOperation()
+	return m.startOperation(false)
 }
 
 // startOperation launches the worker goroutine and switches to the progress
-// screen. It is reached directly when the output path is free, and from the
-// overwrite-confirmation screen when the user accepts replacing an existing
-// file.
-func (m Model) startOperation() (tea.Model, tea.Cmd) {
+// screen. force reports whether the user has consented to replacing an existing
+// output file: it is false when the output path was free at submit time, and
+// true when the overwrite-confirmation screen was accepted. It reaches the
+// publish step, so a file that appears at the output path during a long
+// operation is refused rather than silently replaced.
+func (m Model) startOperation(force bool) (tea.Model, tea.Cmd) {
 	m.confirmOverwrite = ConfirmOverwriteModel{}
+	m.forceOverwrite = force
 	m.progress = NewProgressModel(m.operation, m.inputFile, m.outputFile)
 	m.screen = ScreenProgress
 

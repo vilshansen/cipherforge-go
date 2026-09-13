@@ -75,11 +75,11 @@ func (m Model) updateConfirmOverwrite(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "y":
-		return m.startOperation()
+		return m.startOperation(true)
 
 	case "enter":
 		if m.confirmOverwrite.overwriteFocused() {
-			return m.startOperation()
+			return m.startOperation(true)
 		}
 		return m.cancelOverwrite()
 

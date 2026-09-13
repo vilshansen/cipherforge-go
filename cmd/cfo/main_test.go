@@ -624,35 +624,3 @@ func captureStderr(t *testing.T, fn func()) []byte {
 	w.Close()
 	return <-done
 }
-
-// TestPublishStagedRefusesToClobberNewFile is the CF-2026-04 regression test:
-// the existence check made at the start of a run is not enough, because a file
-// can appear at the destination while a long encryption or decryption is in
-// flight. publishStaged re-checks immediately before the rename.
-func TestPublishStagedRefusesToClobberNewFile(t *testing.T) {
-	dir := t.TempDir()
-	staged := filepath.Join(dir, "staged")
-	target := filepath.Join(dir, "target")
-
-	if err := os.WriteFile(staged, []byte("new content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(target, []byte("existing content"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := publishStaged(staged, target, false); err == nil {
-		t.Fatal("publishStaged overwrote an existing file without force")
-	}
-	if got, _ := os.ReadFile(target); string(got) != "existing content" {
-		t.Errorf("target was modified: %q", got)
-	}
-
-	// With force the staged file is published over the existing one.
-	if err := publishStaged(staged, target, true); err != nil {
-		t.Fatalf("publishStaged with force = %v, want success", err)
-	}
-	if got, _ := os.ReadFile(target); string(got) != "new content" {
-		t.Errorf("target = %q, want the staged content", got)
-	}
-}

@@ -79,6 +79,13 @@ type Model struct {
 	inputText  string // plaintext or base64 ciphertext from user
 	outputText string // result text to display on results screen
 
+	// forceOverwrite records that the user confirmed replacing an existing
+	// output file. It maps to the CLI's -f: the TUI has no flag, so consent
+	// comes from the overwrite-confirmation screen. When it is false, a file
+	// that appears at the output path while the operation runs is left alone
+	// instead of being replaced.
+	forceOverwrite bool
+
 	// Auto-generated password to display on the results screen.
 	genPassword string
 
@@ -340,4 +347,5 @@ func (m *Model) resetWorkflow() {
 	m.inputText = ""
 	m.outputText = ""
 	m.genPassword = ""
+	m.forceOverwrite = false
 }

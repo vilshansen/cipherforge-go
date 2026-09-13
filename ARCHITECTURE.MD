@@ -36,6 +36,9 @@ cipherforge-go/
 │   ├── ui/              # Terminal I/O: secret prompts, warning/error output
 │   │   ├── ui.go
 │   │   └── ui_test.go
+│   ├── publish/         # Staging-file publication, shared by CLI and TUI
+│   │   ├── publish.go   #   Publish: move staged output, refuse to clobber
+│   │   └── publish_test.go
 │   └── tui/             # Full-screen terminal UI (Bubble Tea)
 │       ├── tui.go           #   Model, screen routing, View/Update loop
 │       ├── screen_main.go   #   Main menu
@@ -90,6 +93,9 @@ The code follows a strict layering where lower layers never import higher ones:
 **Key rule:** `internal/crypto` and `internal/format` know nothing about files
 or the `.cfo` format. `pkg/cipherforge` orchestrates them. `cmd/cfo` handles
 user interaction. The TUI sits between `cmd/cfo` and `pkg/cipherforge`.
+`internal/publish` is a leaf utility shared by `cmd/cfo` and `internal/tui`:
+both stage output in a temporary file and move it into place through it, so the
+overwrite rule cannot differ between the two front ends.
 
 ## Data Flow
 
@@ -279,7 +285,7 @@ Targets: `linux/{amd64,arm64,386}`, `windows/{amd64,386}`, `darwin/{amd64,arm64}
 The version and git commit are injected via linker flags:
 
 ```
-go build -ldflags "-X main.Version=7.2.2 -X main.GitCommit=abc1234"
+go build -ldflags "-X main.Version=7.2.3 -X main.GitCommit=abc1234"
 ```
 
 ## Design Decisions

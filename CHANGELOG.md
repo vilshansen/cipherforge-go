@@ -1,5 +1,43 @@
 # Changelog
 
+## v7.2.3 (2026-09-13)
+
+### Fixed
+
+- **The terminal UI re-checks the output path before publishing, as the CLI
+  already did.** v7.2.2 fixed the CLI only. The TUI has its own staging and
+  rename path, and it replaced whatever was at the output path when the
+  operation finished. The overwrite-confirmation screen stops the TUI from
+  replacing a file it can see at submit time, but a file created *after* that
+  point — by another process, a synchronisation client, or a second run — was
+  still replaced with no prompt (CF-2026-05).
+- **The corrected secret is wiped on the TUI's repair path.** Both TUI repair
+  call sites turned the repaired secret into a display string and left the byte
+  slice to the garbage collector, while the CLI zeroed its equivalent. They now
+  match (CF-2026-06).
+- **A dangling symlink at the output path is no longer silently replaced.** The
+  existence check followed the link, so a symlink whose target was missing looked
+  like a free path and was renamed over, destroying the link itself. It is now
+  treated as an existing file: refused without force, replaced with it.
+
+### Changed
+
+- **The overwrite rule now lives in one place.** `internal/publish` holds the
+  single implementation of "move the staged file into place, unless something is
+  already there", and both `cmd/cfo` and `internal/tui` call it, so the two front
+  ends cannot drift apart again. Consent stays explicit in both: `-f` on the
+  CLI, the overwrite-confirmation screen in the TUI. Without consent, a file that
+  appears at the output path while a long operation runs is left untouched and
+  the operation reports it.
+- The final check and the move remain two operations, so the race window is
+  narrowed to microseconds rather than eliminated. Closing it needs an atomic
+  "rename only if absent" that `os` does not expose portably.
+
+### Documentation
+
+- ARCHITECTURE lists `internal/publish` and describes why the TUI and the CLI
+  share it.
+
 ## v7.2.2 (2026-09-13)
 
 ### Security

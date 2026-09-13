@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,8 +15,23 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/vilshansen/cipherforge-go/internal/armor"
+	"github.com/vilshansen/cipherforge-go/internal/crypto"
+	"github.com/vilshansen/cipherforge-go/internal/publish"
 	"github.com/vilshansen/cipherforge-go/pkg/cipherforge"
 )
+
+// publishOutput moves the staged output into place and translates the shared
+// publish.ErrExists into wording that makes sense without a -f flag. The check
+// inside publish.Publish runs immediately before the move, so a file that
+// appeared at the output path while the operation was running is left alone
+// instead of replacing work the user never agreed to lose.
+func publishOutput(writePath, outputFile string, force bool) error {
+	err := publish.Publish(writePath, outputFile, force)
+	if errors.Is(err, publish.ErrExists) {
+		return fmt.Errorf("output file %q appeared while processing, so it was left untouched and nothing was written", outputFile)
+	}
+	return err
+}
 
 // barStyle colours the filled portion of the progress bar — matches password box.
 var barStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226"))
@@ -112,10 +128,10 @@ func runOperation(m Model, ch chan<- progressTickMsg) {
 		return
 	}
 	if m.operation == "encrypt" {
-		err = runEncrypt(m.inputFile, m.outputFile, m.password, m.base64, ch)
+		err = runEncrypt(m.inputFile, m.outputFile, m.password, m.base64, m.forceOverwrite, ch)
 	} else {
 		var corrected string
-		corrected, err = runDecrypt(m.inputFile, m.outputFile, m.password, m.base64, ch)
+		corrected, err = runDecrypt(m.inputFile, m.outputFile, m.password, m.base64, m.forceOverwrite, ch)
 		if err == nil {
 			// Report a correction so the results screen can show it. A plain
 			// success without a correction is signalled by closing the channel.
@@ -128,16 +144,16 @@ func runOperation(m Model, ch chan<- progressTickMsg) {
 	}
 }
 
-func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch chan<- progressTickMsg) error {
+func runEncrypt(inputFile, outputFile string, password []byte, base64, force bool, ch chan<- progressTickMsg) error {
 	in, err := os.Open(inputFile)
 	if err != nil {
 		return fmt.Errorf("open input: %w", err)
 	}
 	defer in.Close()
 
-	// Always write to a temporary file in the destination directory and
-	// atomically rename it into place on success, so a failed or interrupted
-	// encryption never leaves a partial output file at the final path.
+	// Write to a temporary file in the destination directory and move it into
+	// place on success, so a failed or interrupted encryption never leaves a
+	// partial output file at the final path.
 	succeeded := false
 	out, err := os.CreateTemp(filepath.Dir(outputFile), ".cfo-encrypt-*")
 	if err != nil {
@@ -175,17 +191,18 @@ func runEncrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 
 	if err == nil {
 		succeeded = true
-		// Atomically rename the temp file to the final output path.
-		out.Close() // Must close before rename on Windows
-		if rerr := os.Rename(writePath, outputFile); rerr != nil {
+		// Close before publishing: the rename reads the file back, and Windows
+		// will not rename a file that is still open.
+		out.Close()
+		if rerr := publishOutput(writePath, outputFile, force); rerr != nil {
 			os.Remove(writePath)
-			return fmt.Errorf("atomic rename failed: %w", rerr)
+			return rerr
 		}
 	}
 	return err
 }
 
-func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch chan<- progressTickMsg) (string, error) {
+func runDecrypt(inputFile, outputFile string, password []byte, base64, force bool, ch chan<- progressTickMsg) (string, error) {
 	in, err := os.Open(inputFile)
 	if err != nil {
 		return "", fmt.Errorf("open input: %w", err)
@@ -234,6 +251,11 @@ func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 	corrected := ""
 	if err != nil && cipherforge.IsSecretError(err) {
 		if repaired, rerr := cipherforge.RepairSecret(reader, password); rerr == nil {
+			// The repaired secret is a real secret: wipe the slice as soon as it
+			// has been copied into the string the caller reports, exactly as the
+			// CLI does with defer crypto.ZeroBytes(corrected). The deferred call
+			// runs after the retry below, so the Decrypter still sees valid bytes.
+			defer crypto.ZeroBytes(repaired)
 			// Rewind the ciphertext and drop the partial plaintext so the retry
 			// starts from a clean state.
 			if _, serr := reader.Seek(0, io.SeekStart); serr == nil && out.Truncate(0) == nil {
@@ -255,11 +277,12 @@ func runDecrypt(inputFile, outputFile string, password []byte, base64 bool, ch c
 
 	if err == nil {
 		succeeded = true
-		// Atomically rename the temp file to the final output path.
-		out.Close() // Must close before rename on Windows
-		if rerr := os.Rename(writePath, outputFile); rerr != nil {
+		// Close before publishing: the rename reads the file back, and Windows
+		// will not rename a file that is still open.
+		out.Close()
+		if rerr := publishOutput(writePath, outputFile, force); rerr != nil {
 			os.Remove(writePath)
-			return corrected, fmt.Errorf("atomic rename failed: %w", rerr)
+			return corrected, rerr
 		}
 	}
 	return corrected, err
@@ -301,6 +324,9 @@ func runTextDecrypt(b64input string, password []byte, ch chan<- progressTickMsg)
 	corrected := ""
 	if err != nil && cipherforge.IsSecretError(err) {
 		if repaired, rerr := cipherforge.RepairSecret(in, password); rerr == nil {
+			// Mirrors the file path above: wipe the repaired secret once it has
+			// been copied out, as the CLI does.
+			defer crypto.ZeroBytes(repaired)
 			if _, serr := in.Seek(0, io.SeekStart); serr == nil {
 				buf.Reset()
 				dec = cipherforge.NewDecrypter(repaired)

@@ -68,11 +68,11 @@ Cipherforge follows **semantic versioning** (`major.minor.patch`):
 Find the current version before bumping:
 
 ```bash
-git tag --sort=-v:refname | head -1     # latest tag, e.g. v7.2.2
+git tag --sort=-v:refname | head -1     # latest tag, e.g. v7.2.3
 cfo -v                                   # version baked into the built binary
 ```
 
-The version string in the repo currently defaults to `7.2.2` — the latest
+The version string in the repo currently defaults to `7.2.3` — the latest
 tagged release. A bump picks the next number per the rules above.
 
 ---
@@ -88,12 +88,12 @@ changelog and (optionally) example strings in the docs.
 
 ```go
 // cmd/cfo/main.go
-var Version = "7.2.2"     // ← change this
+var Version = "7.2.3"     // ← change this
 var GitCommit = "none"    // (do not edit — stamped at build time)
 ```
 
 When the binary runs, `init()` writes this into the armor header as
-`Version: Cipherforge 7.2.2`, so this value also controls the `Version:`
+`Version: Cipherforge 7.2.3`, so this value also controls the `Version:`
 line emitted by `-b`/`--base64` armored output.
 
 ### 1b. `build-all.ps1` (Windows build default)
@@ -106,25 +106,25 @@ text:
 [string]$Version = $env:VERSION   # (unchanged — env override support)
 
 if (-not $Version) {
-    $Version = '7.2.2'            # ← change this
+    $Version = '7.2.3'            # ← change this
 }
 ```
 
 ```powershell
-Write-Host '  -Version    Overrides the version string (default: 7.2.2).'  # ← update
+Write-Host '  -Version    Overrides the version string (default: 7.2.3).'  # ← update
 ```
 
 ### 1c. `build-all.sh` (Unix build default)
 
 ```bash
 # build-all.sh
-VERSION="${VERSION:-7.2.2}"       # ← change this
+VERSION="${VERSION:-7.2.3}"       # ← change this
 ```
 
 ### 1d. Docs and examples (optional, but keep consistent)
 
 - `README.MD` — the "Building from Source" examples hard-code a version in the
-  `-ldflags` snippet (`-X main.Version=7.2.2`). Update if the example version
+  `-ldflags` snippet (`-X main.Version=7.2.3`). Update if the example version
   is meant to track the current release.
 - `ARCHITECTURE.MD` — the "Build System" section shows `-X main.Version=...`
   in a linker-flag example. Same deal.
@@ -203,11 +203,11 @@ On **Unix (bash)**:
 The version defaults come from Step 1. To override without touching files:
 
 ```powershell
-pwsh -File .\build-all.ps1 -Version 7.2.2
+pwsh -File .\build-all.ps1 -Version 7.2.3
 ```
 
 ```bash
-VERSION=7.2.2 ./build-all.sh
+VERSION=7.2.3 ./build-all.sh
 ```
 
 ### What the build does
@@ -282,11 +282,11 @@ GitHub release assets use the naming convention
 Set the version once:
 
 ```powershell
-$v = "7.2.2"
+$v = "7.2.3"
 ```
 
 ```bash
-v="7.2.2"
+v="7.2.3"
 ```
 
 ### Create the 8 platform zips
@@ -347,19 +347,19 @@ Final `release-assets/` contents to upload:
 
 ```
 release-assets/
-├── cfo_v7.2.2_linux_amd64.zip
-├── cfo_v7.2.2_linux_arm64.zip
-├── cfo_v7.2.2_linux_386.zip
-├── cfo_v7.2.2_windows_amd64.zip
-├── cfo_v7.2.2_windows_386.zip
-├── cfo_v7.2.2_darwin_amd64.zip
-├── cfo_v7.2.2_darwin_arm64.zip
-├── cfo_v7.2.2_freebsd_amd64.zip
+├── cfo_v7.2.3_linux_amd64.zip
+├── cfo_v7.2.3_linux_arm64.zip
+├── cfo_v7.2.3_linux_386.zip
+├── cfo_v7.2.3_windows_amd64.zip
+├── cfo_v7.2.3_windows_386.zip
+├── cfo_v7.2.3_darwin_amd64.zip
+├── cfo_v7.2.3_darwin_arm64.zip
+├── cfo_v7.2.3_freebsd_amd64.zip
 └── checksums.txt
 ```
 
 > Optionally also upload the source archive produced by the Unix build
-> (`dist/cipherforge_source.tar.gz`) as `source-v7.2.2.tar.gz`. Note that
+> (`dist/cipherforge_source.tar.gz`) as `source-v7.2.3.tar.gz`. Note that
 > GitHub **automatically** attaches its own `Source code (zip)` and
 > `Source code (tar.gz)` to every release, so this step is redundant — it is
 > included only if you want a locally-built archive.
@@ -375,20 +375,20 @@ document if it isn't committed yet. Never commit `dist/`, `vendor/`, or
 ```bash
 git status                     # confirm only intended files changed
 git add cmd/cfo/main.go build-all.ps1 build-all.sh CHANGELOG.md RELEASE.MD
-git commit -m "Bump version to 7.2.2"
+git commit -m "Bump version to 7.2.3"
 ```
 
 For a release that carries feature work, use a descriptive release commit:
 
 ```bash
-git commit -m "Release v7.2.2: <short summary of what's new>"
+git commit -m "Release v7.2.3: <short summary of what's new>"
 ```
 
 Tag the release at the release commit. The repo uses a **version-only**
 tag name (`v5.1.0`, not `v5.1.0-release`):
 
 ```bash
-git tag -a v7.2.2 -m "Cipherforge v7.2.2"
+git tag -a v7.2.3 -m "Cipherforge v7.2.3"
 ```
 
 Verify before pushing:
@@ -407,7 +407,7 @@ Push the branch and all tags:
 
 ```bash
 git push origin main
-git push origin v7.2.2          # or: git push origin --tags
+git push origin v7.2.3          # or: git push origin --tags
 ```
 
 If a push is rejected because the remote moved, pull with rebase first and
@@ -415,9 +415,9 @@ re-tag if the commit hash changed:
 
 ```bash
 git pull --rebase origin main
-git tag -f v7.2.2
+git tag -f v7.2.3
 git push origin main --force-with-lease
-git push origin v7.2.2 --force
+git push origin v7.2.3 --force
 ```
 
 > Prefer pushing the explicit tag over `--tags` when only one release tag is
@@ -434,25 +434,25 @@ From inside `release-assets/` so asset paths are short:
 
 ```bash
 cd release-assets
-gh release create v7.2.2 \
-  cfo_v7.2.2_linux_amd64.zip \
-  cfo_v7.2.2_linux_arm64.zip \
-  cfo_v7.2.2_linux_386.zip \
-  cfo_v7.2.2_windows_amd64.zip \
-  cfo_v7.2.2_windows_386.zip \
-  cfo_v7.2.2_darwin_amd64.zip \
-  cfo_v7.2.2_darwin_arm64.zip \
-  cfo_v7.2.2_freebsd_amd64.zip \
+gh release create v7.2.3 \
+  cfo_v7.2.3_linux_amd64.zip \
+  cfo_v7.2.3_linux_arm64.zip \
+  cfo_v7.2.3_linux_386.zip \
+  cfo_v7.2.3_windows_amd64.zip \
+  cfo_v7.2.3_windows_386.zip \
+  cfo_v7.2.3_darwin_amd64.zip \
+  cfo_v7.2.3_darwin_arm64.zip \
+  cfo_v7.2.3_freebsd_amd64.zip \
   checksums.txt \
-  --title "Cipherforge v7.2.2" \
+  --title "Cipherforge v7.2.3" \
   --notes-file ../release-notes.md
 ```
 
 Or attach assets after creating an empty release:
 
 ```bash
-gh release create v7.2.2 --title "Cipherforge v7.2.2" --notes-file ../release-notes.md
-gh release upload v7.2.2 cfo_v7.2.2_*.zip checksums.txt
+gh release create v7.2.3 --title "Cipherforge v7.2.3" --notes-file ../release-notes.md
+gh release upload v7.2.3 cfo_v7.2.3_*.zip checksums.txt
 ```
 
 ### Release notes
@@ -461,7 +461,7 @@ Write `release-notes.md` summarizing the changes (condense the changelog
 entry — no need to duplicate every bullet):
 
 ```markdown
-## What's new in v7.2.2
+## What's new in v7.2.3
 
 - **Feature one** — one-line description.
 - **Feature two** — one-line description.
@@ -484,8 +484,8 @@ Source archives are auto-generated by GitHub below.
 1. **Binary version stamp** — download and run on the platforms you can test:
 
    ```bash
-   curl -sSL -o cfo https://github.com/vilshansen/cipherforge-go/releases/download/v7.2.2/cfo_v7.2.2_linux_amd64.zip
-   unzip -p cfo_v7.2.2_linux_amd64.zip cfo > cfo
+   curl -sSL -o cfo https://github.com/vilshansen/cipherforge-go/releases/download/v7.2.3/cfo_v7.2.3_linux_amd64.zip
+   unzip -p cfo_v7.2.3_linux_amd64.zip cfo > cfo
    chmod +x cfo && ./cfo -v
    ```
 
@@ -493,7 +493,7 @@ Source archives are auto-generated by GitHub below.
    generated:
 
    ```bash
-   curl -sSL https://github.com/vilshansen/cipherforge-go/releases/download/v7.2.2/checksums.txt
+   curl -sSL https://github.com/vilshansen/cipherforge-go/releases/download/v7.2.3/checksums.txt
    ```
 
 3. **Download script** — re-run the archive fetcher (optional; it pulls all
@@ -515,7 +515,7 @@ Source archives are auto-generated by GitHub below.
    checksum file, and correct title/notes:
 
    ```bash
-   gh release view v7.2.2
+   gh release view v7.2.3
    ```
 
 ---
