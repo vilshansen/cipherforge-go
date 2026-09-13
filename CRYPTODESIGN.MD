@@ -110,6 +110,12 @@ The trailer closes gaps that per-segment AEAD cannot close by itself: file
 truncation at a segment boundary, segment appending, and header substitution.
 Both tags are compared with constant-time comparison.
 
+The key commitment also permits bounded correction of a mistyped secret. Given
+the public file salt and the commitment tag, Cipherforge can test supported
+single-edit variants of a supplied secret without processing the ciphertext
+payload. A candidate is accepted only when its derived `encKey` reproduces the
+256-bit commitment.
+
 ## Verification Order
 
 Decryption performs file-level authentication checks before processing payload
@@ -144,6 +150,11 @@ output names, approximate plaintext size, or access timing. Security depends on
 the generated secret remaining secret: it is high-entropy random material, and
 there is no user-chosen password whose strength affects the brute-force
 resistance of a file.
+
+Cipherforge does not provide arbitrary secret recovery. The `RepairSecret`
+facility searches only the bounded set of secrets differing from the supplied
+value by one supported substitution, adjacent transposition, deletion, or
+insertion. A completely lost secret cannot be recovered.
 
 ## Standards
 

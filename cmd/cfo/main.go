@@ -357,7 +357,7 @@ func decryptFile(inputFile, outputFile string, password []byte, quiet, base64 bo
 	if err != nil && isAuthenticationFailure(err) {
 		if corrected, rerr := cipherforge.RepairSecret(reader, password); rerr == nil {
 			ui.PrintWarning(fmt.Sprintf(
-				"The supplied secret did not authenticate %s, but a one-character correction does. "+
+				"The supplied secret did not authenticate %s, but a single-edit correction does. "+
 					"Update your stored copy.", filepath.Base(inputFile)))
 			fmt.Fprintf(os.Stderr, "cfo: corrected secret: %s\n", corrected)
 			defer crypto.ZeroBytes(corrected)

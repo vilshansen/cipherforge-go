@@ -222,29 +222,36 @@ echo "$SECRET" | cfo -d document.pdf.cfo -o -
 
 ### Correcting a mistyped secret
 
-If a decryption fails, Cipherforge tries to work out whether the secret — not
-the file — is the problem. The trailer carries a 32-byte key-commitment tag,
-which is enough to test a candidate secret with a single key derivation and one
-HMAC without reading the payload, so the CLI can check *every* single-character
-variant of what you supplied:
+If a decryption fails because the supplied secret contains a single transcription
+error, Cipherforge can search for a nearby secret that matches the file's
+256-bit key-commitment tag. The search covers:
 
 - one character substituted for another
 - two adjacent characters transposed
-- one character dropped
-- one character added
+- one character deleted
+- one character inserted
 
-When a variant authenticates, decryption continues with it and the corrected
-secret is reported on stderr:
+The trailer contains a **public** 32-byte key-commitment tag. It lets Cipherforge
+test whether a nearby candidate derives the same encryption key for this file,
+without decrypting the payload — no plaintext is produced during the search. The
+commitment does not reveal the generated secret.
+
+When a candidate matches, decryption continues with it:
 
 ```
-cfo: warning: The supplied secret did not authenticate archive.cfo, but a one-character correction does. Update your stored copy.
+cfo: warning: The supplied secret did not authenticate archive.cfo, but a single-edit correction does. Update your stored copy.
 cfo: corrected secret: 8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3k
 ```
 
-A match is not a guess: it reproduces a 256-bit tag, so a coincidental match
-would require a collision in HMAC-SHA256. Only single-character errors are
-searched — the search is exhaustive but bounded, which is what keeps it
-imperceptible.
+A candidate is accepted only when it reproduces the file's 256-bit key-commitment
+tag, so the result is cryptographically authenticated for that file rather than a
+heuristic guess. The search is bounded to a single edit: it cannot recover an
+arbitrary lost secret, and it does not correct errors outside the four cases
+above.
+
+The corrected secret is written to **stderr**, keeping it out of the data stream.
+Treat that output as sensitive secret material and store the corrected secret
+securely.
 
 ### Notes on output filenames
 
@@ -328,11 +335,18 @@ characters.
 8oEmo-Qhvn6-u9gK3-pweUY-ZrTuJ-ZJtvz-U6WiU-B87Tj-AxH3k
 ```
 
-The generated secret is emitted once, at the time of encryption, and is the only
-way to decrypt the file. When ciphertext is written to stdout (`-o -`), the
-secret is written to stderr so it cannot be mixed into the ciphertext stream.
-**There is no recovery mechanism.** Store it in a password manager or print it
-and keep it physically secure alongside the archive.
+The generated secret is emitted once, at the time of encryption, and is the
+credential from which the file keys are derived. When ciphertext is written to
+stdout (`-o -`), the secret is written to stderr so it cannot be mixed into the
+ciphertext stream.
+
+A completely lost secret cannot be recovered — Cipherforge does not store it and
+there is no backdoor or key escrow. If the secret is available but contains one
+supported transcription error, Cipherforge can attempt to correct it using the
+file's key commitment; see
+[Correcting a mistyped secret](#correcting-a-mistyped-secret). Store the original
+secret in a password manager or print it and keep it physically secure alongside
+the archive.
 
 ---
 
@@ -626,9 +640,12 @@ cryptographic weakness — it is secret loss.
 
 ## Security Considerations
 
-**The generated secret is shown once.** If you lose it, the data is unrecoverable.
-There is no backdoor, no key escrow, and no recovery mechanism. This is
-intentional.
+**The generated secret is shown once.** The generated secret is the credential
+from which the file keys are derived. Cipherforge does not store or recover the
+secret, so a completely lost secret means the data is unrecoverable — there is no
+backdoor and no key escrow. It can, however, identify the secret when the value
+you supply differs from it by a single supported edit; see
+[Correcting a mistyped secret](#correcting-a-mistyped-secret).
 
 **The filename is not encrypted.** The `.cfo` extension is appended to the
 original filename. `payroll-2026.xlsx` becomes `payroll-2026.xlsx.cfo`. The

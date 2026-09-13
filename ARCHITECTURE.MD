@@ -22,7 +22,7 @@ cipherforge-go/
 │   └── params.go        #   CLI flag parsing
 ├── pkg/cipherforge/     # Public API: Encrypter and Decrypter engines
 │   ├── cipherforge.go   #   high-level streaming encrypt/decrypt
-│   ├── repair.go        #   recovery of a mistyped secret at the header/trailer
+│   ├── repair.go        #   RepairSecret: bounded single-edit secret correction
 │   └── cipherforge_test.go
 ├── internal/
 │   ├── crypto/          # Cryptographic primitives (no file-format awareness)
@@ -139,6 +139,15 @@ pkg/cipherforge.Decrypter.Decrypt(reader, writer)
           ├── buildAAD(segmentNum, plaintextLen)
           └── AEAD.Open(ciphertext, nonce, aad) → plaintext
 ```
+
+If decryption fails with an authentication or key-commitment error, the CLI may
+invoke `RepairSecret` with the supplied secret. `RepairSecret` reads the v7 header
+salt and the trailer's key-commitment tag, generates the supported single-edit
+variants of the secret (substitution, adjacent transposition, deletion,
+insertion), and tests each candidate by deriving `encKey` with HKDF and
+recomputing the commitment HMAC. No payload decryption is involved, so the search
+is fast and produces no plaintext. When a variant matches, the CLI retries
+`Decrypt` with it and reports the corrected secret on stderr.
 
 ## Cryptographic Design
 
